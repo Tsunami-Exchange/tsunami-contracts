@@ -1,0 +1,16 @@
+{
+    "ride_directory": "ride",
+    "test_directory": "test",
+    "envs": {
+        "testnet": {
+            "API_BASE": "https://nodes-testnet.wavesnodes.com",
+            "CHAIN_ID": "T",
+            "SEED": "settle distance dove stool tag gospel escape hammer volume symptom grab hungry cruise gown verb",
+            "timeout": 60000
+        }
+    },
+    "defaultEnv": "testnet",
+    "mocha": {
+        "timeout": 60000
+    }
+}

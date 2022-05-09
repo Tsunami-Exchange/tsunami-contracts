@@ -1,0 +1,15 @@
+{
+  "name": "hamsterswap",
+  "version": "0.0.1",
+  "description": "vAMM-base perpetual futures on Waves",
+  "scripts": {
+    "test": "mocha simulation/vamm_test.js",
+    "test2": "mocha simulation/vamm_test2.js"
+  },
+  "author": "mr. Hamster",
+  "license": "MIT",
+  "dependencies": {
+    "chai": "^4.3.6",
+    "mocha": "^9.2.2"
+  }
+}

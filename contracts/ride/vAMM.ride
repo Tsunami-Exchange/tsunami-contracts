@@ -1,0 +1,34 @@
+# This is a vAMM contract
+#
+{-# STDLIB_VERSION 3 #-}
+{-# CONTENT_TYPE DAPP #-}
+{-# SCRIPT_TYPE ACCOUNT #-}
+
+##### Key constants #####
+let K_QUOTE_ASSET_ADDRESS = "quoteAssetAddress"
+let K_QUOTE_ASSET_RESERVE = "quoteAssetReserve"
+let K_BASE_ASSET_RESERVE = "baseAssetReserve"
+let K_FUNDING_PERIOD = "baseAssetReserve"
+
+##### Other constants #####
+let DIR_LONG = 1
+let DIR_SHORT = 2
+
+##### Accessors #####
+# func quoteAssetReserve() = { this.getIntegerValue(K_QUOTE_ASSET_RESERVE) }
+# func baseAssetReserve() = { this.getIntegerValue(K_BASE_ASSET_RESERVE) }
+
+@Callable(i)
+func init(
+  _quoteAssetAddress: String,
+  _quoteAssetReserve: Int,
+  _baseAssetReserve: Int,
+  _fundingPeriodBlocks: Int
+) = {
+  WriteSet([
+    DataEntry(K_QUOTE_ASSET_ADDRESS, _quoteAssetAddress)
+  ])
+}
+
+@Verifier(tx)
+func verify() = false
