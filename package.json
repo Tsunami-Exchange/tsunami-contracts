@@ -4,7 +4,11 @@
   "description": "vAMM-base perpetual futures on Waves",
   "scripts": {
     "test": "mocha simulation/vamm_test.js",
-    "test2": "mocha simulation/vamm_test2.js"
+    "test2": "mocha simulation/vamm_test2.js",
+    "ride-test": "cd contracts && surfboard test"
+  },
+  "devDependencies": {
+    "@waves/surfboard": "2.3.0-beta.2"
   },
   "author": "mr. Hamster",
   "license": "MIT",

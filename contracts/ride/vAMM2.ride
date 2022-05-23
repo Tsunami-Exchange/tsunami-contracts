@@ -28,9 +28,6 @@ let k_initMarginRatio = "k_initMarginRatio"
 let k_mmr = "k_mmr"
 let k_liquidationFeeRatio = "k_liquidationFeeRatio"
 
-# Insr funds
-let k_insurance = "k_insurance"
-
 # Funding state
 let k_latestCPF = "k_latestPremiumFraction"
 let k_nextFundingBlock = "k_nextFundingBlockMinTimestamp"
@@ -44,13 +41,14 @@ let k_totalPositionSize = "k_totalPositionSize"
 let k_cumulativeNotional = "k_cumulativeNotional"
 let k_openInteresetNotional = "k_openInteresetNotional"
 
-##### Updateable (environment) constants #####
+##### Updateable (environment) constants ##### 
 let ADMIN_ADDRESS = Address(base58'3MseEJNEHkYhvcHre6Mann1F8e27S1qptdg')
 let ADMIN_PUBLIC_KEY = base58'A6ZtwikNTr19YpC1t6HnNGCBJF6GTx62DhEkJpgpzpmL'
 let USDN = base58'HezsdQuRDtzksAYUy97gfhKy7Z1NW2uXYSHA3bgqenNZ'
 let USDN_STAKING = Address(base58'3N9LkJahTMx41wGhSxLS42prCZtRCp4dhTs')
 let ORACLE = Address(base58'3N4NS7d4Jo9a6F14LiFUKKYVdUkkf2eP4Zx')
 let FEES_ACCOUNT = Address(base58'3MseEJNEHkYhvcHre6Mann1F8e27S1qptdg')
+let INSURANCE_ADDRESS = Address(base58'3MzXE3znRvRJTNdvCtPXBRp6Bx5HSTsc3rS')
 
 ##### Core constants #####
 
@@ -89,7 +87,6 @@ func requireMoreMarginRatio(_marginRatio: Int, _baseMarginRatio: Int, _largerTha
 func int(k: String) = this.getInteger(k).valueOrErrorMessage("no value for " + k)
 
 func cbalance() = int(k_balance)
-func insurance() = int(k_insurance)
 func fee() = int(k_fee)
 func initMarginRatio() = int(k_initMarginRatio)
 func qtAstR() = int(k_qtAstR)
@@ -459,12 +456,6 @@ func writeConstants() = {
   ]
 }
 
-func updateInsr(i: Int) = {
-  [
-    IntegerEntry(k_insurance, i)
-  ]
-}
-
 func upblc(i: Int) = {
   if (i < 0) then {
     throw("Balance")
@@ -516,8 +507,6 @@ func initialize(
       0,
       0
     )
-    ++
-    updateInsr(0)
     ++
     upblc(0)
     ++
@@ -882,18 +871,33 @@ func closePosition() = {
       throw("Unable to close position with bad debt")
     } else {
       let withdrawAmount = abs(marginToVault)
+
+      let bd = cbalance() - withdrawAmount
+      let (nb, fromi) = if (bd < 0) then {
+        (0, abs(bd))
+      } else {
+        (bd, 0)
+      }
+
+      strict x = if (fromi > 0) then {
+        strict withdrawInsurance = invoke(
+          INSURANCE_ADDRESS,
+          "withdraw",
+          [fromi],
+          []
+        )
+        []
+      } else {
+        []
+      }
+
       strict unstake = invoke(
         USDN_STAKING,
         "unlockNeutrino",
-        [withdrawAmount, USDN.toBase58String()],
+        [withdrawAmount - fromi, USDN.toBase58String()],
         []
       )
-      let bd = cbalance() - withdrawAmount
-      let (nb, ni) = if (bd < 0) then {
-        (0, insurance() - abs(bd))
-      } else {
-        (bd, insurance())
-      }
+      
       deletePosition(i.caller.toString()) 
       ++ 
       updateAmm(
@@ -908,8 +912,6 @@ func closePosition() = {
       withdraw(i.caller, withdrawAmount)
       ++
       upblc(nb)
-      ++
-      updateInsr(ni)
     }
   }
 }
@@ -950,6 +952,32 @@ func liquidate(_trader: String) = {
       )
     }
 
+    let bd = cbalance() - feeToLiquidator
+    let (nb, fromi) = if (bd < 0) then {
+      (0, abs(bd))
+    } else {
+      (bd, 0)
+    }
+
+    strict x = if (fromi > 0) then {
+      strict withdrawInsurance = invoke(
+        INSURANCE_ADDRESS,
+        "withdraw",
+        [fromi],
+        []
+      )
+      []
+    } else {
+      []
+    }
+
+    strict unstake = invoke(
+      USDN_STAKING,
+      "unlockNeutrino",
+      [feeToLiquidator - fromi, USDN.toBase58String()],
+      []
+    )
+
     deletePosition(_trader)
     ++ 
     updateAmm(
@@ -962,6 +990,8 @@ func liquidate(_trader: String) = {
     )
     ++
     withdraw(i.caller, feeToLiquidator)
+    ++
+    upblc(nb)
   }
 }
 
@@ -980,15 +1010,39 @@ func payFunding() = {
     let premiumFraction = divd(muld(premium, fundingPeriodDecimal()), ONE_DAY)
     let totalTraderPositionSize = totalPositionSize()
     let ammFundingPaymentProfit = muld(premiumFraction, totalTraderPositionSize)
-    let fundDelta = abs(ammFundingPaymentProfit)
+    let fundingAmount = abs(ammFundingPaymentProfit)
     if (ammFundingPaymentProfit < 0) then {
-        updateInsr(insurance() - fundDelta)
-        ++
-        upblc(cbalance() + fundDelta)
+        strict withdrawInsurance = invoke(
+          INSURANCE_ADDRESS,
+          "withdraw",
+          [fundingAmount],
+          []
+        )
+
+        strict stake = invoke(
+          USDN_STAKING,
+          "lockNeutrino",
+          [],
+          [AttachedPayment(USDN, fundingAmount)]
+        )
+
+        upblc(cbalance() + fundingAmount)
     } else {
-        updateInsr(insurance() + fundDelta)
-        ++
-        upblc(cbalance() - fundDelta)
+        strict unstake = invoke(
+          USDN_STAKING,
+          "unlockNeutrino",
+          [fundingAmount, USDN.toBase58String()],
+          []
+        )
+
+        strict depositInsurance = invoke(
+          INSURANCE_ADDRESS,
+          "deposit",
+          [],
+          [AttachedPayment(USDN, fundingAmount)]
+        )
+
+        upblc(cbalance() - fundingAmount)
     } ++ updateFunding(
       0,
       fundingBlockTimestamp + fundingPeriodSeconds(),
@@ -999,47 +1053,7 @@ func payFunding() = {
 }
 
 @Callable(i)
-func addInsrFunds() = {
-  let _amount = i.payments[0].amount
-  if (
-    !initialized()
-    || i.payments[0].assetId != USDN
-    || i.caller != ADMIN_ADDRESS
-  ) then {
-    throw("")
-  } else {
-    strict stake = invoke(
-      USDN_STAKING,
-      "lockNeutrino",
-      [],
-      [AttachedPayment(USDN, _amount)]
-    )
-
-    updateInsr(insurance() + _amount)
-  }
-}
-
-@Callable(i)
-func withdrawInsrFunds(_amount: Int) = {
-  if (
-    !initialized()
-    || _amount > insurance()
-    || i.caller != ADMIN_ADDRESS
-  ) then {
-    throw("")
-  } else {
-    strict unstake = invoke(
-      USDN_STAKING,
-      "unlockNeutrino",
-      [_amount, USDN.toBase58String()],
-      []
-    )
-
-    updateInsr(insurance() - _amount)
-    ++
-    withdraw(i.caller, _amount)
-  }
-}
+func view_getMarginRatio(_trader: String) = throw(getMarginRatio(_trader).toString())
 
 @Verifier(tx)
 func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], ADMIN_PUBLIC_KEY)

@@ -1,0 +1,50 @@
+{-# STDLIB_VERSION 5 #-}
+{-# CONTENT_TYPE DAPP #-}
+{-# SCRIPT_TYPE ACCOUNT #-}
+
+##### Key constants #####
+let k_totalSupply = "k_totalSupply"
+let k_lastUpdateTime = "k_lastUpdateTime"
+let k_rewardPerTokenStored = "k_rewardPerTokenStored"
+let k_rewardRate = "k_rewardRate"
+
+##### Updateable (environment) constants #####
+let ADMIN_ADDRESS = Address(base58'3MseEJNEHkYhvcHre6Mann1F8e27S1qptdg')
+let USDN  = base58'HezsdQuRDtzksAYUy97gfhKy7Z1NW2uXYSHA3bgqenNZ'
+let TSN   = base58'HezsdQuRDtzksAYUy97gfhKy7Z1NW2uXYSHA3bgqenNZ'
+
+##### Core constants #####
+
+let DECIMAL_UNIT = 1 * (10 * 10 * 10 * 10 * 10 * 10)
+
+##### Helper functions #####
+
+func divd(_x: Int, _y: Int) = fraction(_x, DECIMAL_UNIT, _y, HALFEVEN)
+func muld(_x: Int, _y: Int) = fraction(_x, _y, DECIMAL_UNIT, HALFEVEN)
+func abs(_x: Int) = if (_x > 0) then _x else -_x
+
+##### Accessor functions #####
+func int(k: String) = this.getInteger(k).valueOrErrorMessage("no value for " + k)
+func totalSupply() = int(k_totalSupply)
+func rewardPerTokenStored() = int(k_rewardPerTokenStored)
+func lastUpdateTime() = int(k_lastUpdateTime)
+func rewardRate() = int(k_rewardRate)
+
+##### View functions #####
+
+func rewardPerToken() = {
+  if (totalSupply() == 0) then {
+    rewardPerTokenStored()
+  } else {
+    rewardPerTokenStored() + ((lastBlock.timestamp - lastUpdateTime()) * rewardRate() / totalSupply())
+  }
+}
+
+##### Callable functions #####
+
+
+
+
+@Verifier(tx)
+func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)
+        

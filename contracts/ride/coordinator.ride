@@ -1,0 +1,68 @@
+# This is a Coordinator contract
+# This holds all the core data in Tsunami
+#
+{-# STDLIB_VERSION 5 #-}
+{-# SCRIPT_TYPE ACCOUNT #-}
+{-# CONTENT_TYPE DAPP #-}
+
+##### Key constants #####
+
+let k_insurance_address = "k_insurance_address"
+let k_admin_address = "k_admin_address"
+let k_admin_public_key = "k_admin_public_key"
+let k_usdn = "k_usdn"
+let k_usdn_staking = "k_usdn_staking"
+
+##### ACL Functions #####
+func isSelfCall(i: Invocation) = if i.caller == this then unit else throw("Only the Oracle itself can invoke this function")
+
+##### Updateable (environment) constants #####
+let ADMIN_PUBLIC_KEY = base58'A6ZtwikNTr19YpC1t6HnNGCBJF6GTx62DhEkJpgpzpmL'
+
+##### View functions #####
+func getAddressIfValid(address: String) = address.addressFromString().valueOrErrorMessage("Can't parse \"" + address + "\" as address").toString()
+
+
+@Callable(i)
+func setAdmin(
+  _adminAddress: String,
+  _adminPublicKey: String
+) = isSelfCall(i).valueOrElse({
+  let address = getAddressIfValid(_adminAddress)
+  let bytes = _adminPublicKey.toBytes()
+  let x = addressFromPublicKey(bytes)
+  if (x.toString() != address) then {
+    throw("Address and public key do not match")
+  } else {
+    [
+      StringEntry(k_admin_address, _adminAddress),
+      StringEntry(k_admin_public_key, _adminPublicKey)
+    ]
+  }
+})
+
+@Callable(i)
+func setInsuranceFund(
+  _insuranceFund: String
+) = isSelfCall(i).valueOrElse({
+  let address = getAddressIfValid(_insuranceFund)
+  [
+    StringEntry(k_insurance_address, address)
+  ]
+})
+
+@Callable(i)
+func setUSDN(
+  _assetId: String,
+  _stakingAddress: String
+) = isSelfCall(i).valueOrElse({
+  let stakingAddress = getAddressIfValid(_stakingAddress)
+  [
+    StringEntry(k_usdn_staking, _stakingAddress),
+    StringEntry(k_usdn, _assetId)
+  ]
+})
+
+@Verifier(tx)
+func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], ADMIN_PUBLIC_KEY)
+        
