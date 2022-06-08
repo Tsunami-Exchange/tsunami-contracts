@@ -6,7 +6,7 @@
 
 ##### Key constants #####
 
-# Insurance funds
+# Insurance fundsac
 let k_insurance = "k_insurance"
 let k_whitelistt = "k_whitelist"
 
@@ -101,4 +101,3 @@ func deposit() = {
 
 @Verifier(tx)
 func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], ADMIN_PUBLIC_KEY)
-        
