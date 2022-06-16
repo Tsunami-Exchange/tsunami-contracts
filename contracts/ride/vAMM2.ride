@@ -7,48 +7,60 @@
 ##### Key constants #####
 
 # Oracle keys
-let k_ora_key = "k_ora_key"
-let k_ora = "k_ora"
+let k_ora_key = "k_ora_key" # Key in Index Price Oracle account to read price from
+let k_ora = "k_ora"         # Address of Index Price oracle account
 
 # AMM Balance
-let k_balance = "k_balance"
+let k_balance = "k_balance" # How much of a trader's funds is controlled by this AMM
 
 # Trader Position   
-let k_positionSize = "k_positionSize"
-let k_positionMargin = "k_positionMargin"
-let k_pon = "k_positionOpenNotional"
-let k_positionLstUpdCPF = "k_positionFraction"
+let k_positionSize = "k_positionSize"             # Trader position size (base asset)
+let k_positionMargin = "k_positionMargin"         # Trader position margin (quote asset)
+let k_pon = "k_positionOpenNotional"              # Trader position open notional
+let k_positionLstUpdCPF = "k_positionFraction"    # Trader position last updated commulutive premium fraction
 
 # Global initialization state
-let k_initialized = "k_initialized"
+let k_initialized = "k_initialized"                       # If AMM was properly initialized
 
 # Exchange settings
-let k_fee = "k_fee"
-let k_fundingPeriod = "k_fundingPeriod"
-let k_initMarginRatio = "k_initMarginRatio"
-let k_mmr = "k_mmr"
-let k_liquidationFeeRatio = "k_liquidationFeeRatio"
+let k_fee = "k_fee"                                       # Exchange fee. Default is 1%. 1/2 goes to stakers, 1/2 goes to insurance fund
+let k_fundingPeriod = "k_fundingPeriod"                   # Funding period. By default funding is paid once per hour
+let k_initMarginRatio = "k_initMarginRatio"               # Initial margin ratio. Controls how much leverage can be applied when position is created
+let k_mmr = "k_mmr"                                       # Maintenance margin ratio (MMR). When MR < MMR position can be luquidated
+let k_liquidationFeeRatio = "k_liquidationFeeRatio"       # % of position size liquidator will get for himself. 1/2 of this goes to luqiidator, 1/2 - to insurance fund
 
 # Funding state
-let k_latestCPF = "k_latestPremiumFraction"
-let k_nextFundingBlock = "k_nextFundingBlockMinTimestamp"
-let k_fundingRate = "k_fundingRate"
+let k_latestCPF = "k_latestPremiumFraction"               # Latst Commulitive Permium Fraction
+let k_nextFundingBlock = "k_nextFundingBlockMinTimestamp" # Timestamp of Next block when funding becomes avialible
+let k_fundingRate = "k_fundingRate"                       # Funding rate  ((market price - index price) / index price) / 24
 
 # AMM State
-let k_qtAstR = "k_qtAstR"
-let k_bsAstR = "k_bsAstR"
-let k_baseAsstFndDelt = "k_baseAssetDelta"
-let k_totalPositionSize = "k_totalPositionSize"
-let k_cumulativeNotional = "k_cumulativeNotional"
-let k_openInteresetNotional = "k_openInteresetNotional"
+let k_qtAstR = "k_qtAstR"                                 # Quote Asset Reserve (AMM)
+let k_bsAstR = "k_bsAstR"                                 # Base Asset Reserve (AMM)
+let k_baseAsstFndDelt = "k_baseAssetDelta"                # Difference in base asset this fundind period (set to 0 when funding is paid, upated at every swap)                 
+let k_totalPositionSize = "k_totalPositionSize"           # Total trader position size (in Base asset)
+let k_cumulativeNotional = "k_cumulativeNotional"         # Cumulatiev Notiinal (all positions)
+let k_openInteresetNotional = "k_openInteresetNotional"   # Open Interest Notional (all positions)
+
+# Coordinator
+let k_coordinatorAddress = "k_coordinatorAddress"         # Address of Coordinator (base contract that keeps refereences to all infrastructure)
+
+# Coordinator keys
+let k_insurance_address = "k_insurance_address"   # Address of insurance contractt
+let k_admin_address = "k_admin_address"           # Address of admin account           
+let k_admin_public_key = "k_admin_public_key"     # Pubic key of admin account
+let k_quote_asset = "k_quote_asset"               # Address of quote asset (USDN in our case)
+let k_quote_staking = "k_quote_staking"           # Address of quote asset staking contract (USDN staking in our case)
+let k_staking_address = "k_staking_address"       # Address that should receive staking benefits
 
 ##### Updateable (environment) constants ##### 
-let ADMIN_ADDRESS = Address(base58'3MseEJNEHkYhvcHre6Mann1F8e27S1qptdg')
-let ADMIN_PUBLIC_KEY = base58'A6ZtwikNTr19YpC1t6HnNGCBJF6GTx62DhEkJpgpzpmL'
-let USDN = base58'HezsdQuRDtzksAYUy97gfhKy7Z1NW2uXYSHA3bgqenNZ'
-let USDN_STAKING = Address(base58'3N9LkJahTMx41wGhSxLS42prCZtRCp4dhTs')
-let FEES_ACCOUNT = Address(base58'3MseEJNEHkYhvcHre6Mann1F8e27S1qptdg')
-let INSURANCE_ADDRESS = Address(base58'3MzXE3znRvRJTNdvCtPXBRp6Bx5HSTsc3rS')
+func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
+func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
+func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
+func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
+func quoteAssetStaking() = addressFromString(coordinator().getStringValue(k_quote_staking)).valueOrErrorMessage("Quote assete staking not set")
+func stakingAddress() = addressFromString(coordinator().getStringValue(k_staking_address)).valueOrErrorMessage("Insurance not set")
+func insuranceAddress() = addressFromString(coordinator().getStringValue(k_insurance_address)).valueOrErrorMessage("Insurance not set")
 
 ##### Core constants #####
 
@@ -59,6 +71,7 @@ let FUNDING_BLOCK_INTERVAL  = 60
 let SECONDS = 1000
 let DECIMAL_UNIT = 1 * (10 * 10 * 10 * 10 * 10 * 10)
 let ONE_DAY = 86400 * DECIMAL_UNIT
+let ALL_FEES = 100
 
 ##### Helper functions #####
 
@@ -119,14 +132,7 @@ func getPosition(invesor: String) = {
 }
 
 func requireOpenPosition(_trader: String) = {
-    let (
-      positionSize,
-      positionMargin,
-      pon,
-      positionLstUpdCPF
-    ) = getPosition(_trader)
-
-    if (positionSize == 0) then {
+    if (getPosition(_trader)._1 == 0) then {
       throw("No open position")
     } else {
       true
@@ -138,21 +144,31 @@ func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
 ##### Internal functions #####
 func updateReserve(_isAdd: Boolean, _quoteAssetAmount: Int, _baseAssetAmount: Int) = {
   if (_isAdd) then {
-    (
-      qtAstR() + _quoteAssetAmount,
-      bsAstR() - _baseAssetAmount,
-      baseAsstFndDelt() - _baseAssetAmount,
-      totalPositionSize() + _baseAssetAmount,
-      cumulativeNotional() + _quoteAssetAmount
-    )
+    let newBase = bsAstR() - _baseAssetAmount
+    if (newBase <= 0) then {
+      throw("Tx lead to base asset reserver <= 0, revert")
+    } else {
+      (
+        qtAstR() + _quoteAssetAmount,
+        newBase,
+        baseAsstFndDelt() - _baseAssetAmount,
+        totalPositionSize() + _baseAssetAmount,
+        cumulativeNotional() + _quoteAssetAmount
+      )
+    }
   } else {
-    (
-      qtAstR() - _quoteAssetAmount,
-      bsAstR() + _baseAssetAmount,
-      baseAsstFndDelt() + _baseAssetAmount,
-      totalPositionSize() - _baseAssetAmount,
-      cumulativeNotional() - _quoteAssetAmount
-    )
+    let newQuote = qtAstR() - _quoteAssetAmount
+    if (newQuote <= 0) then {
+      throw("Tx lead to base quote reserver <= 0, revert")
+    } else {
+      (
+        newQuote,
+        bsAstR() + _baseAssetAmount,
+        baseAsstFndDelt() + _baseAssetAmount,
+        totalPositionSize() - _baseAssetAmount,
+        cumulativeNotional() - _quoteAssetAmount
+      )
+    }
   }
 }
 
@@ -441,23 +457,23 @@ func withdraw(
   _address: Address,
   _amount: Int
 ) = {
-  let balance = assetBalance(this, USDN)
+  let balance = assetBalance(this, quoteAsset())
   if (balance < _amount) then {
     throw("Unable to withdraw " + _amount.toString() + " from contract balance " + balance.toString())
   } else {
     [
-      ScriptTransfer(_address, _amount, USDN)
+      ScriptTransfer(_address, _amount, quoteAsset())
     ]
   }
 }
 
-func writeConstants() = {
-  [
-    StringEntry("ADMIN_ADDRESS", ADMIN_ADDRESS.toString()),
-    StringEntry("USDN", USDN.toBase58String()),
-    StringEntry("USDN_STAKING", USDN_STAKING.toString())
-  ]
-}
+#func writeConstants() = {
+#  [
+#    StringEntry("ADMIN_ADDRESS", ADMIN_ADDRESS.toString()),
+#    StringEntry("USDN", USDN.toBase58String()),
+#    StringEntry("USDN_STAKING", USDN_STAKING.toString())
+#  ]
+#}
 
 func upblc(i: Int) = {
   if (i < 0) then {
@@ -471,7 +487,7 @@ func upblc(i: Int) = {
 
 func transferFee(i: Int) = {
   [
-    ScriptTransfer(FEES_ACCOUNT, i, USDN)
+    ScriptTransfer(stakingAddress(), i, quoteAsset())
   ]
 }
 
@@ -488,7 +504,8 @@ func initialize(
   _liquidationFeeRatio: Int,
   _fee: Int,
   _oracle: String,
-  _oracleKey: String
+  _oracleKey: String,
+  _coordinator: String
 ) = {
   if (
     _qtAstR <= 0
@@ -497,7 +514,6 @@ func initialize(
     || _initMarginRatio <= 0
     || _mmr <= 0
     || _liquidationFeeRatio <= 0
-    || i.caller != ADMIN_ADDRESS
     || initialized()
   ) then {
     throw("Invalid initialize parameters")
@@ -514,13 +530,14 @@ func initialize(
     )
     ++
     upblc(0)
-    ++
-    writeConstants()
+    # ++
+    # writeConstants()
     ++
     [
       BooleanEntry(k_initialized, true),
       StringEntry(k_ora, _oracle),
-      StringEntry(k_ora_key, _oracleKey)
+      StringEntry(k_ora_key, _oracleKey),
+      StringEntry(k_coordinatorAddress, _coordinator)
     ]
   }
 }
@@ -655,7 +672,7 @@ func increasePosition(
     || _rawAmount <= 0
     || (_leverage < 1 * DECIMAL_UNIT || _leverage > 3 * DECIMAL_UNIT)
     || !initialized()
-    || i.payments[0].assetId != USDN
+    || i.payments[0].assetId != quoteAsset()
     || !requireMoreMarginRatio(divd(DECIMAL_UNIT, _leverage), initMarginRatio(), true)
   ) then {
     throw("Invalid increasePosition parameters")
@@ -734,13 +751,24 @@ func increasePosition(
       }
       
     }
+
+    let feeToStakers = feeAmount / 2
+    let feeToInsurance = feeAmount - feeToStakers
     
     strict stake = invoke(
-      USDN_STAKING,
-      "lockNeutrino",
-      [],
-      [AttachedPayment(USDN, _amount)]
+      quoteAssetStaking(),
+      "lockNeutrinoSP",
+      [stakingAddress().toString(), ALL_FEES],
+      [AttachedPayment(quoteAsset(), _amount)]
     )
+
+    strict depositInsurance = invoke(
+      insuranceAddress(),
+      "deposit",
+      [],
+      [AttachedPayment(quoteAsset(), feeToInsurance)]
+    )
+
     
     updatePosition(
       i.caller.toString(),
@@ -759,7 +787,7 @@ func increasePosition(
       openInteresetNotionalAfter
     )
     ++
-    transferFee(feeAmount)
+    transferFee(feeToStakers)
     ++
     upblc(cbalance() + _amount)
   }
@@ -769,7 +797,7 @@ func increasePosition(
 func addMargin() = {
   let _rawAmount = i.payments[0].amount
   if (
-    i.payments[0].assetId != USDN
+    i.payments[0].assetId != quoteAsset()
     || !requireOpenPosition(i.caller.toString())
   ) then {
     throw("Invalid addMargin parameters")
@@ -784,11 +812,21 @@ func addMargin() = {
       oldPositionLstUpdCPF
     ) = getPosition(i.caller.toString())
 
+    let feeToStakers = feeAmount / 2
+    let feeToInsurance = feeAmount - feeToStakers
+    
     strict stake = invoke(
-      USDN_STAKING,
-      "lockNeutrino",
+      quoteAssetStaking(),
+      "lockNeutrinoSP",
+      [stakingAddress().toString(), ALL_FEES],
+      [AttachedPayment(quoteAsset(), _amount)]
+    )
+
+    strict depositInsurance = invoke(
+      insuranceAddress(),
+      "deposit",
       [],
-      [AttachedPayment(USDN, _amount)]
+      [AttachedPayment(quoteAsset(), feeToInsurance)]
     )
 
     updatePosition(
@@ -799,7 +837,7 @@ func addMargin() = {
       oldPositionLstUpdCPF
     )
     ++
-    transferFee(feeAmount)
+    transferFee(feeToStakers)
     ++
     upblc(cbalance() + _amount)
   }
@@ -834,9 +872,9 @@ func removeMargin(
       throw("Invalid added margin amount")
     } else {
       strict unstake = invoke(
-        USDN_STAKING,
+        quoteAssetStaking(),
         "unlockNeutrino",
-        [_amount, USDN.toBase58String()],
+        [_amount, quoteAsset().toBase58String()],
         []
       )
       
@@ -888,7 +926,7 @@ func closePosition() = {
 
       strict x = if (fromi > 0) then {
         strict withdrawInsurance = invoke(
-          INSURANCE_ADDRESS,
+          insuranceAddress(),
           "withdraw",
           [fromi],
           []
@@ -899,9 +937,9 @@ func closePosition() = {
       }
 
       strict unstake = invoke(
-        USDN_STAKING,
+        quoteAssetStaking(),
         "unlockNeutrino",
-        [withdrawAmount - fromi, USDN.toBase58String()],
+        [withdrawAmount - fromi, quoteAsset().toBase58String()],
         []
       )
       
@@ -968,7 +1006,7 @@ func liquidate(_trader: String) = {
 
     strict x = if (fromi > 0) then {
       strict withdrawInsurance = invoke(
-        INSURANCE_ADDRESS,
+        insuranceAddress(),
         "withdraw",
         [fromi],
         []
@@ -979,9 +1017,9 @@ func liquidate(_trader: String) = {
     }
 
     strict unstake = invoke(
-      USDN_STAKING,
+      quoteAssetStaking(),
       "unlockNeutrino",
-      [feeToLiquidator - fromi, USDN.toBase58String()],
+      [feeToLiquidator - fromi, quoteAsset().toBase58String()],
       []
     )
 
@@ -1018,40 +1056,46 @@ func payFunding() = {
     let totalTraderPositionSize = totalPositionSize()
     let ammFundingPaymentProfit = muld(premiumFraction, totalTraderPositionSize)
     let fundingAmount = abs(ammFundingPaymentProfit)
-    if (ammFundingPaymentProfit < 0) then {
+    let balanceChange = if (ammFundingPaymentProfit < 0) then {
         strict withdrawInsurance = invoke(
-          INSURANCE_ADDRESS,
+          insuranceAddress(),
           "withdraw",
           [fundingAmount],
           []
         )
 
         strict stake = invoke(
-          USDN_STAKING,
-          "lockNeutrino",
-          [],
-          [AttachedPayment(USDN, fundingAmount)]
+          quoteAssetStaking(),
+          "lockNeutrinoSP",
+          [stakingAddress().toString(), ALL_FEES],
+          [AttachedPayment(quoteAsset(), fundingAmount)]
         )
 
         upblc(cbalance() + fundingAmount)
       } else {
+        if (ammFundingPaymentProfit != 0) then {
           strict unstake = invoke(
-            USDN_STAKING,
+            quoteAssetStaking(),
             "unlockNeutrino",
-            [fundingAmount, USDN.toBase58String()],
+            [fundingAmount, quoteAsset().toBase58String()],
             []
           )
 
           strict depositInsurance = invoke(
-            INSURANCE_ADDRESS,
+            insuranceAddress(),
             "deposit",
             [],
-            [AttachedPayment(USDN, fundingAmount)]
+            [AttachedPayment(quoteAsset(), fundingAmount)]
           )
 
           upblc(cbalance() - fundingAmount)
-      } 
-      ++ 
+        } else {
+          upblc(cbalance() - fundingAmount)
+        }
+      }
+
+      balanceChange 
+      ++  
       updateFunding(
         0,
         fundingBlockTimestamp + fundingPeriodSeconds(),
@@ -1068,5 +1112,6 @@ func v_get(_trader: String) = {
   throw(s(x2) + s(x3) + s(x4) + s(getMarginRatio(_trader)))
 }
 
+
 @Verifier(tx)
-func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], ADMIN_PUBLIC_KEY)
+func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], adminPublicKey())

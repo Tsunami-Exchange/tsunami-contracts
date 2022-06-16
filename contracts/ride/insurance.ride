@@ -6,21 +6,35 @@
 
 ##### Key constants #####
 
-# Insurance fundsac
-let k_insurance = "k_insurance"
-let k_whitelistt = "k_whitelist"
+# Insurance funds
+let k_insurance = "k_insurance" # Amount of funds in insurance fund
 
-##### Updateable (environment) constants #####
-let ADMIN_ADDRESS = Address(base58'3MseEJNEHkYhvcHre6Mann1F8e27S1qptdg')
-let ADMIN_PUBLIC_KEY = base58'A6ZtwikNTr19YpC1t6HnNGCBJF6GTx62DhEkJpgpzpmL'
-let USDN = base58'HezsdQuRDtzksAYUy97gfhKy7Z1NW2uXYSHA3bgqenNZ'
-let USDN_STAKING = Address(base58'3N9LkJahTMx41wGhSxLS42prCZtRCp4dhTs')
+# Coordinator
+let k_coordinatorAddress = "k_coordinatorAddress" # Address of Coordinator (base contract that keeps refereences to all infrastructure)
+let k_amm = "k_amm"                               # Marks valid AMM addresses (for insurance)
+let k_insurance_address = "k_insurance_address"   # Address of insurance contractt
+let k_admin_address = "k_admin_address"           # Address of admin account           
+let k_admin_public_key = "k_admin_public_key"     # Pubic key of admin account
+let k_quote_asset = "k_quote_asset"               # Address of quote asset (USDN in our case)
+let k_quote_staking = "k_quote_staking"           # Address of quote asset staking contract (USDN staking in our case)
+let k_staking_address = "k_staking_address"       # Address that should receive staking benefits
+
+# Global initialization state
+let k_initialized = "k_initialized"               # If Insurance was properly initialized
 
 ##### View functions #####
 func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
 
 func insurance() = this.getInteger(k_insurance).valueOrElse(0)
-func isWhitelist(_address: String) = getBoolean(this, k_whitelistt.toCompositeKey(_address)).valueOrElse(false)
+func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
+func isWhitelist(_address: String) = getBoolean(coordinator(), k_amm.toCompositeKey(_address)).valueOrElse(false)
+func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
+func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
+func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
+func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
+func quoteAssetStaking() = addressFromString(coordinator().getStringValue(k_quote_staking)).valueOrErrorMessage("Quote assete staking not set")
+func stakingAddress() = addressFromString(coordinator().getStringValue(k_staking_address)).valueOrErrorMessage("Insurance not set")
+func insuranceAddress() = addressFromString(coordinator().getStringValue(k_insurance_address)).valueOrErrorMessage("Insurance not set")
 
 ##### Internal functions #####
 func updateInsurance(i: Int) = {
@@ -30,27 +44,15 @@ func updateInsurance(i: Int) = {
 }
 
 @Callable(i)
-func addWhitelist(_addresss: String) = {
-  if (
-    i.caller != ADMIN_ADDRESS
-  ) then {
-    throw("Invalid addWhitelist params")
+func initialize(
+  _coordinator: String
+) = {
+  if (initialized()) then {
+    throw("Already initialized")
   } else {
     [
-      BooleanEntry(k_whitelistt.toCompositeKey(_addresss), true)
-    ]
-  }
-}
-
-@Callable(i)
-func removeWhitelist(_addresss: String) = {
-  if (
-    i.caller != ADMIN_ADDRESS
-  ) then {
-    throw("Invalid addWhitelist params")
-  } else {
-    [
-      BooleanEntry(k_whitelistt.toCompositeKey(_addresss), false)
+      StringEntry(k_coordinatorAddress, _coordinator),
+      BooleanEntry(k_initialized, true)
     ]
   }
 }
@@ -59,14 +61,15 @@ func removeWhitelist(_addresss: String) = {
 func withdraw(_amount: Int) = {
   if (
     !isWhitelist(i.caller.toString()) 
+    || !initialized()
     || _amount > insurance()
   ) then {
-    throw("Invalid withdraw params")
+    throw("Invalid withdraw params " + _amount.toString() + " > " + insurance().toString())
   } else {
     strict unstake = invoke(
-      USDN_STAKING,
+      quoteAssetStaking(),
       "unlockNeutrino",
-      [_amount, USDN.toBase58String()],
+      [_amount, quoteAsset().toBase58String()],
       []
     )
 
@@ -74,7 +77,7 @@ func withdraw(_amount: Int) = {
     updateInsurance(insurance() - _amount)
     ++
     [
-      ScriptTransfer(i.caller, _amount, USDN)
+      ScriptTransfer(i.caller, _amount, quoteAsset())
     ]
   }
 }
@@ -83,16 +86,17 @@ func withdraw(_amount: Int) = {
 func deposit() = {
   let _amount = i.payments[0].amount
   if (
-    i.payments[0].assetId != USDN
-    || (!isWhitelist(i.caller.toString()) && i.caller != ADMIN_ADDRESS)
+    i.payments[0].assetId != quoteAsset()
+    || !initialized()
+    || (!isWhitelist(i.caller.toString()) && i.caller != adminAddress())
   ) then {
     throw("Invalid deposit params")
   } else {
     strict stake = invoke(
-      USDN_STAKING,
+      quoteAssetStaking(),
       "lockNeutrino",
       [],
-      [AttachedPayment(USDN, _amount)]
+      [AttachedPayment(quoteAsset(), _amount)]
     )
 
     updateInsurance(insurance() + _amount)
@@ -100,4 +104,4 @@ func deposit() = {
 }
 
 @Verifier(tx)
-func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], ADMIN_PUBLIC_KEY)
+func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], adminPublicKey())

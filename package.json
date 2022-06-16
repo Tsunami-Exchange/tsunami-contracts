@@ -5,6 +5,7 @@
   "scripts": {
     "test": "mocha simulation/vamm_test.js",
     "test2": "mocha simulation/vamm_test2.js",
+    "test3": "mocha simulation/vamm_test_3.js",
     "ride-test": "cd contracts && surfboard test"
   },
   "devDependencies": {
