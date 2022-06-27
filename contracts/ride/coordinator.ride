@@ -14,6 +14,7 @@ let k_quote_staking = "k_quote_staking"           # Address of quote asset staki
 let k_staking_address = "k_staking_address"       # Address that should receive staking benefits
 let k_amm = "k_amm"                               # Marks valid AMM addresses (for insurance)
 let k_amm_data = "k_amm_data"                     # Contais data of AMM (for UI)
+let k_governance_asset = "k_gov_asset"            # Governance (TSN) asset address
 
 ##### View functions #####
 func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
@@ -28,20 +29,14 @@ func isAdmin(i: Invocation) = if (i.caller == admin()) then unit else throw("Onl
 
 @Callable(i)
 func setAdmin(
-  _adminAddress: String,
   _adminPublicKey: String
 ) = isNoAdminOrAdmin(i).valueOrElse({
-  let address = getAddressIfValid(_adminAddress)
   let bytes = fromBase58String(_adminPublicKey)
-  let x = addressFromPublicKey(bytes)
-  if (x.toString() != address) then {
-    throw("Address and public key do not match")
-  } else {
-    [
-      StringEntry(k_admin_address, _adminAddress),
-      StringEntry(k_admin_public_key, _adminPublicKey)
-    ]
-  }
+  let address = addressFromPublicKey(bytes)
+  [
+    StringEntry(k_admin_address, address.toString()),
+    StringEntry(k_admin_public_key, _adminPublicKey)
+  ]
 })
 
 @Callable(i)
@@ -97,6 +92,22 @@ func removeAmm(
   ]
 })
 
+@Callable(i)
+func setGovernanceAsset(_assetId: String) = isAdmin(i).valueOrElse({
+  let assetBytes = fromBase58String(_assetId)
+  match assetInfo(assetBytes) {
+    case asset:Asset => {
+      if (asset.decimals != 8) then {
+        throw("Invalid asset decimals, shoul be 8")
+      } else {
+        [
+      StringEntry(k_governance_asset, _assetId)
+    ]
+      }
+    }
+    case _ => throw("Can't find asset")
+  }
+})
+
 @Verifier(tx)
 func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], adminPublicKey().fromBase58String())
-        

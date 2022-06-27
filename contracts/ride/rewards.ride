@@ -17,21 +17,31 @@
   let k_userRewardPerToken = "k_userRewardPerToken"
   let k_userReward = "k_userReward"
 
-  ##### Updateable (environment) constants #####
-  let ADMIN_ADDRESS = Address(base58'3MseEJNEHkYhvcHre6Mann1F8e27S1qptdg')
-  let ADMIN_PUBLIC_KEY = base58'A6ZtwikNTr19YpC1t6HnNGCBJF6GTx62DhEkJpgpzpmL'
-  let USDN  = base58'HezsdQuRDtzksAYUy97gfhKy7Z1NW2uXYSHA3bgqenNZ'
-  let TSN   = base58'HezsdQuRDtzksAYUy97gfhKy7Z1NW2uXYSHA3bgqenNY'
+  # Initialization status
+  let k_initialized = "k_initialized"
 
+  # Coordinator
+  let k_coordinatorAddress = "k_coordinatorAddress"
+  let k_governance_asset = "k_gov_asset"
+  let k_quote_asset = "k_quote_asset" 
+  let k_admin_public_key = "k_admin_public_key"   
+
+  ##### Updateable (environment) constants #####
+  func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
+  func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
+  func governanceAsset() = fromBase58String(coordinator().getStringValue(k_governance_asset))
+  func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
 
   ##### Core constants #####
 
-  let DECIMAL_UNIT = 1 * (10 * 10 * 10 * 10 * 10 * 10)
+  let DECIMAL_UNIT = 1 * (10 * 10 * 10 * 10 * 10 * 10 * 10 * 10) # 10 ** 8
   let DURATION = 60 * 60 * 24 # 1 day
   let NO_ADDDRESS = ""
   let NO_STAKER = 0
 
   ##### Helper functions #####
+  func usdnFromDecimals(_amount: Int)  = _amount / 100
+  func usdnToDecimals(_amount: Int)    = _amount * 100
 
   func divd(_x: Int, _y: Int) = fraction(_x, DECIMAL_UNIT, _y, HALFEVEN)
   func muld(_x: Int, _y: Int) = fraction(_x, _y, DECIMAL_UNIT, HALFEVEN)
@@ -53,6 +63,8 @@
   func rewards(_staker: String) = int0(k_userReward.toCompositeKey(_staker))
   func userRewardPerTokenPaid(_staker: String) = int0(k_userRewardPerToken.toCompositeKey(_staker))
   func balanceOf(_staker: String) = int0(k_balance.toCompositeKey(_staker))
+
+  func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
 
   ##### Update functions #####
   func updateRewardBalance(_delta: Int) = {
@@ -150,11 +162,27 @@
   }
 
   @Callable(i)
+  func initialize(
+    _coordinator: String
+  ) = {
+    if (initialized()) then {
+      throw("Already initialized")
+    } else {
+      [
+        StringEntry(k_coordinatorAddress, _coordinator),
+        BooleanEntry(k_initialized, true)
+      ]
+    }
+  }
+
+  @Callable(i)
   func stake() = {
     let _staker = i.caller.toString()
     let _amount = i.payments[0].amount
-    if (i.payments[0].assetId != TSN) then {
-      throw("Invalid staking asset")
+    if (i.payments[0].assetId != governanceAsset() 
+      || !initialized()
+    ) then {
+      throw("Invalid call to  stake")
     } else {
         let (
           newRewardPerTokenStored,
@@ -179,6 +207,7 @@
     if (
       _amount > balanceOf(_staker)
       || i.payments != []
+      || !initialized()
     ) then {
       throw("Invalid unStake parametetrs")
     } else {
@@ -198,7 +227,7 @@
         updateBalance(_staker, -_amount)
         ++
         [
-          ScriptTransfer(i.caller, _amount, TSN)
+          ScriptTransfer(i.caller, _amount, governanceAsset())
         ]
     }
   }
@@ -213,7 +242,7 @@
       stakerEarned,
       stakerRewardPerTokenPaid
     ) = updateReward(_staker, 0)
-    if (stakerEarned <= 0) then {
+    if (stakerEarned <= 0 || !initialized()) then {
       throw("No reward")
     } else {
       updateUserRewards(_staker, 0, stakerRewardPerTokenPaid)
@@ -225,7 +254,7 @@
       updateRewardBalance(-stakerEarned)
       ++
       [
-        ScriptTransfer(i.caller, stakerEarned, USDN)
+        ScriptTransfer(i.caller, stakerEarned.usdnFromDecimals(), quoteAsset())
       ]
     }
   }
@@ -233,10 +262,10 @@
   # New rewards added to contract
   @Callable(i)
   func addRewards() = {
-    if (i.payments[0].assetId != USDN) then {
+    if (i.payments[0].assetId != quoteAsset() || !initialized()) then {
       throw("Invaliid addRewards params")
     } else {
-      let _reward = i.payments[0].amount
+      let _reward = i.payments[0].amount.usdnToDecimals()
       # assume DURATION = 1 day, (existing) rewardRate = 1, and new incoming _reward = 2
       let newRewardPerTokenStored = updateReward(NO_ADDDRESS, NO_STAKER)._1
 
@@ -266,7 +295,7 @@
 
   @Callable(i)
   func ackRewards() = {
-    let currentBalance = assetBalance(this, USDN)
+    let currentBalance = assetBalance(this, quoteAsset()).usdnToDecimals()
     let rewardBalancee = rewardBalance()
     let rewardDelta = currentBalance - rewardBalancee
     if (rewardDelta <= 0) then {
@@ -303,9 +332,9 @@
   @Callable(i)
   func view_reward(_staker: String) = {
       let stakerEarned = updateReward(_staker, 0)._3
-      throw(stakerEarned.toString())
+      throw(stakerEarned.usdnFromDecimals().toString())
   }
 
   @Verifier(tx)
-  func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], ADMIN_PUBLIC_KEY)
+  func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], adminPublicKey())
           
