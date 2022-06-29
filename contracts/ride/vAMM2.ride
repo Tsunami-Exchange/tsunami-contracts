@@ -40,15 +40,18 @@ let k_twapDataLastPrice = "k_twapDataLastPrice"
 let k_twap = "k_twap"
 
 # Funding state
-let k_latestCumulativePremiumFraction = "k_latestPremiumFraction" # Latst Commulitive Permium Fraction
+let k_latestLongCumulativePremiumFraction = "k_latestLongPremiumFraction" # Latst Сommulitive Permium Fraction. (Part of Premium paid this fundnig period). Premium = MarkProce - IndexPrice
+let k_latestShortCumulativePremiumFraction = "k_latestShortPremiumFraction" # Latst Сommulitive Permium Fraction. (Part of Premium paid this fundnig period). Premium = MarkProce - IndexPrice
 let k_nextFundingBlock = "k_nextFundingBlockMinTimestamp"         # Timestamp of Next block when funding becomes avialible
-let k_fundingRate = "k_fundingRate"                               # Funding rate  ((market price - index price) / index price) / 24
+let k_longFundingRate = "k_longFundingRate"                       # Funding rate  Сommulitive Permium Fraction / Index Price
+let k_shortFundingRate = "k_shortFundingRate"                     # Funding rate  Сommulitive Permium Fraction / Index Price
 
 # AMM State
 let k_quoteAssetReserve = "k_qtAstR"                      # Quote Asset Reserve (AMM)
 let k_baseAssetReserve = "k_bsAstR"                       # Base Asset Reserve (AMM)
-let k_baseAsstFndDelt = "k_baseAssetDelta"                # Difference in base asset this fundind period (set to 0 when funding is paid, upated at every swap)                 
 let k_totalPositionSize = "k_totalPositionSize"           # Total trader position size (in Base asset)
+let k_totalLongPositionSize = "k_totalLongPositionSize"   # Total LONG trader position size (in Base asset)
+let k_totalShortPositionSize = "k_totalShortPositionSize" # Total SHORT trader position size (in Base asset)
 let k_cumulativeNotional = "k_cumulativeNotional"         # Cumulatiev Notiinal (all positions)
 let k_openInteresetNotional = "k_openInteresetNotional"   # Open Interest Notional (all positions)
 
@@ -119,10 +122,8 @@ func fee() = int(k_fee)
 func initMarginRatio() = int(k_initMarginRatio)
 func qtAstR() = int(k_quoteAssetReserve)
 func bsAstR() = int(k_baseAssetReserve)
-func baseAsstFndDelt() = int(k_baseAsstFndDelt)
 func totalPositionSize() = int(k_totalPositionSize)
 func cumulativeNotional() = int(k_cumulativeNotional)
-func latestCPF() = int(k_latestCumulativePremiumFraction)
 func openInteresetNotional() = int(k_openInteresetNotional)
 func nextFundingBlockTimestamp() = int(k_nextFundingBlock)
 func fundingPeriodRaw() = int(k_fundingPeriod)
@@ -132,6 +133,16 @@ func mmr() = int(k_maintenanceMarginRatio)
 func liquidationFeeRatio() = int(k_liquidationFeeRatio)
 func spreadLimit() = int(k_spreadLimit)
 func maxPriceImpact() = int(k_maxPriceImpact)
+func latestLongCumulativePremiumFraction() = int(k_latestLongCumulativePremiumFraction)
+func latestShortCumulativePremiumFraction() = int(k_latestShortCumulativePremiumFraction)
+func totalShortPositionSize() = int(k_totalShortPositionSize)
+func totalLongPositionSize() = int(k_totalLongPositionSize)
+
+func latestCPF(
+  _positionSize: Int
+) = if (_positionSize > 0) 
+  then latestLongCumulativePremiumFraction() 
+  else latestShortCumulativePremiumFraction()
 
 func getPosition(invesor: String) = {
   let positionSizeOpt = this.getInteger(k_positionSize.toCompositeKey(invesor))
@@ -157,14 +168,6 @@ func requireOpenPosition(_trader: String) = {
 func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
 func paused() = this.getBoolean(k_paused).valueOrElse(false)
 
-#####
-##### TODO LIST
-#####   1. [ ] Price Manupulation Protection (use TWAP market price in case of luquidation)
-#####   2. [x] Introduce pause function 
-#####   3. [ ] Introduce price impact limit when opening a position (no more that hard 2.5% for examplle)
-#####   4. [ ] Introduce inittial margin ration
-#####
-
 ##### Internal functions #####
 func updateReserve(_isAdd: Boolean, _quoteAssetAmount: Int, _baseAssetAmount: Int) = {
   if (_isAdd) then {
@@ -175,7 +178,6 @@ func updateReserve(_isAdd: Boolean, _quoteAssetAmount: Int, _baseAssetAmount: In
       (
         qtAstR() + _quoteAssetAmount,
         newBase,
-        baseAsstFndDelt() - _baseAssetAmount,
         totalPositionSize() + _baseAssetAmount,
         cumulativeNotional() + _quoteAssetAmount
       )
@@ -188,7 +190,6 @@ func updateReserve(_isAdd: Boolean, _quoteAssetAmount: Int, _baseAssetAmount: In
       (
         newQuote,
         bsAstR() + _baseAssetAmount,
-        baseAsstFndDelt() + _baseAssetAmount,
         totalPositionSize() - _baseAssetAmount,
         cumulativeNotional() - _quoteAssetAmount
       )
@@ -224,7 +225,6 @@ func swapInput(_isAdd: Boolean, _quoteAssetAmount: Int) = {
     let (
       quoteAssetReserveAfter1,
       baseAssetReserveAfter1,
-      baseAssetDeltaThisFundingPeriodAfter1,
       totalPositionSizeAfter1,
       cumulativeNotionalAfter1
     ) = updateReserve(_isAdd, _quoteAssetAmount, amountBaseAssetBoughtAbs)
@@ -233,7 +233,6 @@ func swapInput(_isAdd: Boolean, _quoteAssetAmount: Int) = {
       amountBaseAssetBought,
       quoteAssetReserveAfter1,
       baseAssetReserveAfter1,
-      baseAssetDeltaThisFundingPeriodAfter1,
       totalPositionSizeAfter1,
       cumulativeNotionalAfter1
     )
@@ -246,10 +245,9 @@ func calcRemainMarginWithFundingPayment(
   _oldPositionLstUpdCPF: Int, 
   _marginDelta: Int
 ) = {
-  let _latestCPF = latestCPF()
+  let _latestCPF = latestCPF(_oldPositionSize)
   let fundingPayment = if (_oldPositionSize != 0) then {
-    muld((_latestCPF - 
-            _oldPositionLstUpdCPF), _oldPositionSize)
+    muld((_latestCPF - _oldPositionLstUpdCPF), _oldPositionSize)
   } else {
     0
   }
@@ -263,8 +261,8 @@ func calcRemainMarginWithFundingPayment(
   (remainMargin, badDebt, fundingPayment, _latestCPF)
 }
 
-func getOutputPriceWithReserves(
-  _add: Boolean, 
+func swapOutput(
+  _isAdd: Boolean, 
   _baseAssetAmount: Int, 
   _quoteAssetPoolAmount: Int, 
   _baseAssetPoolAmount: Int
@@ -273,7 +271,7 @@ func getOutputPriceWithReserves(
     throw("Invalid base asset amount")
   } else {
     let k = muld(_quoteAssetPoolAmount, _baseAssetPoolAmount)
-    let baseAssetPoolAmountAfter = if (_add) then {
+    let baseAssetPoolAmountAfter = if (_isAdd) then {
       _baseAssetPoolAmount + _baseAssetAmount 
     } else {
       _baseAssetPoolAmount - _baseAssetAmount
@@ -285,18 +283,18 @@ func getOutputPriceWithReserves(
     let (
       quoteAssetReserveAfter1,
       baseAssetReserveAfter1,
-      baseAssetDeltaThisFundingPeriodAfter1,
       totalPositionSizeAfter1,
       cumulativeNotionalAfter1
-    ) = updateReserve(!_add, quoteAssetSold, _baseAssetAmount)
+    ) = updateReserve(!_isAdd, quoteAssetSold, _baseAssetAmount)
 
     (
       quoteAssetSold,
       quoteAssetReserveAfter1,
       baseAssetReserveAfter1,
-      baseAssetDeltaThisFundingPeriodAfter1,
       totalPositionSizeAfter1,
-      cumulativeNotionalAfter1
+      cumulativeNotionalAfter1,
+      totalLongPositionSize()  - if (_isAdd)  then abs(_baseAssetAmount) else 0,
+      totalShortPositionSize() - if (!_isAdd) then abs(_baseAssetAmount) else 0
     )
   }
 }
@@ -323,7 +321,7 @@ func getPositionNotionalAndUnrealizedPnl(_trader: String, _option: Int) = {
   let (
       positionSize,
       positionMargin,
-      pon,
+      positionOpenNotional,
       positionLstUpdCPF
     ) = getPosition(_trader)
 
@@ -333,7 +331,7 @@ func getPositionNotionalAndUnrealizedPnl(_trader: String, _option: Int) = {
     } else {
       let isShort = positionSize < 0
       let positionNotional = if (_option == PNL_OPTION_SPOT) then {
-        let (outPositionNotional, x1, x2, x3) = getOutputPriceWithReserves(
+        let (outPositionNotional, x1, x2, x3) = swapOutput(
           !isShort,
           positionSizeAbs,
           qtAstR(),
@@ -345,9 +343,9 @@ func getPositionNotionalAndUnrealizedPnl(_trader: String, _option: Int) = {
       }
 
       let unrealizedPnl = if (isShort) then {
-        pon - positionNotional
+        positionOpenNotional - positionNotional
       } else {
-        positionNotional - pon
+        positionNotional - positionOpenNotional
       }
       (
         positionNotional,
@@ -401,10 +399,11 @@ func internalClosePosition(_trader: String) = {
       exchangedQuoteAssetAmount, 
       quoteAssetReserveAfter,
       baseAssetReserveAfter,
-      baseAssetDeltaThisFundingPeriodAfter,
       totalPositionSizeAfter,
-      cumulativeNotionalAfter 
-    ) = getOutputPriceWithReserves(
+      cumulativeNotionalAfter,
+      totalLongAfter,
+      totalShortAfter
+    ) = swapOutput(
         positionSize > 0,
         abs(positionSize),
         qtAstR(),
@@ -419,11 +418,12 @@ func internalClosePosition(_trader: String) = {
       marginToVault,
       quoteAssetReserveAfter,
       baseAssetReserveAfter,
-      baseAssetDeltaThisFundingPeriodAfter,
       totalPositionSizeAfter,
       cumulativeNotionalAfter,
       openInteresetNotionalAfter,
-      exchangedQuoteAssetAmount
+      exchangedQuoteAssetAmount,
+      totalLongAfter,
+      totalShortAfter
     )
 }
 
@@ -439,8 +439,12 @@ func getTwapSpotPrice() = {
       accum
     }
   }
-  let listF = FOLD<15>(list, [], filterFn)
-  let maxIndex = max(listF)
+  let listF = FOLD<20>(list, [], filterFn)
+  let maxIndex = if (listF.size() > 0) then {
+    max(listF)
+  } else {
+    list.getElement(0).parseIntValue()
+  }
   let lastMinuteId = this.getInteger(k_lastMinuteId).valueOrElse(0)
   let endLastCumulativePrice = this.getInteger(k_twapDataLastCumulativePrice + "_" + lastMinuteId.toString()).valueOrElse(0)
   let endLastPrice = this.getInteger(k_twapDataLastPrice + "_" + lastMinuteId.toString()).valueOrElse(0)
@@ -474,16 +478,18 @@ func updateSettings(
 }
 
 func updateFunding( 
-  _baseADTFP: Int,
   _nextFundingBlock: Int,
-  _latestCPF: Int,
-  _fundingRate: Int
+  _latestLongCumulativePremiumFraction: Int,
+  _latestShortCumulativePremiumFraction: Int,
+  _longFundingRate: Int,
+  _shortFundingRate: Int
 ) = {
   [
-    IntegerEntry(k_baseAsstFndDelt, _baseADTFP),
     IntegerEntry(k_nextFundingBlock, _nextFundingBlock),
-    IntegerEntry(k_latestCumulativePremiumFraction, _latestCPF),
-    IntegerEntry(k_fundingRate, _fundingRate)
+    IntegerEntry(k_latestLongCumulativePremiumFraction, _latestLongCumulativePremiumFraction),
+    IntegerEntry(k_latestShortCumulativePremiumFraction, _latestShortCumulativePremiumFraction),
+    IntegerEntry(k_longFundingRate, _longFundingRate),
+    IntegerEntry(k_shortFundingRate, _shortFundingRate)
   ]
 }
 
@@ -521,7 +527,7 @@ func appendTwap(price: Int) = {
     let lastCummulativePrice = prevCummulativePrice + (minuteId - lastMinuteId) * prevPrice
 
     func join(accum: String, val: String) = accum + val + ","
-    let newListStr = FOLD<15>(list, "", join)
+    let newListStr = FOLD<20>(list, "", join)
     let newListStrU = newListStr.dropRight(1)
     let newListStrR = if (newListStrU.take(1) == ",") then newListStrU.drop(1) else newListStrU     
     [
@@ -536,19 +542,25 @@ func appendTwap(price: Int) = {
 func updateAmm(
   _qtAstR: Int,
   _bsAstR: Int,
-  _baseAssetDeltaThisFundingPeriodAfter: Int,
   _totalPositionSizeAfter: Int,
   _cumulativeNotionalAfter: Int,
-  _openInteresetNotional: Int
+  _openInteresetNotional: Int,
+  _totalLongPositionSize: Int,
+  _totalShortPositionSize: Int
 ) = {
-  [
-    IntegerEntry(k_quoteAssetReserve, _qtAstR),
-    IntegerEntry(k_baseAssetReserve, _bsAstR),
-    IntegerEntry(k_baseAsstFndDelt, _baseAssetDeltaThisFundingPeriodAfter),
-    IntegerEntry(k_totalPositionSize, _totalPositionSizeAfter),
-    IntegerEntry(k_cumulativeNotional, _cumulativeNotionalAfter),
-    IntegerEntry(k_openInteresetNotional, _openInteresetNotional)
-  ] ++ appendTwap(divd(_qtAstR, _bsAstR))
+  if (_totalLongPositionSize - _totalShortPositionSize != _totalPositionSizeAfter) then {
+    throw("Invalid AMM state data: " + _totalLongPositionSize.toString() + " +  " + _totalShortPositionSize.toString() + " != " + _totalPositionSizeAfter.toString())
+  } else {
+    [
+      IntegerEntry(k_quoteAssetReserve, _qtAstR),
+      IntegerEntry(k_baseAssetReserve, _bsAstR),
+      IntegerEntry(k_totalPositionSize, _totalPositionSizeAfter),
+      IntegerEntry(k_cumulativeNotional, _cumulativeNotionalAfter),
+      IntegerEntry(k_openInteresetNotional, _openInteresetNotional),
+      IntegerEntry(k_totalLongPositionSize, _totalLongPositionSize),
+      IntegerEntry(k_totalShortPositionSize, _totalShortPositionSize)
+    ] ++ appendTwap(divd(_qtAstR, _bsAstR))
+  }
 }
 
 func deletePosition(
@@ -679,13 +691,14 @@ func initialize(
   ) then {
     throw("Invalid initialize parameters")
   } else {
-    updateAmm(_qtAstR, _bsAstR, 0, 0, 0, 0)
+    updateAmm(_qtAstR, _bsAstR, 0, 0, 0, 0, 0)
     ++
     updateSettings(_initMarginRatio, _mmr, _liquidationFeeRatio, _fundingPeriod, _fee, _spreadLimit, _maxPriceImpact)
     ++
     updateFunding(
-      0,
       lastBlock.timestamp + _fundingPeriod,
+      0,
+      0,
       0,
       0
     )
@@ -740,10 +753,11 @@ func decreasePosition(
       newPositionLatestCPF,
       baseAssetReserveAfter,
       quoteAssetReserveAfter,
-      baseAssetDeltaThisFundingPeriodAfter,
       totalPositionSizeAfter,
       cumulativeNotionalAfter,
-      openInteresetNotionalAfter
+      openInteresetNotionalAfter,
+      totalLongAfter,
+      totalShortAfter
     ) = if (isNewPosition || expandExisting) then {
       throw("Use increasePosition to open new or increase position")
     } else {
@@ -754,7 +768,6 @@ func decreasePosition(
             exchangedPositionSize, 
             quoteAssetReserveAfter, 
             baseAssetReserveAfter,
-            baseAssetDeltaThisFundingPeriodAfter,
             totalPositionSizeAfter,
             cumulativeNotionalAfter
          ) = swapInput(isAdd, openNotional)
@@ -783,17 +796,19 @@ func decreasePosition(
               unrealizedPnlAfter + oldPositionNotional - exchangedQuoteAssetAmount
             }
 
+            let newPositionSize = oldPositionSize + exchangedPositionSize
             (
-              oldPositionSize + exchangedPositionSize, # positionSize
+              newPositionSize, # positionSize
               remainMargin, # remainMargin
               abs(remainOpenNotional), # pon
               oldLatestCPF, # latestCPF
               baseAssetReserveAfter, # baseAssetReserveAfter
               quoteAssetReserveAfter, # quoteAssetReserveAfter
-              baseAssetDeltaThisFundingPeriodAfter, # baseAssetDeltaThisFundingPeriodAfter
               totalPositionSizeAfter, # totalPositionSizeAfter
               cumulativeNotionalAfter, # cumulativeNotionalAfter
-              openInteresetNotional() - openNotional # openInteresetNotionalAfter
+              openInteresetNotional() - openNotional, # openInteresetNotionalAfter
+              totalLongPositionSize() - if (newPositionSize > 0) then abs(exchangedPositionSize) else 0,
+              totalShortPositionSize() - if (newPositionSize < 0) then abs(exchangedPositionSize) else 0
             )
           }
       } else {
@@ -812,10 +827,11 @@ func decreasePosition(
     updateAmm(
       quoteAssetReserveAfter,
       baseAssetReserveAfter,
-      baseAssetDeltaThisFundingPeriodAfter,
       totalPositionSizeAfter,
       cumulativeNotionalAfter,
-      openInteresetNotionalAfter
+      openInteresetNotionalAfter,
+      totalLongAfter,
+      totalShortAfter
     )
   }
 }
@@ -862,17 +878,17 @@ func increasePosition(
       newPositionLatestCPF,
       baseAssetReserveAfter,
       quoteAssetReserveAfter,
-      baseAssetDeltaThisFundingPeriodAfter,
       totalPositionSizeAfter,
       cumulativeNotionalAfter,
-      openInteresetNotionalAfter
+      openInteresetNotionalAfter,
+      totalLongAfter,
+      totalShortAfter
     ) = if (isNewPosition || expandExisting) then {
       let openNotional = muld(_amount, _leverage)
       let ( 
         amountBaseAssetBought,
         quoteAssetReserveAfter, 
         baseAssetReserveAfter,
-        baseAssetDeltaThisFundingPeriodAfter,
         totalPositionSizeAfter,
         cumulativeNotionalAfter
       ) = swapInput(isAdd, openNotional)
@@ -889,6 +905,7 @@ func increasePosition(
                 oldPositionLstUpdCPF, 
                 increaseMarginRequirement
             )
+        
         (
           newPositionSize, # positionSize
           remainMargin, # remainMargin
@@ -896,10 +913,11 @@ func increasePosition(
           oldLatestCPF, # latestCPF
           baseAssetReserveAfter, # baseAssetReserveAfter
           quoteAssetReserveAfter, # quoteAssetReserveAfter
-          baseAssetDeltaThisFundingPeriodAfter, # baseAssetDeltaThisFundingPeriodAfter
           totalPositionSizeAfter, # totalPositionSizeAfter
           cumulativeNotionalAfter, # cumulativeNotionalAfter
-          openInteresetNotional() + openNotional # openInteresetNotionalAfter
+          openInteresetNotional() + openNotional, # openInteresetNotionalAfter
+          totalLongPositionSize() + if (newPositionSize > 0) then abs(amountBaseAssetBought) else 0,
+          totalShortPositionSize() + if (newPositionSize < 0) then abs(amountBaseAssetBought) else 0
         )
        }
     } else {
@@ -942,10 +960,11 @@ func increasePosition(
     updateAmm(
       quoteAssetReserveAfter,
       baseAssetReserveAfter,
-      baseAssetDeltaThisFundingPeriodAfter,
       totalPositionSizeAfter,
       cumulativeNotionalAfter,
-      openInteresetNotionalAfter
+      openInteresetNotionalAfter,
+      totalLongAfter,
+      totalShortAfter
     )
     ++
     transferFee(feeToStakers)
@@ -995,7 +1014,7 @@ func addMargin() = {
     updatePosition(
       i.caller.toString(),
       oldPositionSize,
-      oldPositionMargin + i.payments[0].amount,
+      oldPositionMargin + _amount,
       oldPositionOpenNotional,
       oldPositionLstUpdCPF
     )
@@ -1069,34 +1088,36 @@ func closePosition() = {
   } else {
     let (
           x1,
-          badDebt,
+          positionBadDebt,
           realizedPnl,
           marginToVault,
           quoteAssetReserveAfter,
           baseAssetReserveAfter,
-          baseAssetDeltaThisFundingPeriodAfter,
           totalPositionSizeAfter,
           cumulativeNotionalAfter,
-          openInteresetNotionalAfter
+          openInteresetNotionalAfter,
+          x2,
+          totalLongAfter,
+          totalShortAfter
     ) = internalClosePosition(i.caller.toString())
 
-    if (badDebt > 0) then {
+    if (positionBadDebt > 0) then {
       throw("Unable to close position with bad debt")
     } else {
       let withdrawAmount = abs(marginToVault)
 
-      let bd = cbalance() - withdrawAmount
-      let (nb, fromi) = if (bd < 0) then {
-        (0, abs(bd))
+      let ammBalance = cbalance() - withdrawAmount
+      let (ammNewBalance, getFromInsurance) = if (ammBalance < 0) then {
+        (0, abs(ammBalance))
       } else {
-        (bd, 0)
+        (ammBalance, 0)
       }
 
-      strict x = if (fromi > 0) then {
+      strict x = if (getFromInsurance > 0) then {
         strict withdrawInsurance = invoke(
           insuranceAddress(),
           "withdraw",
-          [fromi],
+          [getFromInsurance],
           []
         )
         []
@@ -1107,7 +1128,7 @@ func closePosition() = {
       strict unstake = invoke(
         quoteAssetStaking(),
         "unlockNeutrino",
-        [withdrawAmount - fromi, quoteAsset().toBase58String()],
+        [withdrawAmount - getFromInsurance, quoteAsset().toBase58String()],
         []
       )
       
@@ -1116,15 +1137,16 @@ func closePosition() = {
       updateAmm(
         quoteAssetReserveAfter,
         baseAssetReserveAfter,
-        baseAssetDeltaThisFundingPeriodAfter,
         totalPositionSizeAfter,
         cumulativeNotionalAfter,
-        openInteresetNotionalAfter
+        openInteresetNotionalAfter,
+        totalLongAfter,
+        totalShortAfter
       )
       ++
       withdraw(i.caller, withdrawAmount)
       ++
-      updateBalance(nb)
+      updateBalance(ammNewBalance)
     }
   }
 }
@@ -1150,11 +1172,12 @@ func liquidate(_trader: String) = {
       marginToVault,
       quoteAssetReserveAfter,
       baseAssetReserveAfter,
-      baseAssetDeltaThisFundingPeriodAfter,
       totalPositionSizeAfter,
       cumulativeNotionalAfter,
       openInteresetNotionalAfter,
-      exchangedQuoteAssetAmount
+      exchangedQuoteAssetAmount,
+      totalLongAfter,
+      totalShortAfter
     ) = internalClosePosition(_trader)
     let feeToLiquidator = muld(exchangedQuoteAssetAmount, liquidationFeeRatio()) / 2
     let (liquidationBadDebt, remainMargin, totalBadDebt) = if (feeToLiquidator > marginToVault) then {
@@ -1202,10 +1225,11 @@ func liquidate(_trader: String) = {
     updateAmm(
       quoteAssetReserveAfter,
       baseAssetReserveAfter,
-      baseAssetDeltaThisFundingPeriodAfter,
       totalPositionSizeAfter,
       cumulativeNotionalAfter,
-      openInteresetNotionalAfter
+      openInteresetNotionalAfter,
+      totalLongAfter,
+      totalShortAfter
     )
     ++
     withdraw(i.caller, feeToLiquidator)
@@ -1227,13 +1251,37 @@ func payFunding() = {
     let underlyingPrice = getOracleTwapPrice()
     let spotTwapPrice = getTwapSpotPrice()
     let premium = spotTwapPrice - underlyingPrice
-    let premiumFraction = divd(muld(premium, fundingPeriodDecimal()), ONE_DAY)
+    let (shortPremiumFraction, longPremiumFraction) =
+      # Handle special case: no shorts, or no longs. In this case funding in this period not exchanged.  
+      #
+      if (totalShortPositionSize() == 0 || totalLongPositionSize() == 0) then {
+        (0, 0)
+      } else {
+        if (premium < 0) then {
+          # underlyingPrice > spotTwapPrice, need to push spotTwapPrice UP, short pays the longs
+          # how much to take from shorts this funding period
+          let shortPremiumFraction = divd(muld(premium, fundingPeriodDecimal()), ONE_DAY)
 
+          # how much longs will get from shorts totall this funding period
+          let longPremiumFraction = divd(muld(shortPremiumFraction, totalShortPositionSize()), totalLongPositionSize())
+          (shortPremiumFraction, longPremiumFraction)
+        } else {
+          # underlyingPrice < spotTwapPrice, need to push spotTwapPrice DOWN, longs pays the shorts
+          # how much to take from longs this funding period
+          let longPremiumFraction = divd(muld(premium, fundingPeriodDecimal()), ONE_DAY)
+
+          # how much shorts will get from longs totall this funding period
+          let shortPremiumFraction = divd(muld(longPremiumFraction, totalLongPositionSize()), totalShortPositionSize())
+          (shortPremiumFraction, longPremiumFraction)
+        }
+      }
+    
     updateFunding(
-      0,
       fundingBlockTimestamp + fundingPeriodSeconds(),
-      latestCPF() + premiumFraction,
-      divd(premiumFraction, underlyingPrice)
+      latestLongCumulativePremiumFraction() + longPremiumFraction,
+      latestShortCumulativePremiumFraction() + shortPremiumFraction,
+      divd(longPremiumFraction, underlyingPrice),
+      divd(shortPremiumFraction, underlyingPrice)
     )
   }
 }
@@ -1242,6 +1290,24 @@ func payFunding() = {
 func v_get(_trader: String) = {
   let (x1, x2, x3, x4) = internalClosePosition(_trader)
   throw(s(x2) + s(x3) + s(x4) + s(getMarginRatio(_trader)))
+}
+
+@Callable(i)
+func view_calcRemainMarginWithFundingPayment(_trader: String) = {
+    let (
+      positionSize,
+      positionMargin,
+      pon,
+      positionLstUpdCPF
+    ) = getPosition(_trader)
+    let (positionNotional, unrealizedPnl) = getPositionNotionalAndUnrealizedPnl(_trader, PNL_OPTION_SPOT)
+    let (remainMargin, badDebt, fundingPayment) = calcRemainMarginWithFundingPayment(
+        positionSize,
+        positionMargin,
+        positionLstUpdCPF,
+        unrealizedPnl
+    )
+    throw(s(remainMargin) + s(fundingPayment))
 }
 
 
