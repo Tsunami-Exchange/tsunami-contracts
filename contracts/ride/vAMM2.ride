@@ -129,7 +129,7 @@ func nextFundingBlockTimestamp() = int(k_nextFundingBlock)
 func fundingPeriodRaw() = int(k_fundingPeriod)
 func fundingPeriodDecimal() = fundingPeriodRaw() * DECIMAL_UNIT
 func fundingPeriodSeconds() = fundingPeriodRaw() * SECONDS
-func mmr() = int(k_maintenanceMarginRatio)
+func maintenanceMarginRatio() = int(k_maintenanceMarginRatio)
 func liquidationFeeRatio() = int(k_liquidationFeeRatio)
 func spreadLimit() = int(k_spreadLimit)
 func maxPriceImpact() = int(k_maxPriceImpact)
@@ -1153,13 +1153,16 @@ func closePosition() = {
 
 @Callable(i)
 func liquidate(_trader: String) = {
+  # If market (future) price and index price diverge a lot, use index price to compute
+  # liquidation margin. That provides additional safety layer for traders
+  #
   let marginRatio = if (isOverFluctuationLimit()) then {
     getMarginRatioByOption(_trader, PNL_OPTION_ORACLE)
   } else {
     getMarginRatioByOption(_trader, PNL_OPTION_SPOT)
   }
   if (
-    !requireMoreMarginRatio(marginRatio, mmr(), false)
+    !requireMoreMarginRatio(marginRatio, maintenanceMarginRatio(), false)
     || !initialized()
     || paused()
   ) then {
@@ -1179,33 +1182,27 @@ func liquidate(_trader: String) = {
       totalLongAfter,
       totalShortAfter
     ) = internalClosePosition(_trader)
-    let feeToLiquidator = muld(exchangedQuoteAssetAmount, liquidationFeeRatio()) / 2
-    let (liquidationBadDebt, remainMargin, totalBadDebt) = if (feeToLiquidator > marginToVault) then {
-      (
-        feeToLiquidator - marginToVault, # liquidationBadDebt
-        marginToVault, # remainMargin
-        badDebt + feeToLiquidator - marginToVault # totalBadDebt
-      )
+    
+    # Liquidator get a certain (liquidationFeeRatio) percentage from a total position
+    #
+    let liquidationPenalty = muld(exchangedQuoteAssetAmount, liquidationFeeRatio())
+    let feeToLiquidator = liquidationPenalty / 2
+    let feeToInsurance = liquidationPenalty - feeToLiquidator
+
+    # Liquidating a position can incur bad debt. If AMM does not have enogh funds to cover up bad debt
+    # use Insurance Fund to cover it up
+    let ammBadDebt = cbalance() - liquidationPenalty
+    let (newAmmBalance, takeFromInsurance) = if (ammBadDebt < 0) then {
+      (0, abs(ammBadDebt))
     } else {
-      (
-        0, # liquidationBadDebt
-        marginToVault - feeToLiquidator, 
-        badDebt
-      )
+      (ammBadDebt, 0)
     }
 
-    let bd = cbalance() - feeToLiquidator
-    let (nb, fromi) = if (bd < 0) then {
-      (0, abs(bd))
-    } else {
-      (bd, 0)
-    }
-
-    strict x = if (fromi > 0) then {
+    strict x = if (takeFromInsurance > 0) then {
       strict withdrawInsurance = invoke(
         insuranceAddress(),
         "withdraw",
-        [fromi],
+        [takeFromInsurance],
         []
       )
       []
@@ -1213,10 +1210,17 @@ func liquidate(_trader: String) = {
       []
     }
 
+    strict depositInsurance = invoke(
+      insuranceAddress(),
+      "deposit",
+      [],
+      [AttachedPayment(quoteAsset(), feeToInsurance)]
+    )
+
     strict unstake = invoke(
       quoteAssetStaking(),
       "unlockNeutrino",
-      [feeToLiquidator - fromi, quoteAsset().toBase58String()],
+      [feeToLiquidator - takeFromInsurance, quoteAsset().toBase58String()],
       []
     )
 
@@ -1234,7 +1238,7 @@ func liquidate(_trader: String) = {
     ++
     withdraw(i.caller, feeToLiquidator)
     ++
-    updateBalance(nb)
+    updateBalance(ammBadDebt)
   }
 }
 
@@ -1307,7 +1311,7 @@ func view_calcRemainMarginWithFundingPayment(_trader: String) = {
         positionLstUpdCPF,
         unrealizedPnl
     )
-    throw(s(remainMargin) + s(fundingPayment))
+    throw(s(remainMargin) + s(fundingPayment) + s(getMarginRatio(_trader)))
 }
 
 
