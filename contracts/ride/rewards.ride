@@ -26,7 +26,7 @@
   let k_quote_asset = "k_quote_asset" 
   let k_admin_public_key = "k_admin_public_key"   
 
-  ##### Updateable (environment) constants #####
+  ##### Coordinator constants #####
   func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
   func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
   func governanceAsset() = fromBase58String(coordinator().getStringValue(k_governance_asset))
@@ -36,7 +36,7 @@
 
   let DECIMAL_UNIT = 1 * (10 * 10 * 10 * 10 * 10 * 10 * 10 * 10) # 10 ** 8
   let DURATION = 60 * 60 * 24 # 1 day
-  let NO_ADDDRESS = ""
+  let NO_ADDRESS = ""
   let NO_STAKER = 0
 
   ##### Helper functions #####
@@ -128,8 +128,8 @@
       rewardPerTokenStored()
     } else {
       let timeInterval = lastTimeRewardApplicable() - lastUpdateTime()
-      let actualTimeInteval = if (timeInterval < 0) then 0 else timeInterval
-      let diff = divd(rewardRate(), totalSupply() + _balanceDelta) * actualTimeInteval
+      let actualTimeInterval = if (timeInterval < 0) then 0 else timeInterval
+      let diff = divd(rewardRate(), totalSupply() + _balanceDelta) * actualTimeInterval
       rewardPerTokenStored() + diff
     }
   }
@@ -209,7 +209,7 @@
       || i.payments != []
       || !initialized()
     ) then {
-      throw("Invalid unStake parametetrs")
+      throw("Invalid unStake parameters")
     } else {
         let (
           newRewardPerTokenStored,
@@ -263,11 +263,11 @@
   @Callable(i)
   func addRewards() = {
     if (i.payments[0].assetId != quoteAsset() || !initialized()) then {
-      throw("Invaliid addRewards params")
+      throw("Invalid addRewards params")
     } else {
       let _reward = i.payments[0].amount.usdnToDecimals()
       # assume DURATION = 1 day, (existing) rewardRate = 1, and new incoming _reward = 2
-      let newRewardPerTokenStored = updateReward(NO_ADDDRESS, NO_STAKER)._1
+      let newRewardPerTokenStored = updateReward(NO_ADDRESS, NO_STAKER)._1
 
       let timestamp = currentTimestampSec()
       let newRewardRate = if (timestamp > periodFinish()) then {
@@ -296,14 +296,14 @@
   @Callable(i)
   func ackRewards() = {
     let currentBalance = assetBalance(this, quoteAsset()).usdnToDecimals()
-    let rewardBalancee = rewardBalance()
-    let rewardDelta = currentBalance - rewardBalancee
+    let _rewardBalance = rewardBalance()
+    let rewardDelta = currentBalance - _rewardBalance
     if (rewardDelta <= 0) then {
-      throw("Invaliid ackRewards params")
+      throw("Invalid ackRewards params")
     } else {
       let _reward = rewardDelta
       # assume DURATION = 1 day, (existing) rewardRate = 1, and new incoming _reward = 2
-      let newRewardPerTokenStored = updateReward(NO_ADDDRESS, NO_STAKER)._1
+      let newRewardPerTokenStored = updateReward(NO_ADDRESS, NO_STAKER)._1
 
       let timestamp = currentTimestampSec()
       let newRewardRate = if (timestamp > periodFinish()) then {

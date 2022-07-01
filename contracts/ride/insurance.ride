@@ -10,9 +10,8 @@
 let k_insurance = "k_insurance" # Amount of funds in insurance fund
 
 # Coordinator
-let k_coordinatorAddress = "k_coordinatorAddress" # Address of Coordinator (base contract that keeps refereences to all infrastructure)
+let k_coordinatorAddress = "k_coordinatorAddress" # Address of Coordinator (base contract that keeps references to all infrastructure)
 let k_amm = "k_amm"                               # Marks valid AMM addresses (for insurance)
-let k_insurance_address = "k_insurance_address"   # Address of insurance contractt
 let k_admin_address = "k_admin_address"           # Address of admin account           
 let k_admin_public_key = "k_admin_public_key"     # Pubic key of admin account
 let k_quote_asset = "k_quote_asset"               # Address of quote asset (USDN in our case)
@@ -32,9 +31,8 @@ func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
 func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
 func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
 func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
-func quoteAssetStaking() = addressFromString(coordinator().getStringValue(k_quote_staking)).valueOrErrorMessage("Quote assete staking not set")
+func quoteAssetStaking() = addressFromString(coordinator().getStringValue(k_quote_staking)).valueOrErrorMessage("Quote asset staking not set")
 func stakingAddress() = addressFromString(coordinator().getStringValue(k_staking_address)).valueOrErrorMessage("Insurance not set")
-func insuranceAddress() = addressFromString(coordinator().getStringValue(k_insurance_address)).valueOrErrorMessage("Insurance not set")
 
 ##### Internal functions #####
 func updateInsurance(i: Int) = {

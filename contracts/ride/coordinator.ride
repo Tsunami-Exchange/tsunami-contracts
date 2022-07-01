@@ -6,14 +6,14 @@
 {-# CONTENT_TYPE DAPP #-}
 
 ##### Key constants #####
-let k_insurance_address = "k_insurance_address"   # Address of insurance contractt
+let k_insurance_address = "k_insurance_address"   # Address of insurance contract
 let k_admin_address = "k_admin_address"           # Address of admin account           
 let k_admin_public_key = "k_admin_public_key"     # Pubic key of admin account
 let k_quote_asset = "k_quote_asset"               # Address of quote asset (USDN in our case)
 let k_quote_staking = "k_quote_staking"           # Address of quote asset staking contract (USDN staking in our case)
 let k_staking_address = "k_staking_address"       # Address that should receive staking benefits
 let k_amm = "k_amm"                               # Marks valid AMM addresses (for insurance)
-let k_amm_data = "k_amm_data"                     # Contais data of AMM (for UI)
+let k_amm_data = "k_amm_data"                     # Contains data of AMM (for UI)
 let k_governance_asset = "k_gov_asset"            # Governance (TSN) asset address
 
 ##### View functions #####
@@ -98,7 +98,7 @@ func setGovernanceAsset(_assetId: String) = isAdmin(i).valueOrElse({
   match assetInfo(assetBytes) {
     case asset:Asset => {
       if (asset.decimals != 8) then {
-        throw("Invalid asset decimals, shoul be 8")
+        throw("Invalid asset decimals, should be 8")
       } else {
         [
       StringEntry(k_governance_asset, _assetId)
