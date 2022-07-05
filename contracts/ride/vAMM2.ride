@@ -8,6 +8,7 @@
 
 # Oracle keys
 let k_ora_key = "k_ora_key" # Key in Index Price Oracle account to read price from
+let k_ora_block_key = "k_ora_block_key" # Key for last updated block in oracle
 let k_ora = "k_ora"         # Address of Index Price oracle account
 
 # AMM Balance
@@ -80,9 +81,11 @@ let DIR_LONG                = 1
 let DIR_SHORT               = 2
 let FUNDING_BLOCK_INTERVAL  = 60
 let TWAP_INTERVAL = 15
+let ORACLE_INTERVAL = 15
 
 let SECONDS = 1000
 let DECIMAL_UNIT = 1 * (10 * 10 * 10 * 10 * 10 * 10)
+let HUNDRED_PERCENT = 100 * DECIMAL_UNIT
 let ONE_DAY = 86400 * DECIMAL_UNIT
 let ALL_FEES = 100
 let PNL_OPTION_SPOT = 1
@@ -317,7 +320,16 @@ func swapOutput(
 func getOracleTwapPrice() = {
   let oracle = addressFromString(this.getStringValue(k_ora)).valueOrErrorMessage("")
   let priceKey = this.getStringValue(k_ora_key)
-  oracle.getIntegerValue(priceKey)
+  let blockKey = this.getStringValue(k_ora_block_key)
+  let lastValue = oracle.getIntegerValue(priceKey)
+  # let lastOracleBlock = oracle.getIntegerValue(k_ora_block_key)
+
+  # Check that oracle data is not too old
+  #if (lastBlock.height <= lastOracleBlock || lastBlock.height - lastOracleBlock > ORACLE_INTERVAL) then {
+  #  throw("Invalid oracle data interval")
+  #} else {
+  lastValue
+  #}
 }
 
 # Returns current spot price
@@ -728,14 +740,12 @@ func initialize(
 
 @Callable(i)
 func decreasePosition(
-  _direction: Int,
   _amount: Int,
   _leverage: Int,
   _minBaseAssetAmount: Int
 ) = {
   if (
-    (_direction != DIR_LONG && _direction != DIR_SHORT)
-    || _amount <= 0
+    _amount <= 0
     || (_leverage < 1 * DECIMAL_UNIT || _leverage > 3 * DECIMAL_UNIT)
     || !initialized()
     || !requireMoreMarginRatio(divd(DECIMAL_UNIT, _leverage), initMarginRatio(), true)
@@ -750,15 +760,13 @@ func decreasePosition(
       oldPositionOpenNotional,
       oldPositionLstUpdCPF
     ) = getPosition(i.caller.toString())
-    let isNewPosition = oldPositionSize == 0
-    let isSameDirection = if (oldPositionSize > 0) then {
-      _direction == DIR_LONG
-    } else {
-      _direction == DIR_SHORT
-    }
-    let expandExisting = !isNewPosition && isSameDirection
+
+    let _direction = if (oldPositionSize > 0) then DIR_SHORT else DIR_LONG
     let isAdd = _direction == DIR_LONG
     
+    let openNotional = muld(_amount, _leverage)
+    let (oldPositionNotional, unrealizedPnl) = getPositionNotionalAndUnrealizedPnl(i.caller.toString(), PNL_OPTION_SPOT)
+
     let (
       newPositionSize,
       newPositionRemainMargin,
@@ -771,62 +779,56 @@ func decreasePosition(
       openInterestNotionalAfter,
       totalLongAfter,
       totalShortAfter
-    ) = if (isNewPosition || expandExisting) then {
-      throw("Use increasePosition to open new or increase position")
-    } else {
-      let openNotional = muld(_amount, _leverage)
-      let (oldPositionNotional, unrealizedPnl) = getPositionNotionalAndUnrealizedPnl(i.caller.toString(), PNL_OPTION_SPOT)
-      if (oldPositionNotional > openNotional) then {
-        let ( 
-            exchangedPositionSize, 
-            quoteAssetReserveAfter, 
-            baseAssetReserveAfter,
-            totalPositionSizeAfter,
-            cumulativeNotionalAfter
-         ) = swapInput(isAdd, openNotional)
-         let exchangedPositionSizeAbs = abs(exchangedPositionSize)
+    ) = if (oldPositionNotional > openNotional) then {
+      let ( 
+          exchangedPositionSize, 
+          quoteAssetReserveAfter, 
+          baseAssetReserveAfter,
+          totalPositionSizeAfter,
+          cumulativeNotionalAfter
+        ) = swapInput(isAdd, openNotional)
+        let exchangedPositionSizeAbs = abs(exchangedPositionSize)
 
-         if (_minBaseAssetAmount != 0 && exchangedPositionSizeAbs < _minBaseAssetAmount) then {
-              throw("Too little base asset exchanged, got " + exchangedPositionSizeAbs.toString() + " expected " + _minBaseAssetAmount.toString())
+        if (_minBaseAssetAmount != 0 && exchangedPositionSizeAbs < _minBaseAssetAmount) then {
+            throw("Too little base asset exchanged, got " + exchangedPositionSizeAbs.toString() + " expected " + _minBaseAssetAmount.toString())
+        } else {
+          let realizedPnl = if (oldPositionSize != 0) then {
+            divd(muld(unrealizedPnl, exchangedPositionSizeAbs), oldPositionSize)
           } else {
-            let realizedPnl = if (oldPositionSize != 0) then {
-              divd(muld(unrealizedPnl, exchangedPositionSizeAbs), oldPositionSize)
-            } else {
-              0
-            }
-            let (remainMargin, badDebt, fundingPayment) = 
-              calcRemainMarginWithFundingPayment(
-                  oldPositionSize, 
-                  oldPositionMargin, 
-                  oldPositionLstUpdCPF, 
-                  realizedPnl
-              )
-            let exchangedQuoteAssetAmount = openNotional
-            let unrealizedPnlAfter = unrealizedPnl - realizedPnl
-            let remainOpenNotional = if (oldPositionSize > 0) then {
-              oldPositionNotional - exchangedQuoteAssetAmount - unrealizedPnlAfter
-            } else {
-              unrealizedPnlAfter + oldPositionNotional - exchangedQuoteAssetAmount
-            }
-
-            let newPositionSize = oldPositionSize + exchangedPositionSize
-            (
-              newPositionSize, # positionSize
-              remainMargin, # remainMargin
-              abs(remainOpenNotional), # pon
-              latestCumulativePremiumFraction(newPositionSize), # latestCPF
-              baseAssetReserveAfter, # baseAssetReserveAfter
-              quoteAssetReserveAfter, # quoteAssetReserveAfter
-              totalPositionSizeAfter, # totalPositionSizeAfter
-              cumulativeNotionalAfter, # cumulativeNotionalAfter
-              openInterestNotional() - openNotional, # openInterestNotionalAfter
-              totalLongPositionSize() - if (newPositionSize > 0) then abs(exchangedPositionSize) else 0,
-              totalShortPositionSize() - if (newPositionSize < 0) then abs(exchangedPositionSize) else 0
-            )
+            0
           }
-      } else {
-        throw("Close position first")
-      }
+          let (remainMargin, badDebt, fundingPayment) = 
+            calcRemainMarginWithFundingPayment(
+                oldPositionSize, 
+                oldPositionMargin, 
+                oldPositionLstUpdCPF, 
+                realizedPnl
+            )
+          let exchangedQuoteAssetAmount = openNotional
+          let unrealizedPnlAfter = unrealizedPnl - realizedPnl
+          let remainOpenNotional = if (oldPositionSize > 0) then {
+            oldPositionNotional - exchangedQuoteAssetAmount - unrealizedPnlAfter
+          } else {
+            unrealizedPnlAfter + oldPositionNotional - exchangedQuoteAssetAmount
+          }
+
+          let newPositionSize = oldPositionSize + exchangedPositionSize
+          (
+            newPositionSize, # positionSize
+            remainMargin, # remainMargin
+            abs(remainOpenNotional), # pon
+            latestCumulativePremiumFraction(newPositionSize), # latestCPF
+            baseAssetReserveAfter, # baseAssetReserveAfter
+            quoteAssetReserveAfter, # quoteAssetReserveAfter
+            totalPositionSizeAfter, # totalPositionSizeAfter
+            cumulativeNotionalAfter, # cumulativeNotionalAfter
+            openInterestNotional() - openNotional, # openInterestNotionalAfter
+            totalLongPositionSize() - if (newPositionSize > 0) then abs(exchangedPositionSize) else 0,
+            totalShortPositionSize() - if (newPositionSize < 0) then abs(exchangedPositionSize) else 0
+          )
+        }
+    } else {
+      throw("Close position first")
     }
     
     updatePosition(
@@ -872,7 +874,8 @@ func increasePosition(
     let (
       oldPositionSize,
       oldPositionMargin,
-      oldPositionOpenNotional
+      oldPositionOpenNotional,
+      oldPositionLstUpdCPF
     ) = getPosition(i.caller.toString())
     let isNewPosition = oldPositionSize == 0
     let isSameDirection = if (oldPositionSize > 0) then {
@@ -909,13 +912,12 @@ func increasePosition(
          throw("Limit error: " + abs(amountBaseAssetBought).toString() + " < " + _minBaseAssetAmount.toString())
        } else {
         let newPositionSize = oldPositionSize + amountBaseAssetBought
-        let positionLstUpdCPF = latestCumulativePremiumFraction(newPositionSize)
         let increaseMarginRequirement = divd(openNotional, _leverage)
         let (remainMargin, x1, x2) =
           calcRemainMarginWithFundingPayment(
                 oldPositionSize, 
                 oldPositionMargin, 
-                positionLstUpdCPF, 
+                oldPositionLstUpdCPF, 
                 increaseMarginRequirement
             )
         
