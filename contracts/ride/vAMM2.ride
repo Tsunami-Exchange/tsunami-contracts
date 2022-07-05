@@ -38,6 +38,7 @@ let k_lastDataStr = "k_lastDataStr"                       # List of last 15 TWAP
 let k_lastMinuteId = "k_lastMinuteId"                     # ID of last minute, when price measurements was taken
 let k_twapDataLastCumulativePrice = "k_twapDataLastCumulativePrice" # Last cumulative price data (previousPrice * minutesPriceLasted)
 let k_twapDataLastPrice = "k_twapDataLastPrice"           # Last price value
+let k_twapDataPreviousMinuteId = "k_twapDataPreviousMinuteId" # Previous minute id for current twap data
 
 # Funding state
 let k_latestLongCumulativePremiumFraction = "k_latestLongPremiumFraction" # Latest Cumulative Premium Fraction. (Part of Premium paid this funding period). Premium = MarkPrice - IndexPrice
@@ -100,6 +101,21 @@ func muld(_x: Int, _y: Int) = fraction(_x, _y, DECIMAL_UNIT, HALFEVEN)
 func abs(_x: Int) = if (_x > 0) then _x else -_x
 
 func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
+
+func listToStr(_list: List[String]) = {
+  func _join(accumulator: String, val: String) = accumulator + val + ","
+  let newListStr = FOLD<20>(_list, "", _join)
+  let newListStrU = newListStr.dropRight(1)
+  let newListStrR = if (newListStrU.take(1) == ",") then newListStrU.drop(1) else newListStrU
+  newListStrR
+}
+
+func strToList(_str: String) = _str.split(",")
+func pushToQueue(_list: List[String], _maxSize: Int, _value: String) = if (_list.size() > _maxSize) then {
+        _list.removeByIndex(0) :+ _value
+      } else {
+        _list :+ _value
+      }
 
 ##### Accessor functions #####
 func int(k: String) = this.getInteger(k).valueOrErrorMessage("no value for " + k)
@@ -547,27 +563,34 @@ func appendTwap(price: Int) = {
     throw("TWAP out-of-order")
   } else {
     let lastMinuteId = if (previousMinuteId == 0) then minuteId else previousMinuteId
-    let listStr = this.getString(k_lastDataStr).valueOrElse("")
-    let oldList = listStr.split(",")
-    let list = if (oldList.size() > TWAP_INTERVAL) then {
-      oldList.removeByIndex(0) :+ minuteId.toString()
-    } else {
-      oldList :+ minuteId.toString()
-    }
-    let prevCumulativePrice = this.getInteger(k_twapDataLastCumulativePrice + "_" + previousMinuteId.toString()).valueOrElse(0)
-    let prevPrice = this.getInteger(k_twapDataLastPrice + "_" + previousMinuteId.toString()).valueOrElse(price)
-    let lastCumulativePrice = prevCumulativePrice + (minuteId - lastMinuteId) * prevPrice
+    if (minuteId > previousMinuteId) then {
+      let prevCumulativePrice = this.getInteger(k_twapDataLastCumulativePrice + "_" + previousMinuteId.toString()).valueOrElse(0)
+      let prevPrice = this.getInteger(k_twapDataLastPrice + "_" + previousMinuteId.toString()).valueOrElse(price)
+      let lastCumulativePrice = prevCumulativePrice + (minuteId - lastMinuteId) * prevPrice
 
-    func join(accumulator: String, val: String) = accumulator + val + ","
-    let newListStr = FOLD<20>(list, "", join)
-    let newListStrU = newListStr.dropRight(1)
-    let newListStrR = if (newListStrU.take(1) == ",") then newListStrU.drop(1) else newListStrU     
-    [
-      IntegerEntry(k_twapDataLastCumulativePrice + "_" + minuteId.toString(), lastCumulativePrice),
-      IntegerEntry(k_twapDataLastPrice + "_" + minuteId.toString(), price),
-      IntegerEntry(k_lastMinuteId, minuteId),
-      StringEntry(k_lastDataStr, newListStrR)
-    ]
+      # Push new minute to list of last minutes with recorded TWAP info
+      let list = this.getString(k_lastDataStr).valueOrElse("").strToList().pushToQueue(TWAP_INTERVAL, minuteId.toString())
+
+      # Append new measurement to list of TWAP's
+      [
+        IntegerEntry(k_twapDataLastCumulativePrice.toCompositeKey(minuteId.toString()), lastCumulativePrice),
+        IntegerEntry(k_twapDataLastPrice.toCompositeKey(minuteId.toString()), price),
+        IntegerEntry(k_twapDataPreviousMinuteId.toCompositeKey(minuteId.toString()), previousMinuteId),
+        IntegerEntry(k_lastMinuteId, minuteId),
+        StringEntry(k_lastDataStr, listToStr(list))
+      ]
+    } else {
+      let twapDataPreviousMinuteId = this.getInteger(k_twapDataPreviousMinuteId.toCompositeKey(minuteId.toString())).valueOrElse(0)
+      let prevCumulativePrice = this.getInteger(k_twapDataLastCumulativePrice.toCompositeKey(twapDataPreviousMinuteId.toString())).valueOrElse(0)
+      let prevPrice = this.getInteger(k_twapDataLastPrice.toCompositeKey(twapDataPreviousMinuteId.toString())).valueOrElse(price)
+      let lastCumulativePrice = prevCumulativePrice + (minuteId - twapDataPreviousMinuteId) * prevPrice
+      
+      # Override LastCumulativePrice and LastPrice to keep latest measurement
+      [
+        IntegerEntry(k_twapDataLastCumulativePrice.toCompositeKey(minuteId.toString()), lastCumulativePrice),
+        IntegerEntry(k_twapDataLastPrice.toCompositeKey(minuteId.toString()), price)
+      ]
+    }
   }
 }
 
@@ -1207,11 +1230,11 @@ func liquidate(_trader: String) = {
 
     # Liquidating a position can incur bad debt. If AMM does not have enough funds to cover up bad debt
     # use Insurance Fund to cover it up
-    let ammBadDebt = cbalance() - liquidationPenalty
-    let (newAmmBalance, takeFromInsurance) = if (ammBadDebt < 0) then {
-      (0, abs(ammBadDebt))
+    let ammBalance = cbalance() - liquidationPenalty
+    let (newAmmBalance, takeFromInsurance) = if (ammBalance < 0) then {
+      (0, abs(ammBalance))
     } else {
-      (ammBadDebt, 0)
+      (ammBalance, 0)
     }
 
     strict x = if (takeFromInsurance > 0) then {
@@ -1226,18 +1249,18 @@ func liquidate(_trader: String) = {
       []
     }
 
+    strict unstake = invoke(
+      quoteAssetStaking(),
+      "unlockNeutrino",
+      [liquidationPenalty - takeFromInsurance, quoteAsset().toBase58String()],
+      []
+    )
+
     strict depositInsurance = invoke(
       insuranceAddress(),
       "deposit",
       [],
       [AttachedPayment(quoteAsset(), feeToInsurance)]
-    )
-
-    strict unstake = invoke(
-      quoteAssetStaking(),
-      "unlockNeutrino",
-      [feeToLiquidator - takeFromInsurance, quoteAsset().toBase58String()],
-      []
     )
 
     deletePosition(_trader)
@@ -1254,7 +1277,7 @@ func liquidate(_trader: String) = {
     ++
     withdraw(i.caller, feeToLiquidator)
     ++
-    updateBalance(ammBadDebt)
+    updateBalance(newAmmBalance)
   }
 }
 
