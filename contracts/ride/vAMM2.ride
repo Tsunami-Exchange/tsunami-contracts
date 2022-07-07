@@ -400,6 +400,11 @@ func getPositionNotionalAndUnrealizedPnl(_trader: String, _option: Int) = {
     }
 }
 
+# Computes actual margin ratio
+func calcMarginRatio(_remainMargin: Int, _badDebt: Int, _positionNotional: Int) = {
+  divd(_remainMargin - _badDebt, _positionNotional)
+}
+
 # Computes position margin ratio
 # Accept calculation option - to use spot or index price
 func getMarginRatioByOption(_trader: String, _option: Int) = {
@@ -417,7 +422,7 @@ func getMarginRatioByOption(_trader: String, _option: Int) = {
         positionLstUpdCPF,
         unrealizedPnl
     )
-    divd(remainMargin - badDebt, positionNotional)
+    calcMarginRatio(remainMargin, badDebt, positionNotional)
 }
 
 # Computes position spot margin ratio
@@ -815,11 +820,7 @@ func decreasePosition(
         if (_minBaseAssetAmount != 0 && exchangedPositionSizeAbs < _minBaseAssetAmount) then {
             throw("Too little base asset exchanged, got " + exchangedPositionSizeAbs.toString() + " expected " + _minBaseAssetAmount.toString())
         } else {
-          let realizedPnl = if (oldPositionSize != 0) then {
-            divd(muld(unrealizedPnl, exchangedPositionSizeAbs), oldPositionSize)
-          } else {
-            0
-          }
+          let realizedPnl = divd(muld(unrealizedPnl, exchangedPositionSizeAbs), abs(oldPositionSize))
           let (remainMargin, badDebt, fundingPayment) = 
             calcRemainMarginWithFundingPayment(
                 oldPositionSize, 
@@ -1091,26 +1092,31 @@ func removeMargin(
         marginDelta
     )
     if (badDebt != 0) then {
-      throw("Invalid added margin amount")
+      throw("Invalid removed margin amount")
     } else {
-      strict unstake = invoke(
-        quoteAssetStaking(),
-        "unlockNeutrino",
-        [_amount, quoteAsset().toBase58String()],
-        []
-      )
-      
-      updatePosition(
-        i.caller.toString(),
-        oldPositionSize,
-        remainMargin,
-        oldPositionOpenNotional,
-        latestCumulativePremiumFraction(oldPositionSize)
-      )
-      ++
-      withdraw(i.caller, _amount)
-      ++
-      updateBalance(cbalance() - _amount)
+      let marginRatio = calcMarginRatio(remainMargin, badDebt, oldPositionOpenNotional)
+      if (!requireMoreMarginRatio(marginRatio, initMarginRatio(), true)) then {
+        throw("Too much margin removed: " + marginRatio.toString() + " < " + initMarginRatio().toString())
+      } else {
+        strict unstake = invoke(
+          quoteAssetStaking(),
+          "unlockNeutrino",
+          [_amount, quoteAsset().toBase58String()],
+          []
+        )
+        
+        updatePosition(
+          i.caller.toString(),
+          oldPositionSize,
+          remainMargin,
+          oldPositionOpenNotional,
+          latestCumulativePremiumFraction(oldPositionSize)
+        )
+        ++
+        withdraw(i.caller, _amount)
+        ++
+        updateBalance(cbalance() - _amount)
+      }
     }
   }
 }
