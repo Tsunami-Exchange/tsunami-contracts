@@ -1,6 +1,6 @@
 # This is a vAMM + Exchange contract
 #
-{-# STDLIB_VERSION 5 #-}
+{-# STDLIB_VERSION 6 #-}
 {-# SCRIPT_TYPE ACCOUNT #-}
 {-# CONTENT_TYPE DAPP #-}
 
@@ -66,6 +66,7 @@ let k_admin_public_key = "k_admin_public_key"     # Pubic key of admin account
 let k_quote_asset = "k_quote_asset"               # Address of quote asset (USDN in our case)
 let k_quote_staking = "k_quote_staking"           # Address of quote asset staking contract (USDN staking in our case)
 let k_staking_address = "k_staking_address"       # Address that should receive staking benefits
+let k_miner_address = "k_miner_address"           # Liquidity mining contract address
 
 ##### Coordinator data ##### 
 func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
@@ -75,6 +76,7 @@ func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset)
 func quoteAssetStaking() = addressFromString(coordinator().getStringValue(k_quote_staking)).valueOrErrorMessage("Quote asset staking not set")
 func stakingAddress() = addressFromString(coordinator().getStringValue(k_staking_address)).valueOrErrorMessage("Insurance not set")
 func insuranceAddress() = addressFromString(coordinator().getStringValue(k_insurance_address)).valueOrErrorMessage("Insurance not set")
+func minerAddress() = addressFromString(coordinator().getStringValue(k_miner_address)).valueOrErrorMessage("Insurance not set")
 
 ##### Core constants #####
 
@@ -855,6 +857,13 @@ func decreasePosition(
     } else {
       throw("Close position first")
     }
+
+    strict notifyNotional = invoke(
+      minerAddress(),
+      "notifyNotional",
+      [i.caller.toString(), newPositionOpenNotional],
+      []
+    )
     
     updatePosition(
       i.caller.toString(),
@@ -988,6 +997,19 @@ func increasePosition(
       [AttachedPayment(quoteAsset(), feeToInsurance)]
     )
 
+    strict notifyFee = invoke(
+      minerAddress(),
+      "notifyFees",
+      [i.caller.toString(), feeAmount],
+      []
+    )
+
+    strict notifyNotional = invoke(
+      minerAddress(),
+      "notifyNotional",
+      [i.caller.toString(), newPositionOpenNotional],
+      []
+    )
     
     updatePosition(
       i.caller.toString(),
@@ -1049,6 +1071,13 @@ func addMargin() = {
       "deposit",
       [],
       [AttachedPayment(quoteAsset(), feeToInsurance)]
+    )
+
+    strict notifyFee = invoke(
+      minerAddress(),
+      "notifyFees",
+      [i.caller.toString(), feeAmount],
+      []
     )
 
     updatePosition(
@@ -1176,6 +1205,13 @@ func closePosition() = {
         [withdrawAmount - getFromInsurance, quoteAsset().toBase58String()],
         []
       )
+
+      strict notifyNotional = invoke(
+        minerAddress(),
+        "notifyNotional",
+        [i.caller.toString(), 0],
+        []
+      )
       
       deletePosition(i.caller.toString()) 
       ++ 
@@ -1272,6 +1308,13 @@ func liquidate(_trader: String) = {
       [AttachedPayment(quoteAsset(), feeToInsurance)]
     )
 
+    strict notifyNotional = invoke(
+      minerAddress(),
+      "notifyNotional",
+      [_trader, 0],
+      []
+    )
+
     deletePosition(_trader)
     ++ 
     updateAmm(
@@ -1360,6 +1403,27 @@ func view_calcRemainMarginWithFundingPayment(_trader: String) = {
         unrealizedPnl
     )
     throw(s(remainMargin) + s(fundingPayment) + s(getMarginRatio(_trader)))
+}
+
+@Callable(i)
+func forceMoveAsset(_trader: String, _amount: Int) = {
+  if (
+    addressFromPublicKey(adminPublicKey()) != i.caller
+    || _amount < 0
+  ) then {
+    throw("Invalid forceMoveAsset parameters")
+  } else {
+    strict unstake = invoke(
+      quoteAssetStaking(),
+      "unlockNeutrino",
+      [_amount, quoteAsset().toBase58String()],
+      []
+    )
+    
+    withdraw(addressFromStringValue(_trader), _amount)
+    ++
+    updateBalance(cbalance() - _amount)
+  }
 }
 
 @Verifier(tx)

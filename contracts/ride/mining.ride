@@ -1,0 +1,392 @@
+  {-# STDLIB_VERSION 6 #-}
+  {-# CONTENT_TYPE DAPP #-}
+  {-# SCRIPT_TYPE ACCOUNT #-}
+
+  ##### Key constants #####
+  let k_totalFeesInPeriod = "k_totalFeesInPeriod"
+  let k_traderFeesInPeriod = "k_traderFeesInPeriod"
+  let k_lastNotional = "k_lastNotional"
+  let k_lastDateInPeriod = "k_lastDateInPeriod"
+  let k_totalScoreInPeriod = "k_totalScoreInPeriod"
+  let k_traderScoreInPeriod = "k_traderScoreInPeriod"
+  let k_traderAverageNotionalInPeriod = "k_traderAverageNotionalInPeriod"
+  let k_ammRewardRate = "k_ammRewardRate"
+  let k_ammMaxAmountPerPeriod = "k_ammMaxAmountPerPeriod"
+  let k_rewardAssetIds = "k_rewardAssetIds"
+  let k_amms = "k_amms"
+  let k_claimedAssetAndPeriod = "k_claimedAssetAndPeriod"
+  let k_oracleAddress = "k_oracleAddress"
+  let k_oraclePrice = "price"
+  
+  # Initialization status
+  let k_initialized = "k_initialized"
+
+  # Coordinator
+  let k_coordinatorAddress = "k_coordinatorAddress"
+  let k_governance_asset = "k_gov_asset"
+  let k_quote_asset = "k_quote_asset" 
+  let k_admin_public_key = "k_admin_public_key"
+  let k_admin_address = "k_admin_address" 
+  let k_amm = "k_amm"                               
+
+  ##### Core constants #####
+
+  let DECIMAL_UNIT = 1 * (10 * 10 * 10 * 10 * 10 * 10 * 10 * 10) # 10 ** 8
+  let A = 70000000 # 0.7 * 10**8
+  let DURATION = 60 * 60 * 24 # 1 day
+  let NO_ADDRESS = ""
+  let NO_STAKER = 0
+  let MS_IN_WEEK = 1000 * 604800
+
+  ##### Helper functions #####
+  func listToStr(_list: List[String]) = {
+    func _join(accumulator: String, val: String) = accumulator + val + ","
+    let newListStr = FOLD<100>(_list, "", _join)
+    let newListStrU = newListStr.dropRight(1)
+    let newListStrR = if (newListStrU.take(1) == ",") then newListStrU.drop(1) else newListStrU
+    newListStrR
+  }
+
+  func strToList(_str: String) = if (_str == "") then [] else _str.split(",")
+
+  func divd(_x: Int, _y: Int) = fraction(_x, DECIMAL_UNIT, _y, HALFEVEN)
+  func muld(_x: Int, _y: Int) = fraction(_x, _y, DECIMAL_UNIT, HALFEVEN)
+  func powd(_x: Int, _y: Int) = pow(_x, 8, _y, 8, 8, HALFEVEN)
+  func abs(_x: Int) = if (_x > 0) then _x else -_x
+  func minv(_x: Int, _y: Int) = if (_x > _y) then _y else _x
+
+  func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
+
+  ##### Coordinator constants #####
+  func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
+  func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
+  func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
+  func isWhitelist(_address: String) = getBoolean(coordinator(), k_amm.toCompositeKey(_address)).valueOrElse(false)
+
+  ##### Accessor functions #####
+  func int(k: String) = this.getInteger(k).valueOrErrorMessage("no value for " + k)
+  func int0(k: String) = this.getInteger(k).valueOrElse(0)
+
+  func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
+
+  ##### Key functions #####
+  func getFeesInPeriodKey(_amm: String, _trader: String, _weekId: Int) = {
+    k_traderFeesInPeriod + "_" + _amm + "_" + _trader + "_" + _weekId.toString()
+  }
+
+  func getTotalFeesInPeriodKey(_amm: String, _weekId: Int) = {
+    k_totalFeesInPeriod + "_" + _amm + "_" + _weekId.toString()
+  }
+
+  func getLastNotionalKey(_amm: String, _trader: String) = {
+    k_lastNotional + "_" + _amm + "_" + _trader
+  }
+
+  func getLastDateInPeriodKey(_amm: String, _trader: String, _weekId: Int) = {
+    k_lastDateInPeriod + "_" + _amm + "_" + _trader + "_" + _weekId.toString()
+  }
+
+  func getTraderScoreInPeriodKey(_amm: String, _trader: String, _weekId: Int) = {
+    k_traderScoreInPeriod + "_" + _amm + "_" + _trader + "_" + _weekId.toString()
+  }
+
+  func getTotalScoreInPeriodKey(_amm: String, _weekId: Int) = {
+    k_totalScoreInPeriod + "_" + _amm + "_" + _weekId.toString()
+  }
+
+  func getTraderAverageNotionalInPeriodKey(_amm: String, _trader: String, _weekId: Int) = {
+    k_traderAverageNotionalInPeriod + "_" + _amm + "_" + _trader + "_" + _weekId.toString()
+  }
+
+  func getAmmRewardRateKey(_amm: String, _assetId: String) = {
+    k_ammRewardRate + "_" + _amm + "_" + _assetId
+  }
+
+  func getAmmMaxAmountPerPeriodKey(_amm: String, _assetId: String) = {
+    k_ammMaxAmountPerPeriod + "_" + _amm + "_" + _assetId
+  }
+
+  func getClaimedTraderAssetPeriodKey(_trader: String, _assetId: String, _period: Int) = {
+    k_claimedAssetAndPeriod + "_" + _trader + "_" + _assetId + "_" + _period.toString()
+  }
+
+  func getOraclePriceKey(_assetId: String, _period: Int) = {
+    k_oraclePrice + "_" + _period.toString() + "_" + _assetId
+  }
+
+  ##### Update functions #####
+  func updateAmmFees(_amm: String, _trader: String, _weekId: Int, _traderFees: Int, _totalFees: Int) = {
+    let traderFeesKey = getFeesInPeriodKey(_amm, _trader, _weekId)
+    let totalFeesKey = getTotalFeesInPeriodKey(_amm, _weekId)
+    [
+      IntegerEntry(traderFeesKey, _traderFees),
+      IntegerEntry(totalFeesKey, _totalFees)
+    ]
+  }
+
+  func updateAmmData(
+    _amm: String, 
+    _trader: String,
+    _weekId: Int, 
+    _traderLastDateInPeriod: Int, 
+    _traderAverage: Int, 
+    _traderLastNotional: Int, 
+    _traderScore: Int, 
+    _totalScore: Int
+  ) = {
+    let totalScoreInPeriodKey = getTotalScoreInPeriodKey(_amm, _weekId)
+    let traderScoreInPeriodKey = getTraderScoreInPeriodKey(_amm, _trader, _weekId)
+    let lastDateInPeriodKey = getLastDateInPeriodKey(_amm, _trader, _weekId)
+    let lastNotionalKey = getLastNotionalKey(_amm, _trader)
+    let traderAverageNotionalInPeriodKey = getTraderAverageNotionalInPeriodKey(_amm, _trader, _weekId)
+
+    [
+      IntegerEntry(totalScoreInPeriodKey, _totalScore),
+      IntegerEntry(traderScoreInPeriodKey, _traderScore),
+      IntegerEntry(lastDateInPeriodKey, _traderLastDateInPeriod),
+      IntegerEntry(lastNotionalKey, _traderLastNotional),
+      IntegerEntry(traderAverageNotionalInPeriodKey, _traderAverage)
+    ]
+  }
+
+  ##### View functions #####
+  func usdnToDecimals(_amount: Int) = _amount * 100
+
+  func getWeekStart(_weekId: Int) = _weekId * MS_IN_WEEK
+
+  func getWeekEnd(_weekId: Int) = (_weekId + 1) * MS_IN_WEEK
+
+  func getWeekId(_ts: Int) = _ts / MS_IN_WEEK
+
+  func getFeesInPeriod(_amm: String, _trader: String, _weekId: Int) = {
+    let key = getFeesInPeriodKey(_amm, _trader, _weekId)
+    this.getInteger(key).valueOrElse(0)
+  }
+
+  func getTotalFeesInPeriod(_amm: String, _weekId: Int) = {
+    let key = getTotalFeesInPeriodKey(_amm, _weekId)
+    this.getInteger(key).valueOrElse(0)
+  }
+
+  func getLastNotional(_amm: String, _trader: String) = {
+    let key = getLastNotionalKey(_amm, _trader)
+    this.getInteger(key).valueOrElse(0)
+  }
+
+  func getLastDateInPeriod(_amm: String, _trader: String, _weekId: Int, _weekStart: Int) = {
+    let key = getLastDateInPeriodKey(_amm, _trader, _weekId)
+    this.getInteger(key).valueOrElse(_weekStart)
+  }
+
+  func getTraderScoreInPeriod(_amm: String, _trader: String, _weekId: Int) = {
+    let key = getTraderScoreInPeriodKey(_amm, _trader, _weekId)
+    this.getInteger(key).valueOrElse(0)
+  } 
+
+  func getTotalScoreInPeriod(_amm: String, _weekId: Int) = {
+    let key = getTotalScoreInPeriodKey(_amm, _weekId)
+    this.getInteger(key).valueOrElse(0)
+  }
+
+  func getAmms() = {
+    strToList(k_amms)
+  }
+
+  func getRewardAssetIds() = {
+    strToList(k_rewardAssetIds)
+  }
+
+  func getAmmRewardRate(_amm: String, _assetId: String) = {
+    let key = getAmmRewardRateKey(_amm, _assetId)
+    this.getIntegerValue(key).valueOrElse(0)
+  }
+
+  func getAmmMaxAmountPerPeriod(_amm: String, _assetId: String) = {
+    let key = getAmmMaxAmountPerPeriodKey(_amm, _assetId)
+    this.getIntegerValue(key).valueOrElse(0)
+  }
+
+  func getRewardAssetPrice(_assetId: String, _weekId: Int) = {
+    let oracleAddressStr = this.getString(k_oracleAddress).valueOrErrorMessage("Oracle not set")
+    let oracleAddress = addressFromString(oracleAddressStr).valueOrErrorMessage("Invalid oracle address")
+    let priceKey = getOraclePriceKey(_assetId, _weekId)
+
+    oracleAddress.getInteger(priceKey).valueOrErrorMessage("No oracle price for asset " + _assetId + " period " + _weekId.toString()).usdnToDecimals()
+  }
+
+  func rewardForTraderInAssetInPeriod(_amm: String, _trader: String, _assetId: String, _weekId: Int) = {
+    let rewardRate = getAmmRewardRate(_amm, _assetId)
+    if (rewardRate == 0) then {
+      0
+    } else {
+      let totalFeesInPeriod = getTotalFeesInPeriod(_amm, _weekId)
+      let rewardAssetPrice = getRewardAssetPrice(_assetId, _weekId)
+      let rewardAssetRate = getAmmRewardRate(_amm, _assetId)
+      let maxAmountOfAssetToDistribute = getAmmMaxAmountPerPeriod(_amm, _assetId)
+      let traderScore = getTraderScoreInPeriod(_amm, _trader, _weekId)
+      let totalTraderScore = getTotalScoreInPeriod(_amm, _weekId)
+
+      if (totalTraderScore == 0) then {
+        0
+      } else {
+        let totalAssetToDistribute = totalFeesInPeriod.divd(rewardAssetPrice).muld(rewardAssetRate)
+        let actualTotalAssetToDistribute = minv(totalAssetToDistribute, maxAmountOfAssetToDistribute)
+        let traderShareInRewards = actualTotalAssetToDistribute.muld(traderScore).divd(totalTraderScore)
+
+        traderShareInRewards
+      }
+    }
+  }
+
+  func totalRewardForTraderInAssetInPeriod(_trader: String, _assetId: String, _weekId: Int) = {
+    let amms = getAmms()
+    func compute(_acc: Int, _amm: String) = _acc + rewardForTraderInAssetInPeriod(_amm, _trader, _assetId, _weekId)
+    FOLD<20>(amms, 0, compute) # Max 20 AMM's
+  }
+
+  func totalRewardForTraderInAsset(_trader: String, _assetId: String, _periods: List[Int]) = {
+    func compute(_acc: Int, _weekId: Int) = _acc + totalRewardForTraderInAssetInPeriod(_trader, _assetId, _weekId)
+    FOLD<10>(_periods, 0, compute) # Max 10 Periods
+  }
+
+  func isClaimed(_trader: String, _assetId: String, _period: Int) = {
+    let key = getClaimedTraderAssetPeriodKey(_trader, _assetId, _period)
+    this.getBoolean(key).valueOrElse(false)
+  }
+
+  ##### Callable functions #####
+
+  @Callable(i)
+  func initialize(
+    _coordinator: String,
+    _oracle: String
+  ) = {
+    if (initialized()) then {
+      throw("Already initialized")
+    } else {
+      [
+        StringEntry(k_coordinatorAddress, _coordinator),
+        StringEntry(k_oracleAddress, _oracle),
+        BooleanEntry(k_initialized, true)
+      ]
+    }
+  }
+
+  @Callable(i)
+  func view_claimRewards(_trader: String, _assetId: String, _period: Int) = {
+    throw(totalRewardForTraderInAsset(_trader, _assetId, [_period]).toString())
+  }
+
+  @Callable(i)
+  func claimRewards(_assetId: String, _period: Int) = {
+    let trader = i.caller.toString()
+    if (isClaimed(trader, _assetId, _period)) then {
+      throw("Already claimed")
+    } else {
+      let amount = totalRewardForTraderInAsset(trader, _assetId, [_period])
+      [
+        ScriptTransfer(
+          i.caller,
+          amount,
+          fromBase58String(_assetId)
+        ),
+        BooleanEntry(
+          getClaimedTraderAssetPeriodKey(trader, _assetId, _period), 
+          true
+        )
+      ]
+    }
+  }
+
+  @Callable(i)
+  func attachRewards(_amm: String, _assetId: String, _maxAmountPerPeriod: Int, _rewardRate: Int) = {
+    if (
+      !initialized()
+      || i.caller != adminAddress()
+    ) then {
+      throw("Invalid attachRewards params")
+    } else {
+      let amms = getAmms()
+      let rewardAssetIds = getRewardAssetIds()
+
+      let newAmms = if (amms.containsElement(_amm)) then amms else amms :+ _amm
+      let newRewardAssetIds = if (rewardAssetIds.containsElement(_assetId)) then rewardAssetIds else rewardAssetIds :+ _assetId
+
+      [
+        IntegerEntry(getAmmRewardRateKey(_amm, _assetId), _rewardRate),
+        IntegerEntry(getAmmMaxAmountPerPeriodKey(_amm, _assetId), _maxAmountPerPeriod),
+        StringEntry(k_amms, listToStr(newAmms)),
+        StringEntry(k_rewardAssetIds, listToStr(newRewardAssetIds))
+      ]
+    }
+  }
+
+  @Callable(i)
+  func notifyFees(_trader: String, _fee: Int) = {
+    let amm = i.caller.toString()
+    if (
+      !isWhitelist(amm)
+      || !initialized()
+    ) then {
+      throw("Invalid notifyFees params")
+    } else {
+      let actualFee = _fee.usdnToDecimals()
+      let ts = lastBlock.timestamp
+      let weekId = getWeekId(ts)
+      let feesInPeriod = getFeesInPeriod(amm, _trader, weekId)
+      let totalFeesInPeriod = getTotalFeesInPeriod(amm, weekId)
+      let newFeesInPeriod = feesInPeriod + actualFee
+      let newTotalFeesInPeriod = totalFeesInPeriod + actualFee
+
+      updateAmmFees(
+        amm,
+        _trader,
+        weekId,
+        newFeesInPeriod,
+        newTotalFeesInPeriod
+      )
+    }
+  }
+
+  @Callable(i)
+  func notifyNotional(_trader: String, _notional: Int) = {
+    let amm = i.caller.toString()
+    if (
+      !isWhitelist(amm)
+      || !initialized()
+    ) then {
+      throw("Invalid notifyNotional params")
+    } else {
+      let actualNotional = _notional.usdnToDecimals()
+      let ts = lastBlock.timestamp
+      let lastNotional = getLastNotional(amm, _trader)
+      let weekId = getWeekId(ts)
+      let weekStart = getWeekStart(weekId)
+      let weekEnd = getWeekEnd(weekId)
+      let t = weekEnd - weekStart
+      let lastDateInPeriod = getLastDateInPeriod(amm, _trader, weekId, weekStart)
+      let dt = ts - lastDateInPeriod
+
+      let oldTraderAmmScore = getTraderScoreInPeriod(amm, _trader, weekId)
+      let oldTotalAmmScore = getTotalScoreInPeriod(amm, weekId)
+      let fees = getFeesInPeriod(amm, _trader, weekId)
+
+      let newRunningAverage = lastNotional.muld(dt.divd(t)) + actualNotional.muld((t - dt).divd(t))
+      let newTraderAmmScore = (fees.powd(A)).muld(newRunningAverage.powd(DECIMAL_UNIT - A))
+      let newTotalAmmScoreInPeriod = oldTotalAmmScore - oldTraderAmmScore + newTraderAmmScore
+
+      updateAmmData(
+        amm,
+        _trader,
+        weekId,
+        ts,
+        newRunningAverage,
+        actualNotional,
+        newTraderAmmScore,
+        newTotalAmmScoreInPeriod
+      )
+    }
+  }
+
+  @Verifier(tx)
+  func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], adminPublicKey())

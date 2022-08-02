@@ -15,6 +15,7 @@ let k_staking_address = "k_staking_address"       # Address that should receive 
 let k_amm = "k_amm"                               # Marks valid AMM addresses (for insurance)
 let k_amm_data = "k_amm_data"                     # Contains data of AMM (for UI)
 let k_governance_asset = "k_gov_asset"            # Governance (TSN) asset address
+let k_miner_address = "k_miner_address"           # Liquidity mining contract address
 
 ##### View functions #####
 func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
@@ -46,6 +47,16 @@ func setInsuranceFund(
   let address = getAddressIfValid(_insuranceFund)
   [
     StringEntry(k_insurance_address, address)
+  ]
+})
+
+@Callable(i)
+func setLiquidityMiner(
+  _liquidityMiner: String
+) = isAdmin(i).valueOrElse({
+  let address = getAddressIfValid(_liquidityMiner)
+  [
+    StringEntry(k_miner_address, address)
   ]
 })
 
