@@ -33,9 +33,6 @@
 
   let DECIMAL_UNIT = 1 * (10 * 10 * 10 * 10 * 10 * 10 * 10 * 10) # 10 ** 8
   let A = 70000000 # 0.7 * 10**8
-  let DURATION = 60 * 60 * 24 # 1 day
-  let NO_ADDRESS = ""
-  let NO_STAKER = 0
   let MS_IN_WEEK = 1000 * 604800
 
   ##### Helper functions #####
@@ -189,21 +186,21 @@
   }
 
   func getAmms() = {
-    strToList(k_amms)
+    strToList(this.getString(k_amms).valueOrElse(""))
   }
 
   func getRewardAssetIds() = {
-    strToList(k_rewardAssetIds)
+    strToList(this.getString(k_rewardAssetIds).valueOrElse(""))
   }
 
   func getAmmRewardRate(_amm: String, _assetId: String) = {
     let key = getAmmRewardRateKey(_amm, _assetId)
-    this.getIntegerValue(key).valueOrElse(0)
+    this.getInteger(key).valueOrElse(0)
   }
 
   func getAmmMaxAmountPerPeriod(_amm: String, _assetId: String) = {
     let key = getAmmMaxAmountPerPeriodKey(_amm, _assetId)
-    this.getIntegerValue(key).valueOrElse(0)
+    this.getInteger(key).valueOrElse(0)
   }
 
   func getRewardAssetPrice(_assetId: String, _weekId: Int) = {
@@ -215,13 +212,12 @@
   }
 
   func rewardForTraderInAssetInPeriod(_amm: String, _trader: String, _assetId: String, _weekId: Int) = {
-    let rewardRate = getAmmRewardRate(_amm, _assetId)
-    if (rewardRate == 0) then {
+    let rewardAssetRate = getAmmRewardRate(_amm, _assetId)
+    if (rewardAssetRate == 0) then {
       0
     } else {
       let totalFeesInPeriod = getTotalFeesInPeriod(_amm, _weekId)
       let rewardAssetPrice = getRewardAssetPrice(_assetId, _weekId)
-      let rewardAssetRate = getAmmRewardRate(_amm, _assetId)
       let maxAmountOfAssetToDistribute = getAmmMaxAmountPerPeriod(_amm, _assetId)
       let traderScore = getTraderScoreInPeriod(_amm, _trader, _weekId)
       let totalTraderScore = getTotalScoreInPeriod(_amm, _weekId)
@@ -278,23 +274,37 @@
   }
 
   @Callable(i)
+  func view_calcReward(_trader: String, _amm:String, _assetId: String, _period: Int) = {
+      throw(rewardForTraderInAssetInPeriod(_amm, _assetId, _trader, _period).toString())
+  }
+
+  @Callable(i)
   func claimRewards(_assetId: String, _period: Int) = {
     let trader = i.caller.toString()
     if (isClaimed(trader, _assetId, _period)) then {
       throw("Already claimed")
     } else {
-      let amount = totalRewardForTraderInAsset(trader, _assetId, [_period])
-      [
-        ScriptTransfer(
-          i.caller,
-          amount,
-          fromBase58String(_assetId)
-        ),
-        BooleanEntry(
-          getClaimedTraderAssetPeriodKey(trader, _assetId, _period), 
-          true
-        )
-      ]
+      let currentWeekId = getWeekId(lastBlock.timestamp)
+      if (_period >= currentWeekId) then {
+        throw("Unable to claim rewards in future periods, current period is " + currentWeekId.toString())
+      } else {
+        let amount = totalRewardForTraderInAsset(trader, _assetId, [_period])
+        if (amount == 0) then {
+          throw("Nothing to claim")
+        } else {
+          [
+            ScriptTransfer(
+              i.caller,
+              amount,
+              fromBase58String(_assetId)
+            ),
+            BooleanEntry(
+              getClaimedTraderAssetPeriodKey(trader, _assetId, _period), 
+              true
+            )
+          ]
+        }
+      }
     }
   }
 
