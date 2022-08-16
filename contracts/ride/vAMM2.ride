@@ -1454,7 +1454,12 @@ func view_calcRemainMarginWithFundingPayment(_trader: String) = {
         positionLstUpdCPF,
         unrealizedPnl
     )
-    throw(s(remainMargin) + s(fundingPayment) + s(getMarginRatio(_trader)))
+    throw(
+      s(remainMargin) 
+      + s(fundingPayment) 
+      + s(getMarginRatio(_trader))
+      + s(unrealizedPnl)
+    )
 }
 
 @Callable(i)

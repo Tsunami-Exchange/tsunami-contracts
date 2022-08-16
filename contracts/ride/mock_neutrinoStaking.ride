@@ -1,0 +1,55 @@
+# This is a mock neutrino staking contract
+#
+{-# STDLIB_VERSION 6 #-}
+{-# SCRIPT_TYPE ACCOUNT #-}
+{-# CONTENT_TYPE DAPP #-}
+
+##### Key constants #####
+
+# Insurance funds
+let k_funds = "k_funds" # Amount of funds in insurance fund
+
+##### View functions #####
+func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
+
+##### Internal functions #####
+func updateFunds(i: Int) = {
+  [
+    IntegerEntry(k_funds, i)
+  ]
+}
+
+func funds() = this.getInteger(k_funds).valueOrElse(0)
+
+@Callable(i)
+func unlockNeutrino(_amount: Int, _assetId: String) = {
+  if (
+    _amount > funds()
+  ) then {
+    throw("Invalid unlockNeutrino params " + _amount.toString() + " > " + funds().toString())
+  } else {
+    # Update state + transfer
+    updateFunds(funds() - _amount)
+    ++
+    [
+      ScriptTransfer(i.caller, _amount, fromBase58String(_assetId))
+    ]
+  }
+}
+
+@Callable(i)
+func lockNeutrinoSP(_address: String, _percent: Int) = {
+  let _amount = i.payments[0].amount
+
+  updateFunds(funds() + _amount)
+}
+
+@Callable(i)
+func lockNeutrino() = {
+  let _amount = i.payments[0].amount
+
+  updateFunds(funds() + _amount)
+}
+
+@Verifier(tx)
+func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)

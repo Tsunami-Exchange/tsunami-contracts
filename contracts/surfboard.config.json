@@ -2,15 +2,22 @@
     "ride_directory": "ride",
     "test_directory": "test",
     "envs": {
+        "custom": {
+            "API_BASE": "http://localhost:6869/",
+            "CHAIN_ID": "R",
+            "SEED": "waves private node seed with waves tokens",
+            "timeout": 60000
+        },
         "testnet": {
             "API_BASE": "https://nodes-testnet.wavesnodes.com",
             "CHAIN_ID": "T",
-            "SEED": "settle distance dove stool tag gospel escape hammer volume symptom grab hungry cruise gown verb",
+            "SEED": "machine bone okay wealth silent faint side jar between dilemma skate spray adult book item",
             "timeout": 60000
         }
     },
-    "defaultEnv": "testnet",
+    "defaultEnv": "custom",
     "mocha": {
-        "timeout": 60000
+        "timeout": 60000,
+        "reporter2": "allure-mocha"
     }
 }

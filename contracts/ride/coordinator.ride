@@ -1,7 +1,7 @@
 # This is a Coordinator contract
 # This holds all the core data in Tsunami
 #
-{-# STDLIB_VERSION 5 #-}
+{-# STDLIB_VERSION 6 #-}
 {-# SCRIPT_TYPE ACCOUNT #-}
 {-# CONTENT_TYPE DAPP #-}
 
