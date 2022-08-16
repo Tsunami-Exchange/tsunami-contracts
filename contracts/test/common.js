@@ -194,7 +194,7 @@ class Environment {
         console.log(`Environment deployed`)
     }
 
-    async deployAmm(_liquidity, _price) {
+    async deployAmm(_liquidity, _price, options = {}) {
         await setupAccounts({
             amm: 0.05 * wvs,
         });
@@ -247,7 +247,7 @@ class Environment {
                         { type: 'string' , value: 'price' },                                  // Oracle key
                         { type: 'string' , value: address(this.seeds.coordinator) },            // Coordinator address,
                         { type: 'integer', value: Math.round(0.1   * decimals) },    // _spreadLimit 10%
-                        { type: 'integer', value: Math.round(0.08  * decimals) },    // _maxPriceImpact 8%
+                        { type: 'integer', value: Math.round((options.maxPriceImpact || 0.08)  * decimals) },    // _maxPriceImpact 8%
                     ]
                 },
             }, this.seeds.admin);
@@ -275,7 +275,6 @@ class Environment {
     }
 
     async fundAccounts(request) {
-        console.log(`fundAccounts = ${JSON.stringify(request)}`)
         await Promise.all(Object.keys(request).map(
             r => this.supplyUsdn(request[r], address(r))
         ))
@@ -293,13 +292,6 @@ class AMM {
     }
 
     async increasePosition(_amount, _direction, _leverage, _minBaseAssetAmount) {
-        console.log(`increasePosition`)
-        console.log(JSON.stringify({
-            _amount,
-            _direction,
-            _leverage,
-            _minBaseAssetAmount
-        }))
         const openPositionTx = invokeScript({
             dApp: address(this.e.seeds.amm),
             call: {
@@ -478,7 +470,6 @@ class AMM {
         let quote = await accountDataByKey(`k_qtAstR`, dApp).then(x => x.value)
         let base = await accountDataByKey(`k_bsAstR`, dApp).then(x => x.value)
 
-        console.log(`quote=${quote} base=${base}`)
         return Number.parseFloat((quote / base).toFixed(4))
     }
 
@@ -499,6 +490,24 @@ class AMM {
         await waitForTx(seedOracleTx.id)
 
         console.log(`Sync Market and Oracle price in ${seedOracleTx.id}`)
+        return seedOracleTx
+    }
+
+    async setOraclePrice(_price) {
+        let seedOracleTx = data({
+            data: [
+                {
+                    "key": "price",
+                    "type": "integer",
+                    "value": Math.round(_price * decimals)
+                }
+            ]
+        }, this.e.seeds.oracle)
+
+        await broadcast(seedOracleTx)
+        await waitForTx(seedOracleTx.id)
+
+        console.log(`Set Oracle price in ${seedOracleTx.id}`)
         return seedOracleTx
     }
 
@@ -524,12 +533,14 @@ class AMM {
             let fundingPayment = Number.parseFloat((parseInt(parts[1]) / 10**6).toFixed(4))
             let marginRatio = Number.parseFloat((parseInt(parts[2]) / 10**6).toFixed(4))
             let unrealizedPnl = Number.parseFloat((parseInt(parts[3]) / 10**6).toFixed(4))
+            let badDebt = Number.parseFloat((parseInt(parts[4]) / 10**6).toFixed(4))
 
             return {
                 margin,
                 fundingPayment,
                 marginRatio,
-                unrealizedPnl
+                unrealizedPnl,
+                badDebt
             }
         }
     }

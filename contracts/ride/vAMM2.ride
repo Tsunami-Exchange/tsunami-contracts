@@ -229,8 +229,6 @@ func updateReserve(_isAdd: Boolean, _quoteAssetAmount: Int, _baseAssetAmount: In
 func swapInput(_isAdd: Boolean, _quoteAssetAmount: Int) = {
   let _qtAstR = qtAstR()
   let _bsAstR = bsAstR()
-  let priceBefore = divd(_qtAstR, _bsAstR)
-  let amountBaseAssetBoughtWithoutPriceImpact = divd(_quoteAssetAmount, priceBefore)
   let k = muld(_qtAstR, _bsAstR)
   let quoteAssetReserveAfter = if (_isAdd) then {
     _qtAstR + _quoteAssetAmount
@@ -246,24 +244,28 @@ func swapInput(_isAdd: Boolean, _quoteAssetAmount: Int) = {
     -amountBaseAssetBoughtAbs
   }
   
-  let priceImpact = abs(divd(amountBaseAssetBoughtWithoutPriceImpact, amountBaseAssetBoughtAbs) - DECIMAL_UNIT)
+  let (
+    quoteAssetReserveAfter1,
+    baseAssetReserveAfter1,
+    totalPositionSizeAfter1,
+    cumulativeNotionalAfter1
+  ) = updateReserve(_isAdd, _quoteAssetAmount, amountBaseAssetBoughtAbs)
+
+  let priceBefore = divd(_qtAstR, _bsAstR)
+  let marketPrice = divd(_quoteAssetAmount, amountBaseAssetBoughtAbs)
+  let priceDiff = abs(priceBefore - marketPrice)
+  let priceImpact = DECIMAL_UNIT - divd(priceBefore, (priceBefore + priceDiff))
+
   let maxPriceImpactValue = maxPriceImpact()
   if (priceImpact > maxPriceImpactValue) then {
     throw("Price impact " + priceImpact.toString() + " > max price impact " + maxPriceImpactValue.toString() 
-    + " before quote asset: " + _qtAstR.toString()
-    + " before base asset: " + _bsAstR.toString()
-    + " quote asset amount to exchange: " + _quoteAssetAmount.toString()
-    + " ideal price buy: " + amountBaseAssetBoughtWithoutPriceImpact.toString()
-    + " real price buy: " + amountBaseAssetBoughtAbs.toString()
+      + " before quote asset: " + _qtAstR.toString()
+      + " before base asset: " + _bsAstR.toString()
+      + " quote asset amount to exchange: " + _quoteAssetAmount.toString()
+      + " price before: " + priceBefore.toString()
+      + " marketPrice: " + marketPrice.toString()
     )
   } else {
-    let (
-      quoteAssetReserveAfter1,
-      baseAssetReserveAfter1,
-      totalPositionSizeAfter1,
-      cumulativeNotionalAfter1
-    ) = updateReserve(_isAdd, _quoteAssetAmount, amountBaseAssetBoughtAbs)
-
     (
       amountBaseAssetBought,
       quoteAssetReserveAfter1,
@@ -302,10 +304,13 @@ func calcRemainMarginWithFundingPayment(
 # _isAdd - true when we are adding quote asset to AMM, false when removing
 func swapOutput(
   _isAdd: Boolean, 
-  _baseAssetAmount: Int
+  _baseAssetAmount: Int,
+  _checkMaxPriceImpact: Boolean
 ) = {
   let _quoteAssetReserve = qtAstR()
   let _baseAssetReserve = bsAstR()
+
+  let priceBefore = divd(_quoteAssetReserve, _baseAssetReserve)
 
   if (_baseAssetAmount == 0) then {
     throw("Invalid base asset amount")
@@ -320,6 +325,8 @@ func swapOutput(
     let quoteAssetAfter = divd(k, baseAssetPoolAmountAfter)
     let quoteAssetSold = abs(quoteAssetAfter - _quoteAssetReserve)
 
+    let maxPriceImpactValue = maxPriceImpact()
+
     let (
       quoteAssetReserveAfter1,
       baseAssetReserveAfter1,
@@ -327,15 +334,29 @@ func swapOutput(
       cumulativeNotionalAfter1
     ) = updateReserve(!_isAdd, quoteAssetSold, _baseAssetAmount)
 
-    (
-      quoteAssetSold,
-      quoteAssetReserveAfter1,
-      baseAssetReserveAfter1,
-      totalPositionSizeAfter1,
-      cumulativeNotionalAfter1,
-      totalLongPositionSize()  - if (_isAdd)  then abs(_baseAssetAmount) else 0,
-      totalShortPositionSize() - if (!_isAdd) then abs(_baseAssetAmount) else 0
-    )
+    let marketPrice = divd(quoteAssetSold, _baseAssetAmount)
+    let priceDiff = abs(priceBefore - marketPrice)
+    let priceImpact = DECIMAL_UNIT - divd(priceBefore, (priceBefore + priceDiff))
+    
+    if (priceImpact > maxPriceImpactValue && _checkMaxPriceImpact) then {
+      throw("Price impact " + priceImpact.toString() + " > max price impact " + maxPriceImpactValue.toString() 
+        + " before quote asset: " + _quoteAssetReserve.toString()
+        + " before base asset: " + _baseAssetReserve.toString()
+        + " base asset amount to exchange: " + _baseAssetAmount.toString()
+        + " price before: " + priceBefore.toString()
+        + " market price: " + marketPrice.toString()
+      )
+    } else {
+      (
+        quoteAssetSold,
+        quoteAssetReserveAfter1,
+        baseAssetReserveAfter1,
+        totalPositionSizeAfter1,
+        cumulativeNotionalAfter1,
+        totalLongPositionSize()  - if (_isAdd)  then abs(_baseAssetAmount) else 0,
+        totalShortPositionSize() - if (!_isAdd) then abs(_baseAssetAmount) else 0
+      )
+    }
   }
 }
 
@@ -388,7 +409,8 @@ func getPositionNotionalAndUnrealizedPnl(_trader: String, _option: Int) = {
       let positionNotional = if (_option == PNL_OPTION_SPOT) then {
         let (outPositionNotional, x1, x2, x3) = swapOutput(
           !isShort,
-          positionSizeAbs
+          positionSizeAbs,
+          false
         )
         outPositionNotional
       } else {
@@ -436,7 +458,7 @@ func getMarginRatioByOption(_trader: String, _option: Int) = {
 func getMarginRatio(_trader: String) = getMarginRatioByOption(_trader, PNL_OPTION_SPOT)
 
 # Computes changes to AMM state, resulting in closing trader's position
-func internalClosePosition(_trader: String) = {
+func internalClosePosition(_trader: String, _checkMaxPriceImpact: Boolean) = {
     let (
       positionSize,
       positionMargin,
@@ -466,7 +488,8 @@ func internalClosePosition(_trader: String) = {
       totalShortAfter
     ) = swapOutput(
         positionSize > 0,
-        abs(positionSize)
+        abs(positionSize),
+        _checkMaxPriceImpact
     )
     
     let openInterestNotionalAfter = openInterestNotional() - positionOpenNotional
@@ -1225,7 +1248,7 @@ func closePosition() = {
           x2,
           totalLongAfter,
           totalShortAfter
-    ) = internalClosePosition(i.caller.toString())
+    ) = internalClosePosition(i.caller.toString(), true)
 
     if (positionBadDebt > 0) then {
       throw("Unable to close position with bad debt")
@@ -1317,7 +1340,7 @@ func liquidate(_trader: String) = {
       exchangedQuoteAssetAmount,
       totalLongAfter,
       totalShortAfter
-    ) = internalClosePosition(_trader)
+    ) = internalClosePosition(_trader, false)
     
     # Liquidator get a certain (liquidationFeeRatio) percentage from a total position
     #
@@ -1435,7 +1458,7 @@ func payFunding() = {
 
 @Callable(i)
 func v_get(_trader: String) = {
-  let (x1, x2, x3, x4) = internalClosePosition(_trader)
+  let (x1, x2, x3, x4) = internalClosePosition(_trader, false)
   throw(s(x2) + s(x3) + s(x4) + s(getMarginRatio(_trader)))
 }
 
@@ -1459,6 +1482,7 @@ func view_calcRemainMarginWithFundingPayment(_trader: String) = {
       + s(fundingPayment) 
       + s(getMarginRatio(_trader))
       + s(unrealizedPnl)
+      + s(badDebt)
     )
 }
 

@@ -133,7 +133,7 @@ describe('vAMM should work with positive funding', async function () {
     })
 
     it('Can remove margin', async function () {
-        await amm.as(longer).addMargin(2)
+        await amm.as(longer).removeMargin(2)
 
         const {
             size,

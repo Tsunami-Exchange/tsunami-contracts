@@ -79,6 +79,8 @@ describe('vAMM should be able to liquidate underwater long position', async func
 
     it('Can close short position', async function () {
         //let insuranceBefore = await e.insurance.getBalance()
+        await amm.as(shorter).decreasePosition(2000, 3, 1)
+        await amm.as(shorter).decreasePosition(2000, 3, 1)
         await amm.as(shorter).closePosition()
         //let insuranceAfter = await e.insurance.getBalance()
 

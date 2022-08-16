@@ -33,7 +33,7 @@ describe('vAMM should be able to handle large price impacts', async function () 
         e = new Environment(accounts.admin)
         await e.deploy()
         await e.fundAccounts({
-            [longer]: 5000,
+            [longer]: 50000,
             [shorter]: 50000
         })
 
@@ -41,19 +41,54 @@ describe('vAMM should be able to handle large price impacts', async function () 
     });
 
     it('Can not open long position with large price impact', async function () {
-        expect(amm.as(longer).increasePosition(3000, DIR_LONG, 3, 50)).to.eventually.be.rejected
+        return expect(amm.as(longer).increasePosition(3000, DIR_LONG, 3, 50)).to.eventually.be.rejected
     })
 
-    it('Can not open short position with large price impact', async function () {
-        expect(amm.as(shorter).increasePosition(3000, DIR_SHORT, 3, 50)).to.eventually.be.rejected
-    })
-
-    it('Can open long position without large price impact', async function () {
-        await amm.as(longer).increasePosition(2500, DIR_LONG, 3, 50)
-    })
-
-    it('Can open short position without large price impact', async function () {
-        await amm.as(shorter).increasePosition(2500, DIR_SHORT, 3, 50)
-    })
     
+    it('Can not open short position with large price impact', async function () {
+        return expect(amm.as(shorter).increasePosition(3000, DIR_SHORT, 3, 50)).to.eventually.be.rejected
+    })
+
+    it('Can open and close long position without large price impact', async function () {
+        await amm.as(longer).increasePosition(2500, DIR_LONG, 3, 50)
+        await amm.as(longer).closePosition()
+    })
+
+    it('Can open and close short position without large price impact', async function () {
+        await amm.as(shorter).increasePosition(2500, DIR_SHORT, 3, 50)
+        await amm.as(shorter).closePosition()
+    })
+
+    
+    it('Can not close long position with large price impact', async function () {
+        await amm.as(longer).increasePosition(2500, DIR_LONG, 3, 50)
+        await amm.as(longer).increasePosition(2300, DIR_LONG, 3, 50)
+
+        return expect(amm.as(longer).closePosition()).to.eventually.be.rejected
+    })
+
+    it('Can not reduce long position with large price impact', async function () {
+        return expect(amm.as(longer).decreasePosition(4000, 3, 50)).to.eventually.be.rejected
+    })
+
+    it('Alow long position with large price impact to be gradually reduced', async function () {
+        await amm.as(longer).decreasePosition(2300, 3, 50)
+        await amm.as(longer).closePosition()
+    })
+
+    it('Can not close short position with large price impact', async function () {
+        await amm.as(shorter).increasePosition(2500, DIR_SHORT, 3, 50)
+        await amm.as(shorter).increasePosition(2300, DIR_SHORT, 3, 50)
+
+        expect(amm.as(shorter).closePosition()).to.eventually.be.rejected
+    })
+
+    it('Can not reduce short position with large price impact', async function () {
+        expect(amm.as(shorter).decreasePosition(4000, 3, 50)).to.eventually.be.rejected
+    })
+
+    it('Allow short position with large price impact to be gradually reduced', async function () {
+        await amm.as(shorter).decreasePosition(2300, 3, 50)
+        await amm.as(shorter).closePosition()
+    })
 })
