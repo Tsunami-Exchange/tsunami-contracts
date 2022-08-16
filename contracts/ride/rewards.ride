@@ -129,7 +129,7 @@
     } else {
       let timeInterval = lastTimeRewardApplicable() - lastUpdateTime()
       let actualTimeInterval = if (timeInterval < 0) then 0 else timeInterval
-      let diff = divd(rewardRate(), totalSupply() + _balanceDelta) * actualTimeInterval
+      let diff = divd(rewardRate() * actualTimeInterval, totalSupply() + _balanceDelta)
       rewardPerTokenStored() + diff
     }
   }
@@ -337,4 +337,3 @@
 
   @Verifier(tx)
   func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], adminPublicKey())
-          

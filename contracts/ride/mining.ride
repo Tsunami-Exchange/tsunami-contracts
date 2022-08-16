@@ -275,24 +275,22 @@
     let markPeriodsAsClaimed = FOLD<18>(validPeriods, [], markPeriodAsDoneFn)
 
     let amount = totalRewardForTraderInAsset(_trader, _assetId, validPeriods)
-    if (amount == 0) then {
-      throw("Nothing to claim")
-    } else {
-      (
-        amount,
-        [
-          ScriptTransfer(
-            addressFromStringValue(_trader),
-            amount,
-            fromBase58String(_assetId)
-          ),
-          IntegerEntry(
-            getTotalClaimedForTraderAndAssetKey(_trader, _assetId),
-            getTotalClaimedForTraderAndAsset(_trader, _assetId) + amount
-          )
-        ] ++ markPeriodsAsClaimed
-      )
-    }
+
+    (
+      amount,
+      [
+        ScriptTransfer(
+          addressFromStringValue(_trader),
+          amount,
+          fromBase58String(_assetId)
+        ),
+        IntegerEntry(
+          getTotalClaimedForTraderAndAssetKey(_trader, _assetId),
+          getTotalClaimedForTraderAndAsset(_trader, _assetId) + amount
+        )
+      ] ++ markPeriodsAsClaimed
+    )
+    
   }
 
   ##### Callable functions #####
@@ -309,6 +307,21 @@
         StringEntry(k_coordinatorAddress, _coordinator),
         StringEntry(k_oracleAddress, _oracle),
         BooleanEntry(k_initialized, true)
+      ]
+    }
+  }
+
+  @Callable(i)
+  func setOracleAddress(
+    _oracle: String
+  ) = {
+    if (!initialized()
+        || i.caller != adminAddress()
+    ) then {
+      throw("Invalid setOracleAddress parameters")
+    } else {
+      [
+        StringEntry(k_oracleAddress, _oracle)
       ]
     }
   }
@@ -332,8 +345,8 @@
   @Callable(i)
   func claimAllRewards(_assetId: String, _periods: String) = {
     let trader = i.caller.toString()
-    let result = claimAllRewardForPeriodForTrader(trader, _assetId, _periods)
-    result._2
+    let (amount, result) = claimAllRewardForPeriodForTrader(trader, _assetId, _periods)
+    if (amount == 0) then throw("Nothing to claim") else result
   }
 
   @Callable(i)

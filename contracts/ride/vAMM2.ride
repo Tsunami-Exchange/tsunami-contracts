@@ -82,13 +82,11 @@ func minerAddress() = addressFromString(coordinator().getStringValue(k_miner_add
 
 let DIR_LONG                = 1
 let DIR_SHORT               = 2
-let FUNDING_BLOCK_INTERVAL  = 60
-let TWAP_INTERVAL = 15
-let ORACLE_INTERVAL = 15
+let TWAP_INTERVAL           = 15
+let ORACLE_INTERVAL         = 15
 
 let SECONDS = 1000
 let DECIMAL_UNIT = 1 * (10 * 10 * 10 * 10 * 10 * 10)
-let HUNDRED_PERCENT = 100 * DECIMAL_UNIT
 let ONE_DAY = 86400 * DECIMAL_UNIT
 let ALL_FEES = 100
 let PNL_OPTION_SPOT = 1
@@ -232,7 +230,7 @@ func swapInput(_isAdd: Boolean, _quoteAssetAmount: Int) = {
   let _qtAstR = qtAstR()
   let _bsAstR = bsAstR()
   let priceBefore = divd(_qtAstR, _bsAstR)
-  let amountBaseAssetBoughtWithoutPriceImpact = muld(_quoteAssetAmount, priceBefore)
+  let amountBaseAssetBoughtWithoutPriceImpact = divd(_quoteAssetAmount, priceBefore)
   let k = muld(_qtAstR, _bsAstR)
   let quoteAssetReserveAfter = if (_isAdd) then {
     _qtAstR + _quoteAssetAmount
@@ -248,10 +246,16 @@ func swapInput(_isAdd: Boolean, _quoteAssetAmount: Int) = {
     -amountBaseAssetBoughtAbs
   }
   
-  let priceImpact = (amountBaseAssetBoughtWithoutPriceImpact - amountBaseAssetBoughtAbs) / amountBaseAssetBoughtWithoutPriceImpact
+  let priceImpact = divd((amountBaseAssetBoughtWithoutPriceImpact - amountBaseAssetBoughtAbs), amountBaseAssetBoughtWithoutPriceImpact)
   let maxPriceImpactValue = maxPriceImpact()
   if (priceImpact > maxPriceImpactValue) then {
-    throw("Price impact " + priceImpact.toString() + " > max price impact " + maxPriceImpactValue.toString())
+    throw("Price impact " + priceImpact.toString() + " > max price impact " + maxPriceImpactValue.toString() 
+    + " before quote asset: " + _qtAstR.toString()
+    + " before base asset: " + _bsAstR.toString()
+    + " quote asset amount to xchange: " + _quoteAssetAmount.toString()
+    + " ideal price buy: " + amountBaseAssetBoughtWithoutPriceImpact.toString()
+    + " real price buy: " + amountBaseAssetBoughtAbs.toString()
+    )
   } else {
     let (
       quoteAssetReserveAfter1,
@@ -340,7 +344,7 @@ func getOracleTwapPrice() = {
   let oracle = addressFromString(this.getStringValue(k_ora)).valueOrErrorMessage("")
   let priceKey = this.getStringValue(k_ora_key)
   let blockKey = this.getStringValue(k_ora_block_key)
-  let lastValue = oracle.getIntegerValue(priceKey)
+  let lastValue = oracle.getInteger(priceKey).valueOrErrorMessage("Can not get oracle price. Oracle: " + oracle.toString() + " key: " + priceKey)
   # let lastOracleBlock = oracle.getIntegerValue(k_ora_block_key)
 
   # Check that oracle data is not too old
@@ -602,6 +606,16 @@ func appendTwap(price: Int) = {
   }
 }
 
+func updateAmmReserves(
+  _qtAstR: Int,
+  _bsAstR: Int
+) = {
+  [
+    IntegerEntry(k_quoteAssetReserve, _qtAstR),
+    IntegerEntry(k_baseAssetReserve, _bsAstR)
+  ]
+}
+
 func updateAmm(
   _qtAstR: Int,
   _bsAstR: Int,
@@ -614,9 +628,9 @@ func updateAmm(
   if (_totalLongPositionSize - _totalShortPositionSize != _totalPositionSizeAfter) then {
     throw("Invalid AMM state data: " + _totalLongPositionSize.toString() + " +  " + _totalShortPositionSize.toString() + " != " + _totalPositionSizeAfter.toString())
   } else {
+    updateAmmReserves(_qtAstR, _bsAstR)
+    ++
     [
-      IntegerEntry(k_quoteAssetReserve, _qtAstR),
-      IntegerEntry(k_baseAssetReserve, _bsAstR),
       IntegerEntry(k_totalPositionSize, _totalPositionSizeAfter),
       IntegerEntry(k_cumulativeNotional, _cumulativeNotionalAfter),
       IntegerEntry(k_openInterestNotional, _openInterestNotional),
@@ -689,6 +703,46 @@ func unpause() = {
     [
       BooleanEntry(k_paused, false)
     ]
+  }
+}
+
+@Callable(i)
+func addLiquidity(_quoteAssetAmount: Int) = {
+  if (
+    i.caller != adminAddress()
+    || _quoteAssetAmount <= 0
+  ) then {
+    throw("Invalid addLiquidity params")
+  } else {
+    let _qtAstR = qtAstR()
+    let _bsAstR = bsAstR()
+    let price = divd(_qtAstR, _bsAstR)
+    let baseAssetAmountToAdd = divd(_quoteAssetAmount, price)
+
+    let qtAstRAfter = _qtAstR + _quoteAssetAmount
+    let bsAstRAfter = _bsAstR + baseAssetAmountToAdd  
+
+    updateAmmReserves(qtAstRAfter, bsAstRAfter)
+  }
+}
+
+@Callable(i)
+func removeLiquidity(_quoteAssetAmount: Int) = {
+  if (
+    i.caller != adminAddress()
+    || _quoteAssetAmount <= 0
+  ) then {
+    throw("Invalid removeLiquidity params")
+  } else {
+    let _qtAstR = qtAstR()
+    let _bsAstR = bsAstR()
+    let price = divd(_qtAstR, _bsAstR)
+    let baseAssetAmountToRemove = divd(_quoteAssetAmount, price)
+
+    let qtAstRAfter = _qtAstR - _quoteAssetAmount
+    let bsAstRAfter = _bsAstR - baseAssetAmountToRemove
+
+    updateAmmReserves(qtAstRAfter, bsAstRAfter)
   }
 }
 
@@ -777,7 +831,6 @@ func decreasePosition(
 ) = {
   if (
     _amount <= 0
-    || (_leverage < 1 * DECIMAL_UNIT || _leverage > 3 * DECIMAL_UNIT)
     || !initialized()
     || !requireMoreMarginRatio(divd(DECIMAL_UNIT, _leverage), initMarginRatio(), true)
     || !requireOpenPosition(i.caller.toString())
@@ -895,7 +948,6 @@ func increasePosition(
   if (
     (_direction != DIR_LONG && _direction != DIR_SHORT)
     || _rawAmount <= 0
-    || (_leverage < 1 * DECIMAL_UNIT || _leverage > 3 * DECIMAL_UNIT)
     || !initialized()
     || i.payments[0].assetId != quoteAsset()
     || !requireMoreMarginRatio(divd(DECIMAL_UNIT, _leverage), initMarginRatio(), true)
