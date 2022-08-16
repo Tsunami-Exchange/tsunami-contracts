@@ -246,13 +246,13 @@ func swapInput(_isAdd: Boolean, _quoteAssetAmount: Int) = {
     -amountBaseAssetBoughtAbs
   }
   
-  let priceImpact = divd((amountBaseAssetBoughtWithoutPriceImpact - amountBaseAssetBoughtAbs), amountBaseAssetBoughtWithoutPriceImpact)
+  let priceImpact = abs(divd(amountBaseAssetBoughtWithoutPriceImpact, amountBaseAssetBoughtAbs) - DECIMAL_UNIT)
   let maxPriceImpactValue = maxPriceImpact()
   if (priceImpact > maxPriceImpactValue) then {
     throw("Price impact " + priceImpact.toString() + " > max price impact " + maxPriceImpactValue.toString() 
     + " before quote asset: " + _qtAstR.toString()
     + " before base asset: " + _bsAstR.toString()
-    + " quote asset amount to xchange: " + _quoteAssetAmount.toString()
+    + " quote asset amount to exchange: " + _quoteAssetAmount.toString()
     + " ideal price buy: " + amountBaseAssetBoughtWithoutPriceImpact.toString()
     + " real price buy: " + amountBaseAssetBoughtAbs.toString()
     )
