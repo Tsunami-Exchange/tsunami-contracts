@@ -65,6 +65,9 @@
   func int0(k: String) = this.getInteger(k).valueOrElse(0)
 
   func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
+  
+  # Helper for testing
+  let TIME = lastBlock.timestamp
 
   ##### Key functions #####
   func getFeesInPeriodKey(_amm: String, _trader: String, _weekId: Int) = {
@@ -382,8 +385,7 @@
       throw("Invalid notifyFees params")
     } else {
       let actualFee = _fee.usdnToDecimals()
-      let ts = lastBlock.timestamp
-      let weekId = getWeekId(ts)
+      let weekId = getWeekId(TIME)
       let feesInPeriod = getFeesInPeriod(amm, _trader, weekId)
       let totalFeesInPeriod = getTotalFeesInPeriod(amm, weekId)
       let newFeesInPeriod = feesInPeriod + actualFee
@@ -409,14 +411,13 @@
       throw("Invalid notifyNotional params")
     } else {
       let actualNotional = _notional.usdnToDecimals()
-      let ts = lastBlock.timestamp
       let lastNotional = getLastNotional(amm, _trader)
-      let weekId = getWeekId(ts)
+      let weekId = getWeekId(TIME)
       let weekStart = getWeekStart(weekId)
       let weekEnd = getWeekEnd(weekId)
       let t = weekEnd - weekStart
       let oldRunningAverage = getTraderAverageNotionalInPeriod(amm, _trader, weekId, lastNotional)
-      let w = (weekEnd - ts).divd(t)
+      let w = (weekEnd - TIME).divd(t)
 
       let oldTraderAmmScore = getTraderScoreInPeriod(amm, _trader, weekId)
       let oldTotalAmmScore = getTotalScoreInPeriod(amm, weekId)

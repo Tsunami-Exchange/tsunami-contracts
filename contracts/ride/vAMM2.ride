@@ -847,6 +847,28 @@ func initialize(
 }
 
 @Callable(i)
+func setInitMarginRatio(
+  _initMarginRatio: Int
+) = {
+  if (
+    _initMarginRatio <= 0
+    || !initialized()
+  ) then {
+    throw("Invalid setInitMarginRatio parameters")
+  } else {
+    updateSettings(
+      _initMarginRatio, 
+      maintenanceMarginRatio(), 
+      liquidationFeeRatio(), 
+      fundingPeriodRaw(), 
+      fee(), 
+      spreadLimit(), 
+      maxPriceImpact()
+    )
+  }
+}
+
+@Callable(i)
 func decreasePosition(
   _amount: Int,
   _leverage: Int,
