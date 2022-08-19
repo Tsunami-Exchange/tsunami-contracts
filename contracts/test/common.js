@@ -7,8 +7,12 @@ const decimals = 10 ** 6;
 
 const wait = t => new Promise(s => setTimeout(s, t, t));
 
-const deploy = async (filename, fee, seed, name) => {
-    const code = file(filename)
+const deploy = async (filename, fee, seed, name, injectTimer, timerAddress) => {
+    let code = file(filename)
+    if (injectTimer) {
+        code = code.replace('lastBlock.timestamp', `addressFromStringValue("${timerAddress}").getInteger("timestamp").valueOrElse(${new Date().getTime()})`)
+        console.log(`Injected timer to ${name}`)
+    }
     const script = compile(code)
     const tx = setScript({ script, fee}, seed);
     await broadcast(tx);
@@ -54,11 +58,13 @@ class Environment {
         if (this.isLocal) {
             await setupAccounts({
                 assetHolder:        3    * wvs,
-                neutrinoStaking:    0.15 * wvs
+                neutrinoStaking:    0.15 * wvs,
+                timer:              3    * wvs,
             });
 
             this.seeds.assetHolder = accounts.assetHolder
             this.seeds.neutrinoStaking = accounts.neutrinoStaking
+            this.seeds.timer = accounts.timer
 
             // Issue TSN and Neutrino assets
             //
@@ -96,7 +102,7 @@ class Environment {
 
         let p1 = deploy('coordinator.ride' , 3400000, this.seeds.coordinator , 'Coordinator')
         let p2 = deploy('insurance.ride'   , 3400000, this.seeds.insurance   , 'Insurance Fund')
-        let p4 = deploy('mining.ride'      , 3400000, this.seeds.miner       , 'Miner')
+        let p4 = deploy('mining.ride'      , 3400000, this.seeds.miner       , 'Miner', this.isLocal, address(this.seeds.timer))
 
         let period = Math.floor((new Date()).getTime() / 1000 / 604800)
 
@@ -190,6 +196,7 @@ class Environment {
         }
 
         this.insurance = new Insurance(this)
+        this.miner = new Miner(this)
 
         console.log(`Environment deployed`)
     }
@@ -261,6 +268,18 @@ class Environment {
         return new AMM(this)
     }
 
+    async addAmm(_amm) {
+        const addAmmTx = await invoke({
+            dApp: address(this.seeds.coordinator),
+            functionName: "addAmm",
+            arguments: [ address(_amm), "" ]
+        }, this.seeds.admin)
+
+        await waitForTx(addAmmTx.id)
+        console.log(`addAmm in ${addAmmTx.id}`)
+        return addAmmTx
+    }
+
     async supplyUsdn(_amount, _recipient) {
         let amount = _amount * decimals
 
@@ -274,10 +293,63 @@ class Environment {
         return tx
     }
 
+    async supplyTsn(_amount, _recipient) {
+        let amount = _amount * wvs
+
+        let tx = await broadcast(transfer({
+            recipient: _recipient,
+            amount,
+            assetId: this.assets.tsn
+        }, this.seeds.assetHolder))
+
+        await waitForTx(tx.id)
+        return tx
+    }
+
     async fundAccounts(request) {
         await Promise.all(Object.keys(request).map(
             r => this.supplyUsdn(request[r], address(r))
         ))
+    }
+
+    async setTime(_timestamp) {
+        if (!this.isLocal) {
+            throw("Can set time only in local env")
+        }
+
+        let setTimerTx = data({
+            data: [
+                {
+                    "key": "timestamp",
+                    "type": "integer",
+                    "value": _timestamp
+                }
+            ]
+        }, this.seeds.timer)
+
+        await broadcast(setTimerTx)
+        await waitForTx(setTimerTx.id)
+
+        console.log(`Set new time in ${setTimerTx.id}`)
+        return setTimerTx
+    }
+
+    async setOracleAssetPrice(_assetId, _price) {
+        let period = Math.floor((new Date()).getTime() / 1000 / 604800)
+
+        let seedOracleTx = data({
+            data: [
+                {
+                    "key": `price_${period}_${_assetId}`,
+                    "type": "integer",
+                    "value": Math.round(_price * decimals)
+                }
+            ]
+        }, this.seeds.oracle)
+
+        await broadcast(seedOracleTx)
+        await waitForTx(seedOracleTx.id)
+        console.log(`Updated oracle in ${seedOracleTx.id}`)
     }
 }
 
@@ -571,6 +643,214 @@ class Insurance {
         let balance = await accountDataByKey(`k_insurance`, dApp).then(x => x.value)
 
         return Number.parseFloat((balance / 10**6).toFixed(4))
+    }
+}
+
+class Miner {
+
+    constructor(e, sender) {
+        this.e = e
+        this.sender = sender
+    }
+
+    as(_sender) {
+        return new Miner(this.e, _sender)
+    }
+
+    async notifyFees(_trader, _fee) {
+        let fee = _fee * decimals
+        let tx = await invoke({
+            dApp: address(this.e.seeds.miner),
+            functionName: "notifyFees",
+            arguments: [_trader, fee]
+        }, this.sender)
+
+        await waitForTx(tx.id)
+        return tx
+    }
+
+    async notifyNotional(_trader, _notional) {
+        let notional = _notional * decimals
+        let tx = await invoke({
+            dApp: address(this.e.seeds.miner),
+            functionName: "notifyNotional",
+            arguments: [_trader, notional]
+        }, this.sender)
+
+        await waitForTx(tx.id)
+        return tx
+    } 
+
+    async attachRewardAsset(_assetId, _maxAmountPerPeriod) {
+        let maxAmountPerPeriod = _maxAmountPerPeriod * wvs
+        let tx = await invoke({
+            dApp: address(this.e.seeds.miner),
+            functionName: "attachRewardAsset",
+            arguments: [_assetId, maxAmountPerPeriod]
+        }, this.e.seeds.admin)
+
+        await waitForTx(tx.id)
+        return tx
+    }
+
+    async attachRewards(_amm, _assetId, _rewardRate) {
+        let rewardRate = _rewardRate * wvs
+        let tx = await invoke({
+            dApp: address(this.e.seeds.miner),
+            functionName: "attachRewards",
+            arguments: [address(_amm), _assetId, rewardRate]
+        }, this.e.seeds.admin)
+
+        await waitForTx(tx.id)
+        return tx
+    }
+
+    async claimAllRewards(_assetId, _period) {
+        let tx = await invoke({
+            dApp: address(this.e.seeds.miner),
+            functionName: "claimAllRewards",
+            arguments: [_assetId, `${_period}`]
+        }, this.sender)
+
+        await waitForTx(tx.id)
+        return tx
+    }
+
+    async getTraderFeeInPeriod(_amm, _trader, _period) {
+        let amm = address(_amm)
+        let dApp = address(this.e.seeds.miner)
+        let value = await accountDataByKey(`k_traderFeesInPeriod_${amm}_${_trader}_${_period}`, dApp).then(x => x.value)
+        return value
+    }
+
+    async getAmmFeeInPeriod(_amm, _period) {
+        let amm = address(_amm)
+        let dApp = address(this.e.seeds.miner)
+        let value = await accountDataByKey(`k_totalFeesInPeriod_${amm}_${_period}`, dApp).then(x => x.value)
+        return value
+    }
+
+    async getAssetFeeInPeriod(_assetId, _period) {
+        let dApp = address(this.e.seeds.miner)
+        let value = await accountDataByKey(`k_totalAssetFeesInPeriod_${_assetId}_${_period}`, dApp).then(x => x.value)
+        return value
+    }
+
+    async getTraderNotionalInPeriod(_amm, _trader, _period) {
+        let amm = address(_amm)
+        let dApp = address(this.e.seeds.miner)
+        let value = await accountDataByKey(`k_traderAverageNotionalInPeriod_${amm}_${_trader}_${_period}`, dApp).then(x => x.value)
+        return value
+    }
+
+    async getTraderScoreInPeriod(_amm, _trader, _period) {
+        let amm = address(_amm)
+        let dApp = address(this.e.seeds.miner)
+        let value = await accountDataByKey(`k_traderScoreInPeriod_${amm}_${_trader}_${_period}`, dApp).then(x => x.value)
+        return value
+    }
+
+    async getAmmScoreInPeriod(_amm, _period) {
+        let amm = address(_amm)
+        let dApp = address(this.e.seeds.miner)
+        let value = await accountDataByKey(`k_totalScoreInPeriod_${amm}_${_period}`, dApp).then(x => x.value)
+        return value
+    }
+
+    async getPeriod() {
+        const invokeTx = invokeScript({
+            dApp: address(this.e.seeds.miner),
+            call: {
+                function: "view_getPeriod",
+                args: []
+            },
+        }, this.e.seeds.admin);
+
+        try {
+            await broadcast(invokeTx);
+        } catch (e) {
+            let { message } = JSON.parse(JSON.stringify(e))
+            let parts = message.replace('Error while executing account-script: ', '').split(',')
+            let weekStart = parseInt(parts[0])
+            let weekEnd = parseInt(parts[1])
+            let timestamp = parseInt(parts[2])
+
+            return {
+                weekStart,
+                weekEnd,
+                timestamp
+            }
+        }
+    }
+
+    async getTraderRewardInPeriod(_assetId, _trader, _period) {
+        const invokeTx = invokeScript({
+            dApp: address(this.e.seeds.miner),
+            call: {
+                function: "view_claimAllRewards",
+                args: [
+                    {
+                        type: "string",
+                        value: _trader
+                    },
+                    {
+                        type: "string",
+                        value: _assetId
+                    },
+                    {
+                        type: "string",
+                        value: `${_period}`
+                    }
+                ]
+            },
+        }, this.e.seeds.admin);
+
+        try {
+            await broadcast(invokeTx);
+        } catch (e) {
+            let { message } = JSON.parse(JSON.stringify(e))
+            let parts = message.replace('Error while executing account-script: ', '').split(',')
+            let rewards = parseInt(parts[0])
+            let claimed = parseInt(parts[1])
+
+            return {
+                rewards,
+                claimed
+            }
+        }
+    }
+
+    async getMaxAmountOfAssetToDistribute(_amm, _assetId, _period) {
+        const invokeTx = invokeScript({
+            dApp: address(this.e.seeds.miner),
+            call: {
+                function: "view_getMaxAmountOfAssetToDistribute",
+                args: [
+                    {
+                        type: "string",
+                        value: address(_amm)
+                    },
+                    {
+                        type: "string",
+                        value: _assetId
+                    },
+                    {
+                        type: "integer",
+                        value: _period
+                    }
+                ]
+            },
+        }, this.e.seeds.admin);
+
+        try {
+            await broadcast(invokeTx);
+        } catch (e) {
+            let { message } = JSON.parse(JSON.stringify(e))
+            let parts = message.replace('Error while executing account-script: ', '').split(',')
+            let amount = parseInt(parts[0])
+
+            return amount
+        }
     }
 }
 

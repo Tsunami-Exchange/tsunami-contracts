@@ -4,13 +4,14 @@
 
   ##### Key constants #####
   let k_totalFeesInPeriod = "k_totalFeesInPeriod"
+  let k_totalAssetFeesInPeriod = "k_totalAssetFeesInPeriod"
   let k_traderFeesInPeriod = "k_traderFeesInPeriod"
   let k_lastNotional = "k_lastNotional"
   let k_totalScoreInPeriod = "k_totalScoreInPeriod"
   let k_traderScoreInPeriod = "k_traderScoreInPeriod"
   let k_traderAverageNotionalInPeriod = "k_traderAverageNotionalInPeriod"
   let k_ammRewardRate = "k_ammRewardRate"
-  let k_ammMaxAmountPerPeriod = "k_ammMaxAmountPerPeriod"
+  let k_assetMaxAmountPerPeriod = "k_assetMaxAmountPerPeriod"
   let k_rewardAssetIds = "k_rewardAssetIds"
   let k_amms = "k_amms"
   let k_claimedAssetAndPeriod = "k_claimedAssetAndPeriod"
@@ -65,17 +66,25 @@
   func int0(k: String) = this.getInteger(k).valueOrElse(0)
 
   func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
+
+  func getRewardAssetIds() = {
+    strToList(this.getString(k_rewardAssetIds).valueOrElse(""))
+  }
   
   # Helper for testing
   let TIME = lastBlock.timestamp
 
   ##### Key functions #####
-  func getFeesInPeriodKey(_amm: String, _trader: String, _weekId: Int) = {
+  func getTraderFeesInPeriodKey(_amm: String, _trader: String, _weekId: Int) = {
     k_traderFeesInPeriod + "_" + _amm + "_" + _trader + "_" + _weekId.toString()
   }
 
-  func getTotalFeesInPeriodKey(_amm: String, _weekId: Int) = {
+  func getTotalAmmFeesInPeriodKey(_amm: String, _weekId: Int) = {
     k_totalFeesInPeriod + "_" + _amm + "_" + _weekId.toString()
+  }
+
+  func getTotalAssetFeesInPeriodKey(_assetId: String, _weekId: Int) = {
+    k_totalAssetFeesInPeriod + "_" + _assetId + "_" + _weekId.toString()
   }
 
   func getLastNotionalKey(_amm: String, _trader: String) = {
@@ -98,8 +107,8 @@
     k_ammRewardRate + "_" + _amm + "_" + _assetId
   }
 
-  func getAmmMaxAmountPerPeriodKey(_amm: String, _assetId: String) = {
-    k_ammMaxAmountPerPeriod + "_" + _amm + "_" + _assetId
+  func getAssetMaxAmountPerPeriodKey(_assetId: String) = {
+    k_assetMaxAmountPerPeriod + "_" + _assetId
   }
 
   func getClaimedTraderAssetPeriodKey(_trader: String, _assetId: String, _period: Int) = {
@@ -114,38 +123,6 @@
     k_totalClaimedForTraderAndAsset + "_" + _trader + "_" + _assetId
   }
 
-  ##### Update functions #####
-  func updateAmmFees(_amm: String, _trader: String, _weekId: Int, _traderFees: Int, _totalFees: Int) = {
-    let traderFeesKey = getFeesInPeriodKey(_amm, _trader, _weekId)
-    let totalFeesKey = getTotalFeesInPeriodKey(_amm, _weekId)
-    [
-      IntegerEntry(traderFeesKey, _traderFees),
-      IntegerEntry(totalFeesKey, _totalFees)
-    ]
-  }
-
-  func updateAmmData(
-    _amm: String, 
-    _trader: String,
-    _weekId: Int, 
-    _traderAverage: Int, 
-    _traderLastNotional: Int, 
-    _traderScore: Int, 
-    _totalScore: Int
-  ) = {
-    let totalScoreInPeriodKey = getTotalScoreInPeriodKey(_amm, _weekId)
-    let traderScoreInPeriodKey = getTraderScoreInPeriodKey(_amm, _trader, _weekId)
-    let lastNotionalKey = getLastNotionalKey(_amm, _trader)
-    let traderAverageNotionalInPeriodKey = getTraderAverageNotionalInPeriodKey(_amm, _trader, _weekId)
-
-    [
-      IntegerEntry(totalScoreInPeriodKey, _totalScore),
-      IntegerEntry(traderScoreInPeriodKey, _traderScore),
-      IntegerEntry(lastNotionalKey, _traderLastNotional),
-      IntegerEntry(traderAverageNotionalInPeriodKey, _traderAverage)
-    ]
-  }
-
   ##### View functions #####
   func usdnToDecimals(_amount: Int) = _amount * 100
 
@@ -156,12 +133,17 @@
   func getWeekId(_ts: Int) = _ts / MS_IN_WEEK
 
   func getFeesInPeriod(_amm: String, _trader: String, _weekId: Int) = {
-    let key = getFeesInPeriodKey(_amm, _trader, _weekId)
+    let key = getTraderFeesInPeriodKey(_amm, _trader, _weekId)
     this.getInteger(key).valueOrElse(0)
   }
 
   func getTotalFeesInPeriod(_amm: String, _weekId: Int) = {
-    let key = getTotalFeesInPeriodKey(_amm, _weekId)
+    let key = getTotalAmmFeesInPeriodKey(_amm, _weekId)
+    this.getInteger(key).valueOrElse(0)
+  }
+
+  func getTotalAssetFeesInPeriod(_assetId: String, _weekId: Int) = {
+    let key = getTotalAssetFeesInPeriodKey(_assetId, _weekId)
     this.getInteger(key).valueOrElse(0)
   }
 
@@ -184,17 +166,13 @@
     strToList(this.getString(k_amms).valueOrElse(""))
   }
 
-  func getRewardAssetIds() = {
-    strToList(this.getString(k_rewardAssetIds).valueOrElse(""))
-  }
-
   func getAmmRewardRate(_amm: String, _assetId: String) = {
     let key = getAmmRewardRateKey(_amm, _assetId)
     this.getInteger(key).valueOrElse(0)
   }
 
-  func getAmmMaxAmountPerPeriod(_amm: String, _assetId: String) = {
-    let key = getAmmMaxAmountPerPeriodKey(_amm, _assetId)
+  func getAssetMaxAmountPerPeriod(_assetId: String) = {
+    let key = getAssetMaxAmountPerPeriodKey(_assetId)
     this.getInteger(key).valueOrElse(0)
   }
 
@@ -211,6 +189,14 @@
     oracleAddress.getInteger(priceKey).valueOrErrorMessage("No oracle price for asset " + _assetId + " period " + _weekId.toString()).usdnToDecimals()
   }
 
+  func getMaxAmountOfAssetToDistribute(_amm: String, _assetId: String, _weekId: Int) = {
+    let totalFeesInPeriod = getTotalFeesInPeriod(_amm, _weekId)
+    let totalAssetFeesInPeriod = getTotalAssetFeesInPeriod(_assetId, _weekId)
+    let maxAmountOfAsset = getAssetMaxAmountPerPeriod(_assetId)
+    let maxAmountOfAssetToDistribute = totalFeesInPeriod.divd(totalAssetFeesInPeriod).muld(maxAmountOfAsset)
+    maxAmountOfAssetToDistribute
+  }
+
   func rewardForTraderInAssetInPeriod(_amm: String, _trader: String, _assetId: String, _weekId: Int) = {
     let rewardAssetRate = getAmmRewardRate(_amm, _assetId)
     if (rewardAssetRate == 0) then {
@@ -218,14 +204,15 @@
     } else {
       let totalFeesInPeriod = getTotalFeesInPeriod(_amm, _weekId)
       let rewardAssetPrice = getRewardAssetPrice(_assetId, _weekId)
-      let maxAmountOfAssetToDistribute = getAmmMaxAmountPerPeriod(_amm, _assetId)
+      let maxAmountOfAssetToDistribute = getMaxAmountOfAssetToDistribute(_amm, _assetId, _weekId)
+
       let traderScore = getTraderScoreInPeriod(_amm, _trader, _weekId)
       let totalTraderScore = getTotalScoreInPeriod(_amm, _weekId)
 
       if (totalTraderScore == 0) then {
         0
       } else {
-        let totalAssetToDistribute = totalFeesInPeriod.divd(rewardAssetPrice).muld(rewardAssetRate)
+        let totalAssetToDistribute = totalFeesInPeriod.muld(rewardAssetRate).divd(rewardAssetPrice)
         let actualTotalAssetToDistribute = minv(totalAssetToDistribute, maxAmountOfAssetToDistribute)
         let traderShareInRewards = actualTotalAssetToDistribute.muld(traderScore).divd(totalTraderScore)
 
@@ -242,7 +229,7 @@
 
   func totalRewardForTraderInAsset(_trader: String, _assetId: String, _periods: List[Int]) = {
     func compute(_acc: Int, _weekId: Int) = _acc + totalRewardForTraderInAssetInPeriod(_trader, _assetId, _weekId)
-    FOLD<18>(_periods, 0, compute) # Max 18 Periods
+    FOLD<14>(_periods, 0, compute) # Max 14 Periods
   }
 
   func getTraderAverageNotionalInPeriod(_amm: String, _trader: String, _weekId: Int, _defaultValue: Int) = {
@@ -266,7 +253,7 @@
         || isClaimed(_trader, _assetId, period)
       ) then _acc else _acc :+ period
     }
-    let validPeriods = FOLD<18>(periods, [], checkAndFilterFn)
+    let validPeriods = FOLD<16>(periods, [], checkAndFilterFn)
     
     func markPeriodAsDoneFn(_acc: List[BooleanEntry], _period: Int) = {
       _acc :+ BooleanEntry(
@@ -275,7 +262,7 @@
       )
     }
 
-    let markPeriodsAsClaimed = FOLD<18>(validPeriods, [], markPeriodAsDoneFn)
+    let markPeriodsAsClaimed = FOLD<16>(validPeriods, [], markPeriodAsDoneFn)
 
     let amount = totalRewardForTraderInAsset(_trader, _assetId, validPeriods)
 
@@ -293,7 +280,64 @@
         )
       ] ++ markPeriodsAsClaimed
     )
+  }
+
+  ##### Update functions #####
+  func updateAmmFees(_amm: String, _trader: String, _weekId: Int, _actualFee: Int) = {
+    let traderFeesKey = getTraderFeesInPeriodKey(_amm, _trader, _weekId)
+    let totalFeesKey = getTotalAmmFeesInPeriodKey(_amm, _weekId)
+    let rewardAssets = getRewardAssetIds()
     
+    let feesInPeriod = getFeesInPeriod(_amm, _trader, _weekId)
+    let totalFeesInPeriod = getTotalFeesInPeriod(_amm, _weekId)
+    let newFeesInPeriod = feesInPeriod + _actualFee
+    let newTotalFeesInPeriod = totalFeesInPeriod + _actualFee
+
+    # Filter rewards for this AMM
+    #
+    func doHandleRewardAssetId(_acc: List[IntegerEntry], _assetId: String) = {
+      let key = getAmmRewardRateKey(_amm, _assetId)
+      if (this.getInteger(key).valueOrElse(0) > 0) then {
+        let totalAssetFeesKey = getTotalAssetFeesInPeriodKey(_assetId, _weekId)
+        _acc :+ IntegerEntry(
+          totalAssetFeesKey,
+          getTotalAssetFeesInPeriod(_assetId, _weekId) + _actualFee
+        )
+      } else {
+        _acc
+      }
+    }
+
+    let updateAssetFees = FOLD<10>(rewardAssets, [], doHandleRewardAssetId)
+
+    [
+      IntegerEntry(traderFeesKey, newFeesInPeriod),
+      IntegerEntry(totalFeesKey, newTotalFeesInPeriod)
+    ]
+    ++
+    updateAssetFees
+  }
+
+  func updateAmmData(
+    _amm: String, 
+    _trader: String,
+    _weekId: Int, 
+    _traderAverage: Int, 
+    _traderLastNotional: Int, 
+    _traderScore: Int, 
+    _totalScore: Int
+  ) = {
+    let totalScoreInPeriodKey = getTotalScoreInPeriodKey(_amm, _weekId)
+    let traderScoreInPeriodKey = getTraderScoreInPeriodKey(_amm, _trader, _weekId)
+    let lastNotionalKey = getLastNotionalKey(_amm, _trader)
+    let traderAverageNotionalInPeriodKey = getTraderAverageNotionalInPeriodKey(_amm, _trader, _weekId)
+
+    [
+      IntegerEntry(totalScoreInPeriodKey, _totalScore),
+      IntegerEntry(traderScoreInPeriodKey, _traderScore),
+      IntegerEntry(lastNotionalKey, _traderLastNotional),
+      IntegerEntry(traderAverageNotionalInPeriodKey, _traderAverage)
+    ]
   }
 
   ##### Callable functions #####
@@ -330,6 +374,19 @@
   }
 
   @Callable(i)
+  func view_getPeriod() = {
+      let weekId = getWeekId(TIME)
+      let weekStart = getWeekStart(weekId)
+      let weekEnd = getWeekEnd(weekId)
+      throw(weekStart.toString() + "," + weekEnd.toString() + "," + TIME.toString())
+  }
+
+  @Callable(i)
+  func view_getMaxAmountOfAssetToDistribute(_amm: String, _assetId: String, _weekId: Int) = {
+    throw(getMaxAmountOfAssetToDistribute(_amm, _assetId, _weekId).toString())
+  }
+
+  @Callable(i)
   func view_claimRewards(_trader: String, _assetId: String, _period: Int) = {
     throw(totalRewardForTraderInAsset(_trader, _assetId, [_period]).toString())
   }
@@ -348,15 +405,42 @@
   @Callable(i)
   func claimAllRewards(_assetId: String, _periods: String) = {
     let trader = i.caller.toString()
-    let (amount, result) = claimAllRewardForPeriodForTrader(trader, _assetId, _periods)
-    if (amount == 0) then throw("Nothing to claim") else result
+    if (_periods.contains(getWeekId(TIME).toString())) then {
+      throw("Can not claim rewards for current week")
+    } else {
+      let (amount, result) = claimAllRewardForPeriodForTrader(trader, _assetId, _periods)
+      if (amount == 0) 
+        then throw("Nothing to claim") 
+        else result
+    }
   }
 
   @Callable(i)
-  func attachRewards(_amm: String, _assetId: String, _maxAmountPerPeriod: Int, _rewardRate: Int) = {
+  func attachRewardAsset( _assetId: String, _maxAmountPerPeriod: Int) = {
     if (
       !initialized()
       || i.caller != adminAddress()
+    ) then {
+      throw("Invalid attachRewardAsset params")
+    } else {
+      let amms = getAmms()
+      let rewardAssetIds = getRewardAssetIds()
+
+      let newRewardAssetIds = if (rewardAssetIds.containsElement(_assetId)) then rewardAssetIds else rewardAssetIds :+ _assetId
+
+      [
+        IntegerEntry(getAssetMaxAmountPerPeriodKey(_assetId), _maxAmountPerPeriod),
+        StringEntry(k_rewardAssetIds, listToStr(newRewardAssetIds))
+      ]
+    }
+  }
+
+  @Callable(i)
+  func attachRewards(_amm: String, _assetId: String, _rewardRate: Int) = {
+    if (
+      !initialized()
+      || i.caller != adminAddress()
+      || !isWhitelist(_amm)
     ) then {
       throw("Invalid attachRewards params")
     } else {
@@ -368,7 +452,6 @@
 
       [
         IntegerEntry(getAmmRewardRateKey(_amm, _assetId), _rewardRate),
-        IntegerEntry(getAmmMaxAmountPerPeriodKey(_amm, _assetId), _maxAmountPerPeriod),
         StringEntry(k_amms, listToStr(newAmms)),
         StringEntry(k_rewardAssetIds, listToStr(newRewardAssetIds))
       ]
@@ -386,17 +469,12 @@
     } else {
       let actualFee = _fee.usdnToDecimals()
       let weekId = getWeekId(TIME)
-      let feesInPeriod = getFeesInPeriod(amm, _trader, weekId)
-      let totalFeesInPeriod = getTotalFeesInPeriod(amm, weekId)
-      let newFeesInPeriod = feesInPeriod + actualFee
-      let newTotalFeesInPeriod = totalFeesInPeriod + actualFee
 
       updateAmmFees(
         amm,
         _trader,
         weekId,
-        newFeesInPeriod,
-        newTotalFeesInPeriod
+        actualFee
       )
     }
   }
