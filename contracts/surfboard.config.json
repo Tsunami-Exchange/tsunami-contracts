@@ -18,6 +18,9 @@
     "defaultEnv": "custom",
     "mocha": {
         "timeout": 60000,
-        "reporter2": "allure-mocha"
+        "reporter": "mocha-multi-reporters",
+        "reporterOptions": {
+            "reporterEnabled": "spec, allure-mocha"
+        }
     }
 }
