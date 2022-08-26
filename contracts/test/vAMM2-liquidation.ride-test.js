@@ -57,7 +57,7 @@ describe('vAMM should be able to liquidate underwater long position', async func
         await Promise.all([
             amm.as(shorter).increasePosition(2000, DIR_SHORT, 3, 1),
             amm.as(shorter).increasePosition(2000, DIR_SHORT, 3, 1),
-            amm.as(shorter).increasePosition(2000, DIR_SHORT, 3, 1)
+            amm.as(shorter).increasePosition(2200, DIR_SHORT, 3, 1)
         ])
 
         let longerActualData =  await amm.getPositionActualData(longer)
@@ -70,11 +70,25 @@ describe('vAMM should be able to liquidate underwater long position', async func
         expect(amm.as(liquidator).liquidate(longer)).to.eventually.be.rejected
     })
 
-    it('Can liquidate long position', async function () {
+    it('Can partially liquidate long position', async function () {
         await amm.syncOraclePriceWithMarketPrice()
         await amm.as(liquidator).liquidate(longer)
         
         console.log(`AMM Market Price after liquidation is: ${await amm.getMarketPrice()}`)
+        let longerActualData =  await amm.getPositionActualData(longer)
+        console.log(`longerActualData=${JSON.stringify(longerActualData)}`)        
+
+        await amm.as(liquidator).liquidate(longer)
+        
+        console.log(`AMM Market Price after liquidation is: ${await amm.getMarketPrice()}`)
+        longerActualData =  await amm.getPositionActualData(longer)
+        console.log(`longerActualData=${JSON.stringify(longerActualData)}`)        
+
+        await amm.as(liquidator).liquidate(longer)
+        
+        longerActualData =  await amm.getPositionActualData(longer)
+        console.log(`longerActualData=${JSON.stringify(longerActualData)}`)
+        expect(longerActualData.marginRatio).to.be.greaterThanOrEqual(0.08)
     })
 
     it('Can close short position', async function () {

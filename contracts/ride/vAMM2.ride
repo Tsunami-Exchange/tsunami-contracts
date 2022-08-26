@@ -30,6 +30,7 @@ let k_fundingPeriod = "k_fundingPeriod"                   # Funding period. By d
 let k_initMarginRatio = "k_initMarginRatio"               # Initial margin ratio. Controls how much leverage can be applied when position is created
 let k_maintenanceMarginRatio = "k_mmr"                    # Maintenance margin ratio (MMR). When MR < MMR position can be liquidated
 let k_liquidationFeeRatio = "k_liquidationFeeRatio"       # % of position size liquidator will get for himself. 1/2 of this goes to liquidator, 1/2 - to insurance fund
+let k_partialLiquidationRatio = "k_partLiquidationRatio"  # % of position notional that will be liquidated in case 0 < MR < MMR
 let k_spreadLimit = "k_spreadLimit"                       # abs((marketPrice - oraclePrice) / oraclePrice). If over spread limit, liquidations consult oracle price
 let k_maxPriceImpact = "k_maxPriceImpact"                 # maximum price impact per order
 
@@ -135,6 +136,7 @@ func fundingPeriodDecimal() = fundingPeriodRaw() * DECIMAL_UNIT
 func fundingPeriodSeconds() = fundingPeriodRaw() * SECONDS
 func maintenanceMarginRatio() = int(k_maintenanceMarginRatio)
 func liquidationFeeRatio() = int(k_liquidationFeeRatio)
+func partialLiquidationRatio() = int(k_partialLiquidationRatio)
 func spreadLimit() = int(k_spreadLimit)
 func maxPriceImpact() = int(k_maxPriceImpact)
 func latestLongCumulativePremiumFraction() = int(k_latestLongCumulativePremiumFraction)
@@ -302,14 +304,13 @@ func calcRemainMarginWithFundingPayment(
 # Computes result of swapping a given amount of _baseAssetAmount
 # Returns full new AMM state, as well as amount of quote asset bought / sold
 # _isAdd - true when we are adding quote asset to AMM, false when removing
-func swapOutput(
+func swapOutputWithReserves(
   _isAdd: Boolean, 
   _baseAssetAmount: Int,
-  _checkMaxPriceImpact: Boolean
+  _checkMaxPriceImpact: Boolean,
+  _quoteAssetReserve: Int,
+  _baseAssetReserve: Int
 ) = {
-  let _quoteAssetReserve = qtAstR()
-  let _baseAssetReserve = bsAstR()
-
   let priceBefore = divd(_quoteAssetReserve, _baseAssetReserve)
 
   if (_baseAssetAmount == 0) then {
@@ -354,10 +355,25 @@ func swapOutput(
         totalPositionSizeAfter1,
         cumulativeNotionalAfter1,
         totalLongPositionSize()  - if (_isAdd)  then abs(_baseAssetAmount) else 0,
-        totalShortPositionSize() - if (!_isAdd) then abs(_baseAssetAmount) else 0
+        totalShortPositionSize() - if (!_isAdd) then abs(_baseAssetAmount) else 0,
+        priceImpact
       )
     }
   }
+}
+
+func swapOutput(
+  _isAdd: Boolean, 
+  _baseAssetAmount: Int,
+  _checkMaxPriceImpact: Boolean
+) = {
+  swapOutputWithReserves(
+    _isAdd,
+    _baseAssetAmount,
+    _checkMaxPriceImpact,
+    qtAstR(),
+    bsAstR()
+  )
 }
 
 # Returns oracle price (Index Price)
@@ -390,6 +406,30 @@ func isOverFluctuationLimit() = {
   divd(abs(oraclePrice - currentPrice), oraclePrice) > spreadLimit()
 }
 
+func getPositionAdjustedOpenNotional(
+  _positionSize: Int, 
+  _option: Int,
+  _quoteAssetReserve: Int,
+  _baseAssetReserve: Int
+) = {
+  let positionSizeAbs = abs(_positionSize)
+  let isShort = _positionSize < 0
+  let positionNotional = if (_option == PNL_OPTION_SPOT) then {
+    let (outPositionNotional, x1, x2, x3) = swapOutputWithReserves(
+      !isShort,
+      positionSizeAbs,
+      false,
+      _quoteAssetReserve,
+      _baseAssetReserve
+    )
+    outPositionNotional
+  } else {
+    muld(positionSizeAbs, getOracleTwapPrice())
+  }
+
+  positionNotional
+}
+
 # Returns position notional (current value of a position) and
 # position profit/loss (delta between initial position notional and current notional)
 # Accept calculation option - to use spot or index price
@@ -401,21 +441,16 @@ func getPositionNotionalAndUnrealizedPnl(_trader: String, _option: Int) = {
       positionLstUpdCPF
     ) = getPosition(_trader)
 
-    let positionSizeAbs = abs(positionSize)
-    if  (positionSizeAbs == 0) then {
+    if (positionSize == 0) then {
       throw("Invalid position size")
     } else {
       let isShort = positionSize < 0
-      let positionNotional = if (_option == PNL_OPTION_SPOT) then {
-        let (outPositionNotional, x1, x2, x3) = swapOutput(
-          !isShort,
-          positionSizeAbs,
-          false
-        )
-        outPositionNotional
-      } else {
-        muld(positionSizeAbs, getOracleTwapPrice())
-      }
+      let positionNotional = getPositionAdjustedOpenNotional(
+        positionSize,
+        _option,
+        qtAstR(),
+        bsAstR()
+      )
 
       let unrealizedPnl = if (isShort) then {
         positionOpenNotional - positionNotional
@@ -457,6 +492,31 @@ func getMarginRatioByOption(_trader: String, _option: Int) = {
 # Computes position spot margin ratio
 func getMarginRatio(_trader: String) = getMarginRatioByOption(_trader, PNL_OPTION_SPOT)
 
+func getPartialLiquidationAmount(_trader: String, _positionSize: Int) = {
+    let maximumRatio = vmax(partialLiquidationRatio(), DECIMAL_UNIT - divd(getMarginRatio(_trader), maintenanceMarginRatio()))
+    let maxExchangedPositionSize = muld(abs(_positionSize), maximumRatio)
+    let swapResult = swapOutput(
+      _positionSize > 0,
+      maxExchangedPositionSize,
+      false
+    )
+    let maxExchangedQuoteAssetAmount = swapResult._1
+    let priceImpact = swapResult._8
+
+    if (priceImpact < maxPriceImpact()) then {
+      maxExchangedQuoteAssetAmount
+    } else {
+      let exchangedPositionSize = muld(abs(_positionSize), partialLiquidationRatio())
+      let exchangedQuoteAssetAmount = swapOutput(
+        _positionSize > 0,
+        exchangedPositionSize,
+        false
+      )._1
+      
+      exchangedQuoteAssetAmount
+    }
+}
+
 # Computes changes to AMM state, resulting in closing trader's position
 func internalClosePosition(_trader: String, _checkMaxPriceImpact: Boolean) = {
     let (
@@ -466,7 +526,7 @@ func internalClosePosition(_trader: String, _checkMaxPriceImpact: Boolean) = {
       positionLstUpdCPF
     ) = getPosition(_trader)
 
-    let (x1, unrealizedPnl) = getPositionNotionalAndUnrealizedPnl(_trader, PNL_OPTION_SPOT)
+    let unrealizedPnl = getPositionNotionalAndUnrealizedPnl(_trader, PNL_OPTION_SPOT)._2
     let (remainMargin, badDebt) = calcRemainMarginWithFundingPayment(
         positionSize, 
         positionMargin, 
@@ -547,7 +607,8 @@ func updateSettings(
   _fundingPeriod: Int,
   _fee: Int,
   _spreadLimit: Int,
-  _maxPriceImpact: Int
+  _maxPriceImpact: Int,
+  _partialLiquidationRatio: Int
 ) = {
   [
     IntegerEntry(k_initMarginRatio, _initMarginRatio),
@@ -556,7 +617,8 @@ func updateSettings(
     IntegerEntry(k_fundingPeriod, _fundingPeriod),
     IntegerEntry(k_fee, _fee),
     IntegerEntry(k_spreadLimit, _spreadLimit),
-    IntegerEntry(k_maxPriceImpact, _maxPriceImpact)
+    IntegerEntry(k_maxPriceImpact, _maxPriceImpact),
+    IntegerEntry(k_partialLiquidationRatio, _partialLiquidationRatio)
   ]
 }
 
@@ -777,7 +839,8 @@ func changeSettings(
   _fundingPeriod: Int,
   _fee: Int,
   _spreadLimit: Int,
-  _maxPriceImpact: Int
+  _maxPriceImpact: Int,
+  _partialLiquidationRatio: Int
 ) = {
   if (i.caller != adminAddress()) then {
     throw("Invalid changeSettings params")
@@ -789,7 +852,8 @@ func changeSettings(
       _fundingPeriod, 
       _fee, 
       _spreadLimit, 
-      _maxPriceImpact
+      _maxPriceImpact,
+      _partialLiquidationRatio
     )
   }
 }
@@ -807,7 +871,8 @@ func initialize(
   _oracleKey: String,
   _coordinator: String,
   _spreadLimit: Int,
-  _maxPriceImpact: Int
+  _maxPriceImpact: Int,
+  _partialLiquidationRatio: Int
 ) = {
   if (
     _qtAstR <= 0
@@ -819,13 +884,23 @@ func initialize(
     || _fee <= 0
     || _spreadLimit <= 0
     || _maxPriceImpact <= 0
+    || _partialLiquidationRatio <= 0
     || initialized()
   ) then {
     throw("Invalid initialize parameters")
   } else {
     updateAmm(_qtAstR, _bsAstR, 0, 0, 0, 0, 0)
     ++
-    updateSettings(_initMarginRatio, _mmr, _liquidationFeeRatio, _fundingPeriod, _fee, _spreadLimit, _maxPriceImpact)
+    updateSettings(
+      _initMarginRatio, 
+      _mmr, 
+      _liquidationFeeRatio, 
+      _fundingPeriod, 
+      _fee, 
+      _spreadLimit, 
+      _maxPriceImpact,
+      _partialLiquidationRatio
+    )
     ++
     updateFunding(
       lastBlock.timestamp + _fundingPeriod,
@@ -863,7 +938,8 @@ func setInitMarginRatio(
       fundingPeriodRaw(), 
       fee(), 
       spreadLimit(), 
-      maxPriceImpact()
+      maxPriceImpact(),
+      partialLiquidationRatio()
     )
   }
 }
@@ -1349,84 +1425,209 @@ func liquidate(_trader: String) = {
   ) then {
     throw("Unable to liquidate")
   } else {
-    let (
-      x1,
-      badDebt,
-      x2,
-      x3,
-      quoteAssetReserveAfter,
-      baseAssetReserveAfter,
-      totalPositionSizeAfter,
-      cumulativeNotionalAfter,
-      openInterestNotionalAfter,
-      exchangedQuoteAssetAmount,
-      totalLongAfter,
-      totalShortAfter
-    ) = internalClosePosition(_trader, false)
-    
-    # Liquidator get a certain (liquidationFeeRatio) percentage from a total position
-    #
-    let liquidationPenalty = muld(exchangedQuoteAssetAmount, liquidationFeeRatio())
-    let feeToLiquidator = liquidationPenalty / 2
-    let feeToInsurance = liquidationPenalty - feeToLiquidator
+    if (
+      # This check guarantees no bad debt, because bad debt can happen only when
+      # spotMarginRatio < 0, and liquidationFeeRatio > 0
+      # TODO: Partial Liquidation Ratio
+      spotMarginRatio > liquidationFeeRatio()
+      && partialLiquidationRatio() > 0
+      && partialLiquidationRatio() < DECIMAL_UNIT
+    ) then {
+      # Liquidate position partially by basically doing decrease position
+      let (
+        oldPositionSize,
+        oldPositionMargin,
+        oldPositionOpenNotional,
+        oldPositionLstUpdCPF
+      ) = getPosition(_trader)
 
-    # Liquidating a position can incur bad debt. If AMM does not have enough funds to cover up bad debt
-    # use Insurance Fund to cover it up
-    let ammBalance = cbalance() - liquidationPenalty
-    let (newAmmBalance, takeFromInsurance) = if (ammBalance < 0) then {
-      (0, abs(ammBalance))
-    } else {
-      (ammBalance, 0)
-    }
+      let _direction = if (oldPositionSize > 0) then DIR_SHORT else DIR_LONG
+      let isAdd = _direction == DIR_LONG
+      
+      let exchangedQuoteAssetAmount = getPartialLiquidationAmount(_trader, oldPositionSize)
+      let (oldPositionNotional, unrealizedPnl) = getPositionNotionalAndUnrealizedPnl(_trader, PNL_OPTION_SPOT)
 
-    strict x = if (takeFromInsurance > 0) then {
-      strict withdrawInsurance = invoke(
-        insuranceAddress(),
-        "withdraw",
-        [takeFromInsurance],
+      let ( 
+          exchangedPositionSize, 
+          quoteAssetReserveAfter, 
+          baseAssetReserveAfter,
+          totalPositionSizeAfter,
+          cumulativeNotionalAfter
+        ) = swapInput(isAdd, exchangedQuoteAssetAmount)
+      
+      # Realize a certain percent of position loss
+      let realizedPnl = divd(muld(unrealizedPnl, abs(exchangedPositionSize)), abs(oldPositionSize))
+      let (remainMargin, badDebt, fundingPayment) = 
+          calcRemainMarginWithFundingPayment(
+              oldPositionSize, 
+              oldPositionMargin, 
+              oldPositionLstUpdCPF, 
+              realizedPnl
+          )
+      let unrealizedPnlAfter = unrealizedPnl - realizedPnl
+      let remainOpenNotional = if (oldPositionSize > 0) then {
+        oldPositionNotional - exchangedQuoteAssetAmount - unrealizedPnlAfter
+      } else {
+        unrealizedPnlAfter + oldPositionNotional - exchangedQuoteAssetAmount
+      }
+
+      # Liquidator get a certain (liquidationFeeRatio) percentage from a total position
+      #
+      let liquidationPenalty = muld(exchangedQuoteAssetAmount, liquidationFeeRatio())
+      let feeToLiquidator = liquidationPenalty / 2
+      let feeToInsurance = liquidationPenalty - feeToLiquidator
+
+      let newPositionMargin = remainMargin - liquidationPenalty
+      let newPositionSize = oldPositionSize + exchangedPositionSize
+      let newPositionOpenNotional = abs(remainOpenNotional)
+      let newPositionLstUpdCPF = latestCumulativePremiumFraction(newPositionSize)
+
+      let openInterestNotionalAfter = openInterestNotional() - exchangedQuoteAssetAmount
+
+      # Liquidating a position can incur bad debt. If AMM does not have enough funds to cover up bad debt
+      # use Insurance Fund to cover it up
+      let ammBalance = cbalance() - liquidationPenalty
+      let (newAmmBalance, takeFromInsurance) = if (ammBalance < 0) then {
+        (0, abs(ammBalance))
+      } else {
+        (ammBalance, 0)
+      }
+
+      strict x = if (takeFromInsurance > 0) then {
+        strict withdrawInsurance = invoke(
+          insuranceAddress(),
+          "withdraw",
+          [takeFromInsurance],
+          []
+        )
+        []
+      } else {
+        []
+      }
+
+      strict unstake = invoke(
+        quoteAssetStaking(),
+        "unlockNeutrino",
+        [liquidationPenalty - takeFromInsurance, quoteAsset().toBase58String()],
         []
       )
-      []
+
+      strict depositInsurance = invoke(
+        insuranceAddress(),
+        "deposit",
+        [],
+        [AttachedPayment(quoteAsset(), feeToInsurance)]
+      )
+
+      strict notifyNotional = invoke(
+        minerAddress(),
+        "notifyNotional",
+        [_trader, newPositionOpenNotional],
+        []
+      )
+
+      updatePosition(
+        _trader,
+        newPositionSize,
+        newPositionMargin,
+        newPositionOpenNotional,
+        newPositionLstUpdCPF
+      ) 
+      ++ 
+      updateAmm(
+        quoteAssetReserveAfter,
+        baseAssetReserveAfter,
+        totalPositionSizeAfter,
+        cumulativeNotionalAfter,
+        openInterestNotionalAfter,
+        totalLongPositionSize() - if (newPositionSize > 0) then abs(exchangedPositionSize) else 0,
+        totalShortPositionSize() - if (newPositionSize < 0) then abs(exchangedPositionSize) else 0
+      )
+      ++
+      withdraw(i.caller, feeToLiquidator)
+      ++
+      updateBalance(newAmmBalance)
     } else {
-      []
+      # Liquidate position fully
+      let (
+        x1,
+        badDebt,
+        x2,
+        x3,
+        quoteAssetReserveAfter,
+        baseAssetReserveAfter,
+        totalPositionSizeAfter,
+        cumulativeNotionalAfter,
+        openInterestNotionalAfter,
+        exchangedQuoteAssetAmount,
+        totalLongAfter,
+        totalShortAfter
+      ) = internalClosePosition(_trader, false)
+      
+      # Liquidator get a certain (liquidationFeeRatio) percentage from a total position
+      #
+      let liquidationPenalty = muld(exchangedQuoteAssetAmount, liquidationFeeRatio())
+      let feeToLiquidator = liquidationPenalty / 2
+      let feeToInsurance = liquidationPenalty - feeToLiquidator
+
+      # Liquidating a position can incur bad debt. If AMM does not have enough funds to cover up bad debt
+      # use Insurance Fund to cover it up
+      let ammBalance = cbalance() - liquidationPenalty
+      let (newAmmBalance, takeFromInsurance) = if (ammBalance < 0) then {
+        (0, abs(ammBalance))
+      } else {
+        (ammBalance, 0)
+      }
+
+      strict x = if (takeFromInsurance > 0) then {
+        strict withdrawInsurance = invoke(
+          insuranceAddress(),
+          "withdraw",
+          [takeFromInsurance],
+          []
+        )
+        []
+      } else {
+        []
+      }
+
+      strict unstake = invoke(
+        quoteAssetStaking(),
+        "unlockNeutrino",
+        [liquidationPenalty - takeFromInsurance, quoteAsset().toBase58String()],
+        []
+      )
+
+      strict depositInsurance = invoke(
+        insuranceAddress(),
+        "deposit",
+        [],
+        [AttachedPayment(quoteAsset(), feeToInsurance)]
+      )
+
+      strict notifyNotional = invoke(
+        minerAddress(),
+        "notifyNotional",
+        [_trader, 0],
+        []
+      )
+
+      deletePosition(_trader)
+      ++ 
+      updateAmm(
+        quoteAssetReserveAfter,
+        baseAssetReserveAfter,
+        totalPositionSizeAfter,
+        cumulativeNotionalAfter,
+        openInterestNotionalAfter,
+        totalLongAfter,
+        totalShortAfter
+      )
+      ++
+      withdraw(i.caller, feeToLiquidator)
+      ++
+      updateBalance(newAmmBalance)
     }
-
-    strict unstake = invoke(
-      quoteAssetStaking(),
-      "unlockNeutrino",
-      [liquidationPenalty - takeFromInsurance, quoteAsset().toBase58String()],
-      []
-    )
-
-    strict depositInsurance = invoke(
-      insuranceAddress(),
-      "deposit",
-      [],
-      [AttachedPayment(quoteAsset(), feeToInsurance)]
-    )
-
-    strict notifyNotional = invoke(
-      minerAddress(),
-      "notifyNotional",
-      [_trader, 0],
-      []
-    )
-
-    deletePosition(_trader)
-    ++ 
-    updateAmm(
-      quoteAssetReserveAfter,
-      baseAssetReserveAfter,
-      totalPositionSizeAfter,
-      cumulativeNotionalAfter,
-      openInterestNotionalAfter,
-      totalLongAfter,
-      totalShortAfter
-    )
-    ++
-    withdraw(i.caller, feeToLiquidator)
-    ++
-    updateBalance(newAmmBalance)
   }
 }
 
@@ -1505,6 +1706,7 @@ func view_calcRemainMarginWithFundingPayment(_trader: String) = {
       + s(getMarginRatio(_trader))
       + s(unrealizedPnl)
       + s(badDebt)
+      + s(positionNotional)
     )
 }
 

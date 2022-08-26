@@ -1,20 +1,37 @@
 {
-  "name": "hamsterswap",
+  "name": "tsunami-exchange",
   "version": "0.0.1",
   "description": "vAMM-base perpetual futures on Waves",
   "scripts": {
     "test": "mocha simulation/vamm_test.js",
     "test2": "mocha simulation/vamm_test2.js",
     "test3": "mocha simulation/vamm_test_3.js",
-    "ride-test": "cd contracts && surfboard test"
+    "ride-test:vAMM2:basic": "cd contracts && surfboard test vAMM2-basic.ride-test.js -v",
+    "ride-test:vAMM2:liquidation": "cd contracts && surfboard test vAMM2-liquidation.ride-test.js",
+    "ride-test:vAMM2:impact": "cd contracts && surfboard test vAMM2-impact.ride-test.js",
+    "ride-test:vAMM2:attack": "cd contracts && surfboard test vAMM2-attack.ride-test.js",
+    "ride-test:vAMM2:attack2": "cd contracts && surfboard test vAMM2-attack2.ride-test.js",
+    "ride-test:miner:basic": "cd contracts && surfboard test miner-basic.ride-test.js -v",
+    "ride-test:miner:multiamm": "cd contracts && surfboard test miner-multiamm.ride-test.js -v",
+    "ride-test:vAMM2": "npm-run-all ride-test:vAMM2:*",
+    "ride-test:miner": "npm-run-all ride-test:miner:*",
+    "ride-test": "npm-run-all ride-test:vAMM2 ride-test:miner",
+    "sf-version": "cd contracts && surfboard version",
+    "allure-report": "cd contracts && allure generate ./allure-results -c && allure open"
   },
   "devDependencies": {
-    "@waves/surfboard": "2.3.0-beta.2"
+    "@waves/surfboard": "2.3.1-beta.1",
+    "allure-commandline": "^2.18.1",
+    "allure-decorators": "^2.0.0-beta.19",
+    "allure-js-commons": "^2.0.0-beta.19",
+    "allure-mocha": "^2.0.0-beta.19",
+    "chai-as-promised": "^7.1.1",
+    "mocha": "^10.0.0",
+    "npm-run-all": "^4.1.5"
   },
   "author": "mr. Hamster",
   "license": "MIT",
   "dependencies": {
-    "chai": "^4.3.6",
-    "mocha": "^9.2.2"
+    "chai": "^4.3.6"
   }
 }
