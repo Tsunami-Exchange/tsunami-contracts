@@ -256,6 +256,7 @@ class Environment {
                         { type: 'integer', value: Math.round(0.1   * decimals) },    // _spreadLimit 10%
                         { type: 'integer', value: Math.round((options.maxPriceImpact || 0.08)  * decimals) },    // _maxPriceImpact 8%
                         { type: 'integer', value: Math.round(0.15 * decimals) },    // _partialLiquidationRatio 15%
+                        { type: 'integer', value: Math.round(0.4 * decimals) },    // _maxPriceSpread 40%
                     ]
                 },
             }, this.seeds.admin);

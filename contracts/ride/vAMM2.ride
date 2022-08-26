@@ -33,6 +33,7 @@ let k_liquidationFeeRatio = "k_liquidationFeeRatio"       # % of position size l
 let k_partialLiquidationRatio = "k_partLiquidationRatio"  # % of position notional that will be liquidated in case 0 < MR < MMR
 let k_spreadLimit = "k_spreadLimit"                       # abs((marketPrice - oraclePrice) / oraclePrice). If over spread limit, liquidations consult oracle price
 let k_maxPriceImpact = "k_maxPriceImpact"                 # maximum price impact per order
+let k_maxPriceSpread = "k_maxPriceSpread"                 # max spread between Index and Market Price
 
 # TWAP data
 let k_lastDataStr = "k_lastDataStr"                       # List of last 15 TWAP computations (best case - we have a value for each of last 15 mins)
@@ -139,6 +140,7 @@ func liquidationFeeRatio() = int(k_liquidationFeeRatio)
 func partialLiquidationRatio() = int(k_partialLiquidationRatio)
 func spreadLimit() = int(k_spreadLimit)
 func maxPriceImpact() = int(k_maxPriceImpact)
+func maxPriceSpread() = int(k_maxPriceSpread)
 func latestLongCumulativePremiumFraction() = int(k_latestLongCumulativePremiumFraction)
 func latestShortCumulativePremiumFraction() = int(k_latestShortCumulativePremiumFraction)
 func totalShortPositionSize() = int(k_totalShortPositionSize)
@@ -392,6 +394,18 @@ func getOracleTwapPrice() = {
   #}
 }
 
+func requireNotOverSpreadLimit(_quoteAssetReserve: Int, _baseAssetReserve: Int) = {
+  let oraclePrice = getOracleTwapPrice()
+  let priceAfter = divd(_quoteAssetReserve, _baseAssetReserve)
+  let averagePrice = divd(oraclePrice + priceAfter, 2 * DECIMAL_UNIT)
+  let absPriceDiff = divd(abs(oraclePrice - priceAfter), averagePrice)
+  if (absPriceDiff > maxPriceSpread()) then {
+      throw("Price spread " + absPriceDiff.toString() + " > max price spread " + maxPriceSpread().toString())
+  } else {
+    true
+  }
+}
+
 # Returns current spot price
 func getSpotPrice() = {
   let _quoteAssetReserve = qtAstR()
@@ -608,7 +622,8 @@ func updateSettings(
   _fee: Int,
   _spreadLimit: Int,
   _maxPriceImpact: Int,
-  _partialLiquidationRatio: Int
+  _partialLiquidationRatio: Int,
+  _maxPriceSpread: Int
 ) = {
   [
     IntegerEntry(k_initMarginRatio, _initMarginRatio),
@@ -618,7 +633,8 @@ func updateSettings(
     IntegerEntry(k_fee, _fee),
     IntegerEntry(k_spreadLimit, _spreadLimit),
     IntegerEntry(k_maxPriceImpact, _maxPriceImpact),
-    IntegerEntry(k_partialLiquidationRatio, _partialLiquidationRatio)
+    IntegerEntry(k_partialLiquidationRatio, _partialLiquidationRatio),
+    IntegerEntry(k_maxPriceSpread, _maxPriceSpread)
   ]
 }
 
@@ -840,7 +856,8 @@ func changeSettings(
   _fee: Int,
   _spreadLimit: Int,
   _maxPriceImpact: Int,
-  _partialLiquidationRatio: Int
+  _partialLiquidationRatio: Int,
+  _maxPriceSpread: Int
 ) = {
   if (i.caller != adminAddress()) then {
     throw("Invalid changeSettings params")
@@ -853,7 +870,8 @@ func changeSettings(
       _fee, 
       _spreadLimit, 
       _maxPriceImpact,
-      _partialLiquidationRatio
+      _partialLiquidationRatio,
+      _maxPriceSpread
     )
   }
 }
@@ -872,7 +890,8 @@ func initialize(
   _coordinator: String,
   _spreadLimit: Int,
   _maxPriceImpact: Int,
-  _partialLiquidationRatio: Int
+  _partialLiquidationRatio: Int,
+  _maxPriceSpread: Int
 ) = {
   if (
     _qtAstR <= 0
@@ -885,6 +904,7 @@ func initialize(
     || _spreadLimit <= 0
     || _maxPriceImpact <= 0
     || _partialLiquidationRatio <= 0
+    || _maxPriceSpread <= 0
     || initialized()
   ) then {
     throw("Invalid initialize parameters")
@@ -899,7 +919,8 @@ func initialize(
       _fee, 
       _spreadLimit, 
       _maxPriceImpact,
-      _partialLiquidationRatio
+      _partialLiquidationRatio,
+      _maxPriceSpread
     )
     ++
     updateFunding(
@@ -939,7 +960,8 @@ func setInitMarginRatio(
       fee(), 
       spreadLimit(), 
       maxPriceImpact(),
-      partialLiquidationRatio()
+      partialLiquidationRatio(),
+      maxPriceSpread()
     )
   }
 }
@@ -1127,20 +1149,23 @@ func increasePosition(
                 oldPositionLstUpdCPF, 
                 increaseMarginRequirement
             )
-        
-        (
-          newPositionSize, # positionSize
-          remainMargin, # remainMargin
-          oldPositionOpenNotional + openNotional, # pon
-          latestCumulativePremiumFraction(newPositionSize), # latestCPF
-          baseAssetReserveAfter, # baseAssetReserveAfter
-          quoteAssetReserveAfter, # quoteAssetReserveAfter
-          totalPositionSizeAfter, # totalPositionSizeAfter
-          cumulativeNotionalAfter, # cumulativeNotionalAfter
-          openInterestNotional() + openNotional, # openInterestNotionalAfter
-          totalLongPositionSize() + if (newPositionSize > 0) then abs(amountBaseAssetBought) else 0,
-          totalShortPositionSize() + if (newPositionSize < 0) then abs(amountBaseAssetBought) else 0
-        )
+        if (!requireNotOverSpreadLimit(quoteAssetReserveAfter, baseAssetReserveAfter)) then {
+          throw("Over max spread limit")
+        } else {
+          (
+            newPositionSize, # positionSize
+            remainMargin, # remainMargin
+            oldPositionOpenNotional + openNotional, # pon
+            latestCumulativePremiumFraction(newPositionSize), # latestCPF
+            baseAssetReserveAfter, # baseAssetReserveAfter
+            quoteAssetReserveAfter, # quoteAssetReserveAfter
+            totalPositionSizeAfter, # totalPositionSizeAfter
+            cumulativeNotionalAfter, # cumulativeNotionalAfter
+            openInterestNotional() + openNotional, # openInterestNotionalAfter
+            totalLongPositionSize() + if (newPositionSize > 0) then abs(amountBaseAssetBought) else 0,
+            totalShortPositionSize() + if (newPositionSize < 0) then abs(amountBaseAssetBought) else 0
+          )
+        }
        }
     } else {
       let openNotional = muld(_amount, _leverage)
