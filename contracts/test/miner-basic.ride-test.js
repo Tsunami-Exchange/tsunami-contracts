@@ -11,7 +11,7 @@ const hour = minute * 60
 const day = hour * 24
 
 const { expect } = require('chai');
-const { Environment } = require('./common')
+const { Environment } = require('../common/common')
 
 describe('Miner should compute and distribute m rewards', async function () {
 

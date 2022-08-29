@@ -12,7 +12,7 @@ const day = hour * 24
 const price = 3.5
 
 const { expect } = require('chai');
-const { Environment } = require('./common')
+const { Environment } = require('../common/common')
 
 describe('Miner should work with multiple AMMs and same reward token', async function () {
 

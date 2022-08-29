@@ -10,7 +10,7 @@ const DIR_LONG = 1
 const DIR_SHORT = 2
 
 const { expect } = require('chai');
-const { Environment } = require('./common')
+const { Environment } = require('../common/common')
 
 describe('vAMM should not be able to go more than 40% off index price', async function () {
 

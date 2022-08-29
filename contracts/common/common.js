@@ -1,24 +1,8 @@
-const _tsn = "GSm9yGjTcc1FxqkuBXFuhMoFGSMCzdDPunEcEZvkM9hJ"
-const _neutrino = "HezsdQuRDtzksAYUy97gfhKy7Z1NW2uXYSHA3bgqenNZ"
-const _neutrinoStaking = "3N9LkJahTMx41wGhSxLS42prCZtRCp4dhTs"
+let { deploy, upgrade, clearScript } = require("../common/driver")
+let { wait } = require("../common/utils")
 
 const wvs = 10 ** 8;
 const decimals = 10 ** 6;
-
-const wait = t => new Promise(s => setTimeout(s, t, t));
-
-const deploy = async (filename, fee, seed, name, injectTimer, timerAddress) => {
-    let code = file(filename)
-    if (injectTimer) {
-        code = code.replace('lastBlock.timestamp', `addressFromStringValue("${timerAddress}").getInteger("timestamp").valueOrElse(${new Date().getTime()})`)
-        console.log(`Injected timer to ${name}`)
-    }
-    const script = compile(code)
-    const tx = setScript({ script, fee}, seed);
-    await broadcast(tx);
-    console.log(`${name} deployed to ${address(seed)} in ${tx.id}`)
-    return waitForTx(tx.id)
-}
 
 class Environment {
 
@@ -29,7 +13,7 @@ class Environment {
 
         this.seeds.admin = admin
 
-        console.log(`Created new Environment adminAddress=${this.seeds.admin}`)
+        console.log(`Created new Environment adminAddress=${address(this.seeds.admin)}`)
 
         if (env.CHAIN_ID === "R") {
             console.log(`Running in local environment...`)
@@ -37,6 +21,34 @@ class Environment {
         } else {
             this.isLocal = false
         }
+    }
+
+    async load(coordinatorAddress) {
+        this.addresses = {}
+        this.addresses.coordinator = coordinatorAddress
+
+        console.log(`coordinatorAddress=${coordinatorAddress}`)
+
+        //const minerAddress = await accountDataByKey(coordinatorAddress, `k_miner_address`).then(x => x.value)
+        //const insuranceAddress = await accountDataByKey(coordinatorAddress, `k_insurance_address`).then(x => x.value)
+
+        const govAsset = await accountDataByKey(`k_gov_asset`, coordinatorAddress).then(x => x.value)
+        const quoteAsset = await accountDataByKey(`k_quote_asset`, coordinatorAddress).then(x => x.value)
+
+        let allKeys = await accountData(coordinatorAddress)
+        allKeys = Object.keys(allKeys).map(k => allKeys[k])
+        const ammAddresses = allKeys
+            .filter(x => x.key.startsWith(`k_amm_3`))
+            .map(x => x.key.replace(`k_amm_`, ``))
+
+        this.assets.tsn         = govAsset
+        this.assets.neutrino    = quoteAsset
+
+        this.amms = ammAddresses.map(x => new AMM(this, x))
+        this.insurance = new Insurance(this)
+        this.miner = new Miner(this)
+
+        console.log(`Loaded environment with ${this.amms.length} AMMs`)
     }
 
     async deploy() {
@@ -206,7 +218,12 @@ class Environment {
             amm: 0.05 * wvs,
         });
 
-        this.seeds.amm = accounts.amm
+        if (!this.seeds.amms) {
+            this.seeds.amms = {}
+        }
+
+        const ammSeed = accounts.amm
+        this.seeds.amms[address(accounts.amm)] = ammSeed
 
         let seedOracleTx = data({
             data: [
@@ -221,12 +238,12 @@ class Environment {
         await broadcast(seedOracleTx)
         console.log(`Seed AMM oracle in ${seedOracleTx.id}`)
 
-        let p3 = deploy('vAMM2.ride', 4700000, this.seeds.amm, 'vAMM')
+        let p3 = deploy('vAMM2.ride', 4700000, ammSeed, 'vAMM')
 
         const addAmmTx = await invoke({
             dApp: address(this.seeds.coordinator),
             functionName: "addAmm",
-            arguments: [ address(this.seeds.amm), "" ]
+            arguments: [ address(ammSeed), "" ]
         }, this.seeds.admin)
 
         console.log(`addAmm in ${addAmmTx.id}`)
@@ -239,7 +256,7 @@ class Environment {
 
         {
             const initTx = invokeScript({
-                dApp: address(this.seeds.amm),
+                dApp: address(ammSeed),
                 call: {
                     function: "initialize",
                     args: [
@@ -267,7 +284,8 @@ class Environment {
             console.log('vAMM initialized in ' + initTx.id)
         }
 
-        return new AMM(this)
+        const amm = new AMM(this, address(ammSeed))
+        return amm
     }
 
     async addAmm(_amm) {
@@ -353,21 +371,94 @@ class Environment {
         await waitForTx(seedOracleTx.id)
         console.log(`Updated oracle in ${seedOracleTx.id}`)
     }
+
+    async upgradeContract(file, address, fee) {
+        const contractBalance = await balance(address)
+        const toAdd = contractBalance >= fee ? 0 : fee - contractBalance
+        if (toAdd > 0) {
+            let ttx = await broadcast(transfer({
+                recipient: address,
+                amount: toAdd
+            }, this.seeds.admin))
+            
+            await waitForTx(ttx.id)
+        }
+
+        const tx = await upgrade(file, address, fee, this.seeds.admin)
+        console.log(`Upgraded contract at ${address} in ${tx.id}`)
+    }
+
+    async clearAdminScript() {
+        const tx = await clearScript(this.seeds.admin)
+        console.log(`Cleared admin script at ${address} in ${tx.id}`)
+    }
 }
 
 class AMM {
-    constructor(e, sender) {
+    constructor(e, address, sender) {
         this.e = e
         this.sender = sender
+        this.address = address
     }
 
     as(_sender) {
-        return new AMM(this.e, _sender)
+        return new AMM(this.e, this.address, _sender)
+    }
+
+    async upgrade() {
+        return this.e.upgradeContract('vAMM2.ride', this.address, 4900000)
+    }
+
+    async updateSettings(update) {
+        console.log(`Updating settings for ${this.address}`)
+
+        const initMarginRatio = update.initMarginRatio 
+            || await accountDataByKey("k_initMarginRatio", this.address).then(x => x && x.value)
+        const mmr = update.mmr  
+            || await accountDataByKey("k_mmr", this.address).then(x => x && x.value)
+        const liquidationFeeRatio = update.liquidationFeeRatio 
+            || await accountDataByKey("k_liquidationFeeRatio", this.address).then(x => x && x.value)
+        const fundingPeriod = update.fundingPeriod 
+            || await accountDataByKey("k_fundingPeriod", this.address).then(x => x && x.value)
+        const fee = update.fee 
+            ||  await accountDataByKey("k_fee", this.address).then(x => x && x.value)
+        const spreadLimit = update.spreadLimit 
+            || await accountDataByKey("k_spreadLimit", this.address).then(x => x && x.value)
+        const maxPriceImpact = update.maxPriceImpact 
+            || await accountDataByKey("k_maxPriceImpact", this.address).then(x => x && x.value)
+        const partialLiquidationRatio = update.partialLiquidationRatio 
+            || await accountDataByKey("k_partLiquidationRatio", this.address).then(x => x && x.value)
+        const maxPriceSpread = update.maxPriceSpread 
+            || await accountDataByKey("k_maxPriceSpread", this.address).then(x => x && x.value)
+
+        const changeSettingsTx = invokeScript({
+            dApp: this.address,
+            call: {
+                function: "changeSettings",
+                args: [
+                    { type: 'integer', value: initMarginRatio }, 
+                    { type: 'integer', value: mmr },
+                    { type: 'integer', value: liquidationFeeRatio },
+                    { type: 'integer', value: fundingPeriod }, 
+                    { type: 'integer', value: fee },
+                    { type: 'integer', value: spreadLimit },
+                    { type: 'integer', value: maxPriceImpact }, 
+                    { type: 'integer', value: partialLiquidationRatio },
+                    { type: 'integer', value: maxPriceSpread },
+                ]
+            },
+            payment: []
+        }, this.e.seeds.admin)
+
+        await broadcast(changeSettingsTx);
+        await waitForTx(changeSettingsTx.id);
+
+        return changeSettingsTx
     }
 
     async increasePosition(_amount, _direction, _leverage, _minBaseAssetAmount) {
         const openPositionTx = invokeScript({
-            dApp: address(this.e.seeds.amm),
+            dApp: address(this.e.seeds.amms[this.address]),
             call: {
                    function: "increasePosition",
                 args: [
@@ -392,7 +483,7 @@ class AMM {
 
     async decreasePosition(_amount, _leverage, _minBaseAssetAmount) {
         const decreasePositionTx = invokeScript({
-            dApp: address(this.e.seeds.amm),
+            dApp: address(this.e.seeds.amms[this.address]),
             call: {
                 function: "decreasePosition",
                 args: [
@@ -411,7 +502,7 @@ class AMM {
 
     async addMargin(_amount) {
         const addMarginTx = invokeScript({
-            dApp: address(this.e.seeds.amm),
+            dApp: address(this.e.seeds.amms[this.address]),
             call: {
                 function: "addMargin",
                 args: [],
@@ -432,7 +523,7 @@ class AMM {
 
     async removeMargin(_amount) {
         const removeMarginTx = invokeScript({
-            dApp: address(this.e.seeds.amm),
+            dApp: address(this.e.seeds.amms[this.address]),
             call: {
                 function: "removeMargin",
                 args: [
@@ -450,7 +541,7 @@ class AMM {
 
     async closePosition(_amount) {
         const closePositionTx = invokeScript({
-            dApp: address(this.e.seeds.amm),
+            dApp: address(this.e.seeds.amms[this.address]),
             call: {
                 function: "closePosition"
             }
@@ -464,7 +555,7 @@ class AMM {
 
     async liquidate(_trader) {
         const liquidatePositionTx = invokeScript({
-            dApp: address(this.e.seeds.amm),
+            dApp: address(this.e.seeds.amms[this.address]),
             call: {
                 function: "liquidate",
                 args: [
@@ -482,7 +573,7 @@ class AMM {
     }
 
     async awaitNextFunding() {
-        let dApp = address(this.e.seeds.amm)
+        let dApp = address(this.e.seeds.amms[this.address])
         let nextFundingBlockTsV = await accountDataByKey("k_nextFundingBlockMinTimestamp", dApp)
         let nextFundingBlockTs = nextFundingBlockTsV.value
 
@@ -495,7 +586,7 @@ class AMM {
 
     async payFunding() {
         const payFundingTx = invokeScript({
-            dApp: address(this.e.seeds.amm),
+            dApp: address(this.e.seeds.amms[this.address]),
             call: {
                 function: "payFunding",
                 args: []
@@ -512,7 +603,7 @@ class AMM {
 
     async getPositionInfo(_trader) {
         let trader = address(_trader)
-        let dApp = address(this.e.seeds.amm)
+        let dApp = address(this.e.seeds.amms[this.address])
         
         let size = await accountDataByKey(`k_positionSize_${trader}`, dApp).then(x => x.value)
         let margin = await accountDataByKey(`k_positionMargin_${trader}`, dApp).then(x => x.value)
@@ -526,7 +617,7 @@ class AMM {
     }
 
     async totalPositionInfo() {
-        let dApp = address(this.e.seeds.amm)
+        let dApp = address(this.e.seeds.amms[this.address])
 
         let totalSize = await accountDataByKey(`k_totalPositionSize`, dApp).then(x => x.value)
         let totalLong = await accountDataByKey(`k_totalLongPositionSize`, dApp).then(x => x.value)
@@ -540,7 +631,7 @@ class AMM {
     }
 
     async getMarketPrice() {
-        let dApp = address(this.e.seeds.amm)
+        let dApp = address(this.e.seeds.amms[this.address])
         let quote = await accountDataByKey(`k_qtAstR`, dApp).then(x => x.value)
         let base = await accountDataByKey(`k_bsAstR`, dApp).then(x => x.value)
 
@@ -589,7 +680,7 @@ class AMM {
         let trader = address(_trader)
 
         const invokeTx = invokeScript({
-            dApp: address(this.e.seeds.amm),
+            dApp: address(this.e.seeds.amms[this.address]),
             call: {
                 function: "view_calcRemainMarginWithFundingPayment",
                 args: [

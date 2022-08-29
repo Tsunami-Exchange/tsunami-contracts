@@ -10,8 +10,16 @@
         },
         "testnet": {
             "API_BASE": "https://nodes-testnet.wavesnodes.com",
+            "DS_API_BASE": "https://api-testnet.wavesplatform.com",
             "CHAIN_ID": "T",
-            "SEED": "machine bone okay wealth silent faint side jar between dilemma skate spray adult book item",
+            "COORDINATOR_ADDRESS": "3MxXA443AARoS3rQ9RNdPeBur74yBTCTyxJ",
+            "timeout": 60000
+        },
+        "devnet": {
+            "API_BASE": "https://nodes-testnet.wavesnodes.com",
+            "DS_API_BASE": "https://api-testnet.wavesplatform.com",
+            "CHAIN_ID": "T",
+            "COORDINATOR_ADDRESS": "3MzdomR4UkWKtVXq6YGouPJsYXDunjCvSJ8",
             "timeout": 60000
         }
     },

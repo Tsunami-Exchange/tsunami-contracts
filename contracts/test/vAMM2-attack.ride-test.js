@@ -9,7 +9,7 @@ const wvs = 10 ** 8;
 const DIR_LONG = 1
 const DIR_SHORT = 2
 
-const { Environment } = require('./common')
+const { Environment } = require('../common/common')
 
 describe('vAMM should be able to simulate attack', async function () {
 

@@ -18,6 +18,9 @@
   let k_oracleAddress = "k_oracleAddress"
   let k_oraclePrice = "price"
   let k_totalClaimedForTraderAndAsset = "k_totalClaimedForTraderAndAsset"
+
+  # Backward compatibility
+  let k_ammMaxAmountPerPeriod = "k_ammMaxAmountPerPeriod"
   
   # Initialization status
   let k_initialized = "k_initialized"
@@ -55,20 +58,22 @@
 
   func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
 
+  let that = this
+
   ##### Coordinator constants #####
-  func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
+  func coordinator() = addressFromString(that.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
   func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
   func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
   func isWhitelist(_address: String) = getBoolean(coordinator(), k_amm.toCompositeKey(_address)).valueOrElse(false)
 
   ##### Accessor functions #####
-  func int(k: String) = this.getInteger(k).valueOrErrorMessage("no value for " + k)
-  func int0(k: String) = this.getInteger(k).valueOrElse(0)
+  func int(k: String) = that.getInteger(k).valueOrErrorMessage("no value for " + k)
+  func int0(k: String) = that.getInteger(k).valueOrElse(0)
 
-  func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
+  func initialized() = that.getBoolean(k_initialized).valueOrElse(false)
 
   func getRewardAssetIds() = {
-    strToList(this.getString(k_rewardAssetIds).valueOrElse(""))
+    strToList(that.getString(k_rewardAssetIds).valueOrElse(""))
   }
   
   # Helper for testing
@@ -123,6 +128,10 @@
     k_totalClaimedForTraderAndAsset + "_" + _trader + "_" + _assetId
   }
 
+  func getAmmMaxAmountPerPeriodKey(_amm: String, _assetId: String) = {
+    k_ammMaxAmountPerPeriod + "_" + _amm + "_" + _assetId
+  }
+
   ##### View functions #####
   func usdnToDecimals(_amount: Int) = _amount * 100
 
@@ -134,55 +143,55 @@
 
   func getFeesInPeriod(_amm: String, _trader: String, _weekId: Int) = {
     let key = getTraderFeesInPeriodKey(_amm, _trader, _weekId)
-    this.getInteger(key).valueOrElse(0)
+    int0(key)
   }
 
   func getTotalFeesInPeriod(_amm: String, _weekId: Int) = {
     let key = getTotalAmmFeesInPeriodKey(_amm, _weekId)
-    this.getInteger(key).valueOrElse(0)
+    int0(key)
   }
 
   func getTotalAssetFeesInPeriod(_assetId: String, _weekId: Int) = {
     let key = getTotalAssetFeesInPeriodKey(_assetId, _weekId)
-    this.getInteger(key).valueOrElse(0)
+    int0(key)
   }
 
   func getLastNotional(_amm: String, _trader: String) = {
     let key = getLastNotionalKey(_amm, _trader)
-    this.getInteger(key).valueOrElse(0)
+    int0(key)
   }
 
   func getTraderScoreInPeriod(_amm: String, _trader: String, _weekId: Int) = {
     let key = getTraderScoreInPeriodKey(_amm, _trader, _weekId)
-    this.getInteger(key).valueOrElse(0)
+    int0(key)
   } 
 
   func getTotalScoreInPeriod(_amm: String, _weekId: Int) = {
     let key = getTotalScoreInPeriodKey(_amm, _weekId)
-    this.getInteger(key).valueOrElse(0)
+    int0(key)
   }
 
   func getAmms() = {
-    strToList(this.getString(k_amms).valueOrElse(""))
+    strToList(that.getString(k_amms).valueOrElse(""))
   }
 
   func getAmmRewardRate(_amm: String, _assetId: String) = {
     let key = getAmmRewardRateKey(_amm, _assetId)
-    this.getInteger(key).valueOrElse(0)
+    int0(key)
   }
 
   func getAssetMaxAmountPerPeriod(_assetId: String) = {
     let key = getAssetMaxAmountPerPeriodKey(_assetId)
-    this.getInteger(key).valueOrElse(0)
+    int0(key)
   }
 
   func getTotalClaimedForTraderAndAsset(_trader: String, _assetId: String) = {
     let key = getTotalClaimedForTraderAndAssetKey(_trader, _assetId)
-    this.getInteger(key).valueOrElse(0)
+    int0(key)
   }
 
   func getRewardAssetPrice(_assetId: String, _weekId: Int) = {
-    let oracleAddressStr = this.getString(k_oracleAddress).valueOrErrorMessage("Oracle not set")
+    let oracleAddressStr = that.getString(k_oracleAddress).valueOrErrorMessage("Oracle not set")
     let oracleAddress = addressFromString(oracleAddressStr).valueOrErrorMessage("Invalid oracle address")
     let priceKey = getOraclePriceKey(_assetId, _weekId)
 
@@ -192,9 +201,16 @@
   func getMaxAmountOfAssetToDistribute(_amm: String, _assetId: String, _weekId: Int) = {
     let totalFeesInPeriod = getTotalFeesInPeriod(_amm, _weekId)
     let totalAssetFeesInPeriod = getTotalAssetFeesInPeriod(_assetId, _weekId)
-    let maxAmountOfAsset = getAssetMaxAmountPerPeriod(_assetId)
-    let maxAmountOfAssetToDistribute = totalFeesInPeriod.divd(totalAssetFeesInPeriod).muld(maxAmountOfAsset)
-    maxAmountOfAssetToDistribute
+    if (totalAssetFeesInPeriod == 0) then {
+        # This is for legacy miner support
+        let key = getAmmMaxAmountPerPeriodKey(_amm, _assetId)
+        int0(key)
+    } else {
+      let maxAmountOfAsset = getAssetMaxAmountPerPeriod(_assetId)
+      let maxAmountOfAssetToDistribute = totalFeesInPeriod.divd(totalAssetFeesInPeriod).muld(maxAmountOfAsset)
+
+      maxAmountOfAssetToDistribute
+    }
   }
 
   func rewardForTraderInAssetInPeriod(_amm: String, _trader: String, _assetId: String, _weekId: Int) = {
@@ -229,17 +245,17 @@
 
   func totalRewardForTraderInAsset(_trader: String, _assetId: String, _periods: List[Int]) = {
     func compute(_acc: Int, _weekId: Int) = _acc + totalRewardForTraderInAssetInPeriod(_trader, _assetId, _weekId)
-    FOLD<14>(_periods, 0, compute) # Max 14 Periods
+    FOLD<12>(_periods, 0, compute) # Max 12 Periods
   }
 
   func getTraderAverageNotionalInPeriod(_amm: String, _trader: String, _weekId: Int, _defaultValue: Int) = {
     let key = getTraderAverageNotionalInPeriodKey(_amm, _trader, _weekId)
-    this.getInteger(key).valueOrElse(_defaultValue)
+    that.getInteger(key).valueOrElse(_defaultValue)
   }
 
   func isClaimed(_trader: String, _assetId: String, _period: Int) = {
     let key = getClaimedTraderAssetPeriodKey(_trader, _assetId, _period)
-    this.getBoolean(key).valueOrElse(false)
+    that.getBoolean(key).valueOrElse(false)
   }
 
   func claimAllRewardForPeriodForTrader(_trader: String, _assetId: String, _periods: String) = {
@@ -253,7 +269,7 @@
         || isClaimed(_trader, _assetId, period)
       ) then _acc else _acc :+ period
     }
-    let validPeriods = FOLD<16>(periods, [], checkAndFilterFn)
+    let validPeriods = FOLD<12>(periods, [], checkAndFilterFn)
     
     func markPeriodAsDoneFn(_acc: List[BooleanEntry], _period: Int) = {
       _acc :+ BooleanEntry(
@@ -297,7 +313,7 @@
     #
     func doHandleRewardAssetId(_acc: List[IntegerEntry], _assetId: String) = {
       let key = getAmmRewardRateKey(_amm, _assetId)
-      if (this.getInteger(key).valueOrElse(0) > 0) then {
+      if (int0(key) > 0) then {
         let totalAssetFeesKey = getTotalAssetFeesInPeriodKey(_assetId, _weekId)
         _acc :+ IntegerEntry(
           totalAssetFeesKey,

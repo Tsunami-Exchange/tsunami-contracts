@@ -10,7 +10,7 @@ const DIR_LONG = 1
 const DIR_SHORT = 2
 
 const { expect } = require('chai');
-const { Environment } = require('./common')
+const { Environment } = require('../common/common')
 
 describe('vAMM should work with positive funding', async function () {
 
