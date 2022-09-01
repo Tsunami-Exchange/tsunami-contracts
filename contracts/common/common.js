@@ -59,6 +59,7 @@ class Environment {
             staking:        0.05 * wvs,
             oracle:         0.01 * wvs,
             miner:          0.05 * wvs,
+            orders:         0.05 * wvs,
         });
 
         this.seeds.coordinator  = accounts.coordinator
@@ -66,6 +67,7 @@ class Environment {
         this.seeds.staking      = accounts.staking
         this.seeds.oracle       = accounts.oracle
         this.seeds.miner        = accounts.miner
+        this.seeds.orders       = accounts.orders
 
         if (this.isLocal) {
             await setupAccounts({
@@ -115,6 +117,7 @@ class Environment {
         let p1 = deploy('coordinator.ride' , 3400000, this.seeds.coordinator , 'Coordinator')
         let p2 = deploy('insurance.ride'   , 3400000, this.seeds.insurance   , 'Insurance Fund')
         let p4 = deploy('mining.ride'      , 3400000, this.seeds.miner       , 'Miner', this.isLocal, address(this.seeds.timer))
+        let p5 = deploy('orders.ride'      , 3400000, this.seeds.orders      , 'Orders', this.isLocal, address(this.seeds.timer))
 
         let period = Math.floor((new Date()).getTime() / 1000 / 604800)
 
@@ -131,7 +134,7 @@ class Environment {
         await broadcast(seedOracleTx)
         console.log(`Seed oracle in ${seedOracleTx.id}`)
 
-        await Promise.all([p1, p2, p4, seedOracleTx])
+        await Promise.all([p1, p2, p4, p5, seedOracleTx])
 
         // Init coordinator
         {
@@ -160,6 +163,14 @@ class Environment {
             }, this.seeds.admin)
 
             console.log(`setLiquidityMiner in ${setMinerTx.id}`)
+
+            const setOrdersTx = await invoke({
+                dApp: address(this.seeds.coordinator),
+                functionName: "setOrders",
+                arguments: [ address(this.seeds.orders) ]
+            }, this.seeds.admin)
+
+            console.log(`setOrders in ${setOrdersTx.id}`)
             
             const setQuoteAssetTx = await invoke({
                 dApp: address(this.seeds.coordinator),
@@ -181,6 +192,7 @@ class Environment {
             await waitForTx(setQuoteAssetTx.id)
             await waitForTx(setStakingAddressTx.id)
             await waitForTx(setMinerTx.id)
+            await waitForTx(setOrdersTx.id)
         }
 
         // Init insurance
@@ -207,8 +219,21 @@ class Environment {
             console.log('Miner initialized in ' + initMinerTx.id)
         }
 
+        // Init orders
+        {
+            const initOrdersTx = await invoke({
+                dApp: address(this.seeds.orders),
+                functionName: "initialize",
+                arguments: [ address(this.seeds.coordinator) ]
+            }, this.seeds.admin)
+
+            await waitForTx(initOrdersTx.id)
+            console.log('Orders initialized in ' + initOrdersTx.id)
+        }
+
         this.insurance = new Insurance(this)
         this.miner = new Miner(this)
+        this.orders = new Orders(this)
 
         console.log(`Environment deployed`)
     }
@@ -238,7 +263,7 @@ class Environment {
         await broadcast(seedOracleTx)
         console.log(`Seed AMM oracle in ${seedOracleTx.id}`)
 
-        let p3 = deploy('vAMM2.ride', 4700000, ammSeed, 'vAMM')
+        let p3 = deploy('vAMM2.ride', 4700000, ammSeed, 'vAMM', this.isLocal, address(this.seeds.timer))
 
         const addAmmTx = await invoke({
             dApp: address(this.seeds.coordinator),
@@ -950,6 +975,29 @@ class Miner {
 
             return amount
         }
+    }
+}
+
+class Orders {
+
+    constructor(e, sender) {
+        this.e = e
+        this.sender = sender
+    }
+
+    as(_sender) {
+        return new Orders(this.e, _sender)
+    }
+
+    async executeOrder(_prefix, _order, _signature) {
+        let tx = await invoke({
+            dApp: address(this.e.seeds.orders),
+            functionName: "executeOrder",
+            arguments: [_prefix, _order, _signature]
+        }, this.sender)
+
+        await waitForTx(tx.id)
+        return tx
     }
 }
 

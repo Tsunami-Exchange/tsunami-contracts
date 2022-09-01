@@ -1,0 +1,155 @@
+  {-# STDLIB_VERSION 6 #-}
+  {-# CONTENT_TYPE DAPP #-}
+  {-# SCRIPT_TYPE ACCOUNT #-}
+
+  # Coordinator
+  let k_coordinatorAddress  = "k_coordinatorAddress"
+  let k_admin_public_key    = "k_admin_public_key" 
+
+  # AMM  
+  let k_quoteAssetReserve   = "k_qtAstR"
+  let k_baseAssetReserve    = "k_bsAstR"
+  let k_positionClosedDate = "k_positionClosedDate"
+
+  # Orders
+  let k_executedOrders      = "k_executedOrders"
+
+  # Sender
+  let k_sender              = "k_sender"
+
+  # Initialization status
+  let k_initialized = "k_initialized"
+
+  # Order types
+  let TAKE_PROFIT   = 1
+  let STOP_LOSS     = 2
+
+  # TIME
+  let TIME = lastBlock.timestamp
+
+  # Math
+  let DECIMAL_UNIT = 1 * (10 * 10 * 10 * 10 * 10 * 10)
+
+  func divd(_x: Int, _y: Int) = fraction(_x, DECIMAL_UNIT, _y, HALFEVEN)
+  func muld(_x: Int, _y: Int) = fraction(_x, _y, DECIMAL_UNIT, HALFEVEN)  
+
+  # Keys
+  func executedOrderKey(_orderId: String) = {
+    k_executedOrders + "_" + _orderId
+  }
+
+  # Coordinator constants #
+  func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
+  func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
+  func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
+
+  # Validators
+  func requireValidOrderSignature(_prefix: String, _order: String, _signature: String, _senderPublicKey: String) = {
+    let message = (_prefix + _order).toBytes()
+    let sig = fromBase58String(_signature)
+    let pub = fromBase58String(_senderPublicKey)
+
+    if (sigVerify(message, sig, pub)) then unit else throw("Invalid order signature")
+  }
+
+  func requireNotExecuted(_orderId: String) = {
+    if (this.getBoolean(executedOrderKey(_orderId)).valueOrElse(false)) then {
+        throw("Order already executed: " + _orderId)
+    } else {
+        unit
+    }
+  }
+
+  @Callable(i)
+  func setContext(_sender: String) = {
+    if (i.caller != this) then {
+        throw("Only self-call")
+    } else {
+        [ StringEntry(k_sender, _sender) ]
+    }
+  }
+
+  @Callable(i)
+  func resetContext() = {
+    if (i.caller != this) then {
+        throw("Only self-call")
+    } else {
+        [ DeleteEntry(k_sender) ]
+    }
+  }
+
+  @Callable(i)
+  func initialize(
+    _coordinator: String
+  ) = {
+    if (initialized()) then {
+      throw("Already initialized")
+    } else {
+      [
+        StringEntry(k_coordinatorAddress, _coordinator),
+        BooleanEntry(k_initialized, true)
+      ]
+    }
+  }
+
+  @Callable(i)
+  func executeOrder(_prefix: String, _order: String, _signature: String) = {
+    let orderParts = _order.split(",")
+    let orderType = orderParts.getElement(0).parseInt().valueOrErrorMessage("Invalid order data [type]")
+    let orderId = sha256(_order.toBytes()).toBase58String()
+
+    # Check order not already executed
+    strict validateNotExecuted = requireNotExecuted(orderId)
+    
+    if (orderType == TAKE_PROFIT || orderType == STOP_LOSS) then {
+        let amm = orderParts.getElement(1)
+        let senderPublicKey = orderParts.getElement(2)
+        let price = orderParts.getElement(3).parseInt().valueOrErrorMessage("Invalid order data [price]")
+        let timestamp = orderParts.getElement(4).parseInt().valueOrErrorMessage("Invalid order data [timestamp]")
+        let validDue = orderParts.getElement(5).parseInt().valueOrErrorMessage("Invalid order data [validDue]")
+        
+        # Check order signature
+        strict validateSignature = requireValidOrderSignature(_prefix, _order, _signature, senderPublicKey)
+
+        let ammAddress = addressFromString(amm).valueOrErrorMessage("Invalid order data [amm]")
+        let quoteAssetReserve = ammAddress.getIntegerValue(k_quoteAssetReserve)
+        let baseAssetReserve = ammAddress.getIntegerValue(k_baseAssetReserve)
+        let ammPrice = divd(quoteAssetReserve, baseAssetReserve)
+
+        let priceMatch = if (orderType == TAKE_PROFIT) then ammPrice >= price else ammPrice <= price
+        let dueMatch = validDue == 0 || TIME <= validDue
+        let traderAddress = addressFromPublicKey(fromBase58String(senderPublicKey)).toString()
+        let positionWasClosed = ammAddress.getInteger(k_positionClosedDate + "_" + traderAddress).valueOrElse(0)
+        let positionMatch = timestamp >= positionWasClosed # Order created after last position was closed
+        if (priceMatch && dueMatch && positionMatch) then {
+            strict doSetContext = invoke(
+                this,
+                "setContext",
+                [traderAddress],
+                []
+            )
+            strict doClosePosition = invoke(
+                ammAddress,
+                "closePosition",
+                [],
+                []
+            )
+            strict doResetContext = invoke(     
+                this,
+                "resetContext",
+                [],
+                []
+            )
+            [
+              BooleanEntry(executedOrderKey(orderId), true)
+            ]
+        } else {
+            throw("Invalid order execution timing")
+        }
+    } else {
+        throw("Invalid order type: " + orderType.toString())
+    }
+  }
+
+  @Verifier(tx)
+  func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], adminPublicKey())

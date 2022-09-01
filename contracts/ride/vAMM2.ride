@@ -19,6 +19,7 @@ let k_positionSize = "k_positionSize"                 # Trader position size (ba
 let k_positionMargin = "k_positionMargin"             # Trader position margin (quote asset) - how much quote asset is supporting the position
 let k_positionOpenNotional = "k_positionOpenNotional" # Trader position open notional - how much quote asset they have borrowed
 let k_positionLastUpdatedCumulativePremiumFraction = "k_positionFraction"        # Trader position last updated cumulative premium fraction
+let k_positionClosedDate = "k_positionClosedDate"     # When position was closed
 
 # Global initialization state
 let k_initialized = "k_initialized"                       # If AMM was properly initialized
@@ -69,6 +70,7 @@ let k_quote_asset = "k_quote_asset"               # Address of quote asset (USDN
 let k_quote_staking = "k_quote_staking"           # Address of quote asset staking contract (USDN staking in our case)
 let k_staking_address = "k_staking_address"       # Address that should receive staking benefits
 let k_miner_address = "k_miner_address"           # Liquidity mining contract address
+let k_orders_address = "k_orders_address"         # Order executor contract address
 
 ##### Coordinator data ##### 
 func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
@@ -76,9 +78,10 @@ func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_add
 func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
 func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
 func quoteAssetStaking() = addressFromString(coordinator().getStringValue(k_quote_staking)).valueOrErrorMessage("Quote asset staking not set")
-func stakingAddress() = addressFromString(coordinator().getStringValue(k_staking_address)).valueOrErrorMessage("Insurance not set")
+func stakingAddress() = addressFromString(coordinator().getStringValue(k_staking_address)).valueOrErrorMessage("Staking not set")
 func insuranceAddress() = addressFromString(coordinator().getStringValue(k_insurance_address)).valueOrErrorMessage("Insurance not set")
-func minerAddress() = addressFromString(coordinator().getStringValue(k_miner_address)).valueOrErrorMessage("Insurance not set")
+func minerAddress() = addressFromString(coordinator().getStringValue(k_miner_address)).valueOrErrorMessage("Miner not set")
+func ordersAddress() = addressFromString(coordinator().getStringValue(k_orders_address)).valueOrErrorMessage("Orders not set")
 
 ##### Core constants #####
 
@@ -145,6 +148,11 @@ func latestLongCumulativePremiumFraction() = int(k_latestLongCumulativePremiumFr
 func latestShortCumulativePremiumFraction() = int(k_latestShortCumulativePremiumFraction)
 func totalShortPositionSize() = int(k_totalShortPositionSize)
 func totalLongPositionSize() = int(k_totalLongPositionSize)
+
+##### Order support #####
+func getActualCaller(i: Invocation) = {
+  ordersAddress().getString("k_sender").valueOrElse(i.caller.toString())
+}
 
 ##### Validator functions #####
 func requireMoreMarginRatio(_marginRatio: Int, _baseMarginRatio: Int, _largerThanOrEqualTo: Boolean) = {
@@ -748,7 +756,8 @@ func deletePosition(
     DeleteEntry(k_positionSize.toCompositeKey(_address)),
     DeleteEntry(k_positionMargin.toCompositeKey(_address)),
     DeleteEntry(k_positionOpenNotional.toCompositeKey(_address)),
-    DeleteEntry(k_positionLastUpdatedCumulativePremiumFraction.toCompositeKey(_address))
+    DeleteEntry(k_positionLastUpdatedCumulativePremiumFraction.toCompositeKey(_address)),
+    IntegerEntry(k_positionClosedDate.toCompositeKey(_address), lastBlock.timestamp)
   ]
 }
 
@@ -1351,8 +1360,10 @@ func removeMargin(
 
 @Callable(i)
 func closePosition() = {
+  let caller = getActualCaller(i)
+  let callerAddress = addressFromString(caller).valueOrErrorMessage("Invalid caller")
     if (
-      !requireOpenPosition(i.caller.toString())
+      !requireOpenPosition(caller)
       || !initialized()
       || paused()
   ) then {
@@ -1371,7 +1382,7 @@ func closePosition() = {
           x2,
           totalLongAfter,
           totalShortAfter
-    ) = internalClosePosition(i.caller.toString(), true)
+    ) = internalClosePosition(caller, true)
 
     if (positionBadDebt > 0) then {
       throw("Unable to close position with bad debt")
@@ -1407,11 +1418,11 @@ func closePosition() = {
       strict notifyNotional = invoke(
         minerAddress(),
         "notifyNotional",
-        [i.caller.toString(), 0],
+        [caller, 0],
         []
       )
       
-      deletePosition(i.caller.toString()) 
+      deletePosition(caller) 
       ++ 
       updateAmm(
         quoteAssetReserveAfter,
@@ -1423,7 +1434,7 @@ func closePosition() = {
         totalShortAfter
       )
       ++
-      withdraw(i.caller, withdrawAmount)
+      withdraw(callerAddress, withdrawAmount)
       ++
       updateBalance(ammNewBalance)
     }
