@@ -117,10 +117,16 @@
         let ammPrice = divd(quoteAssetReserve, baseAssetReserve)
 
         let priceMatch = if (orderType == TAKE_PROFIT) then ammPrice >= price else ammPrice <= price
+        strict validatePrice = if (!priceMatch) then throw("Can not execute order [price]: AMM Price=" + ammPrice.toString() + " Order Price=" + price.toString()) else unit
+
         let dueMatch = validDue == 0 || TIME <= validDue
+        strict validateDue = if (!dueMatch) then throw("Can not execute order [due]: Due=" + validDue.toString() + " Time=" + TIME.toString()) else unit
+
         let traderAddress = addressFromPublicKey(fromBase58String(senderPublicKey)).toString()
         let positionWasClosed = ammAddress.getInteger(k_positionClosedDate + "_" + traderAddress).valueOrElse(0)
         let positionMatch = timestamp >= positionWasClosed # Order created after last position was closed
+        strict validatePosition = if (!positionMatch) then throw("Can not execute order [position closed]: Order Created=" + timestamp.toString() + " Position Closed=" + positionWasClosed.toString()) else unit
+
         if (priceMatch && dueMatch && positionMatch) then {
             strict doSetContext = invoke(
                 this,

@@ -287,18 +287,18 @@ class Environment {
                     args: [
                         { type: 'integer', value: Math.round(_liquidity             * decimals) },   // _quoteAssetReserve
                         { type: 'integer', value: Math.round((_liquidity / _price)  * decimals) },   // _baseAssetReserve ~ 55 USDN / Waves (Optimistic!)
-                        { type: 'integer', value: 60 },                  // _fundingPeriod = 1 minute
-                        { type: 'integer', value: Math.round(0.30  * decimals) },    // _initMarginRatio = 5%
-                        { type: 'integer', value: Math.round(0.085 * decimals) },    // _maintenanceMarginRatio = 10%
-                        { type: 'integer', value: Math.round(0.01  * decimals) },    // _liquidationFeeRatio = 1%
-                        { type: 'integer', value: Math.round(0.01  * decimals) },    // _fee 1%
+                        { type: 'integer', value: (options.fundingPeriodSeconds || 60) },                  // _fundingPeriod = 1 minute
+                        { type: 'integer', value: Math.round((options.initMarginRatio || 0.30 ) * decimals) },    // _initMarginRatio = 5%
+                        { type: 'integer', value: Math.round((options.maintenanceMarginRatio || 0.085) * decimals) },    // _maintenanceMarginRatio = 10%
+                        { type: 'integer', value: Math.round((options.liquidationFeeRatio || 0.01)  * decimals) },    // _liquidationFeeRatio = 1%
+                        { type: 'integer', value: Math.round((options.fee || 0.01)  * decimals) },    // _fee 1%
                         { type: 'string' , value: address(this.seeds.oracle) },    // Oracle address
                         { type: 'string' , value: 'price' },                                  // Oracle key
                         { type: 'string' , value: address(this.seeds.coordinator) },            // Coordinator address,
-                        { type: 'integer', value: Math.round(0.1   * decimals) },    // _spreadLimit 10%
+                        { type: 'integer', value: Math.round((options.spreadLimit || 0.1)   * decimals) },    // _spreadLimit 10%
                         { type: 'integer', value: Math.round((options.maxPriceImpact || 0.08)  * decimals) },    // _maxPriceImpact 8%
-                        { type: 'integer', value: Math.round(0.15 * decimals) },    // _partialLiquidationRatio 15%
-                        { type: 'integer', value: Math.round(0.4 * decimals) },    // _maxPriceSpread 40%
+                        { type: 'integer', value: Math.round((options.partialLiquidationRatio || 0.15) * decimals) },    // _partialLiquidationRatio 15%
+                        { type: 'integer', value: Math.round((options.maxPriceSpread || 0.4) * decimals) },    // _maxPriceSpread 40%
                     ]
                 },
             }, this.seeds.admin);
