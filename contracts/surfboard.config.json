@@ -13,14 +13,16 @@
             "DS_API_BASE": "https://api-testnet.wavesplatform.com",
             "CHAIN_ID": "T",
             "COORDINATOR_ADDRESS": "3MxXA443AARoS3rQ9RNdPeBur74yBTCTyxJ",
-            "timeout": 60000
+            "timeout": 60000,
+            "WALLET": "./wallet/testnet.wallet.json"
         },
         "devnet": {
             "API_BASE": "https://nodes-testnet.wavesnodes.com",
             "DS_API_BASE": "https://api-testnet.wavesplatform.com",
             "CHAIN_ID": "T",
             "COORDINATOR_ADDRESS": "3MzdomR4UkWKtVXq6YGouPJsYXDunjCvSJ8",
-            "timeout": 60000
+            "timeout": 60000,
+            "WALLET": "./wallet/devnet.wallet.json"
         }
     },
     "defaultEnv": "custom",

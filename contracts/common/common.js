@@ -238,6 +238,42 @@ class Environment {
         console.log(`Environment deployed`)
     }
 
+    async deployOrders() {
+        if (!this.seeds.orders) {
+            throw Error(`No seed for Orders contract`)
+        }
+        let coordinatorAddress = this.addresses.coordinator || address(this.seeds.coordinator)
+        let ordersAddress = address(this.seeds.orders)
+        let fee = 3400000
+
+        await this.ensureDeploymentFee(ordersAddress, fee)
+
+        await deploy('orders.ride', fee, this.seeds.orders, 'Orders')
+
+        let orders = await accountDataByKey(`k_orders_address`, coordinatorAddress).then(x => x && x.value)
+        if (orders !== ordersAddress) {
+            const setOrdersTx = await invoke({
+                dApp: coordinatorAddress,
+                functionName: "setOrders",
+                arguments: [ ordersAddress ]
+            }, this.seeds.admin)
+
+            console.log(`setOrders in ${setOrdersTx.id}`)
+        }
+
+        let initialized = await accountDataByKey(`k_initialized`, ordersAddress).then(x => x && x.value)
+        if (!initialized) {
+            const initOrdersTx = await invoke({
+                dApp: ordersAddress,
+                functionName: "initialize",
+                arguments: [ coordinatorAddress ]
+            }, this.seeds.admin)
+
+            await waitForTx(initOrdersTx.id)
+            console.log('Orders initialized in ' + initOrdersTx.id)
+        }
+    }
+
     async deployAmm(_liquidity, _price, options = {}) {
         await setupAccounts({
             amm: 0.05 * wvs,
@@ -397,7 +433,7 @@ class Environment {
         console.log(`Updated oracle in ${seedOracleTx.id}`)
     }
 
-    async upgradeContract(file, address, fee) {
+    async ensureDeploymentFee(address, fee) {
         const contractBalance = await balance(address)
         const toAdd = contractBalance >= fee ? 0 : fee - contractBalance
         if (toAdd > 0) {
@@ -406,16 +442,28 @@ class Environment {
                 amount: toAdd
             }, this.seeds.admin))
             
+            console.log(`Added ${toAdd / wvs} WAVES to ${address} balance`)
+
             await waitForTx(ttx.id)
         }
+    }
+
+    async upgradeContract(file, address, fee) {
+        await this.ensureDeploymentFee(address, fee)
 
         const tx = await upgrade(file, address, fee, this.seeds.admin)
         console.log(`Upgraded contract at ${address} in ${tx.id}`)
+        return tx
     }
 
     async clearAdminScript() {
         const tx = await clearScript(this.seeds.admin)
         console.log(`Cleared admin script at ${address} in ${tx.id}`)
+    }
+
+    async upgradeCoordinator() {
+        const tx = await this.upgradeContract('coordinator.ride', this.addresses.coordinator, 3400000)
+        console.log(`Upgraded coordinator in ${tx.id}`)
     }
 }
 
@@ -431,7 +479,7 @@ class AMM {
     }
 
     async upgrade() {
-        return this.e.upgradeContract('vAMM2.ride', this.address, 4900000)
+        return this.e.upgradeContract('vAMM2.ride', this.address, 5000000)
     }
 
     async updateSettings(update) {
