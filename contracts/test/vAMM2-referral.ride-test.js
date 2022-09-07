@@ -82,6 +82,17 @@ describe('vAMM should work with referral program', async function () {
         expect(referrerEarned).to.be.closeTo((5 + 3) * 0.01 * 0.20, 0.00001) // No new fees
     })
 
+
+    it('Can claim rewards', async function () {
+        await e.referral.as(referrer).claimRewards()
+
+        let referrerEarned = await e.referral.getEarned(address(referrer))
+        let referrerClaimed = await e.referral.getClaimed(address(referrer))
+
+        expect(referrerEarned - referrerClaimed).to.be.closeTo(0, 0.00001) 
+        expect(referrerClaimed).to.be.closeTo((5 + 3) * 0.01 * 0.20, 0.00001) 
+    })
+
     /*
 
     it('Can increase position', async function () {

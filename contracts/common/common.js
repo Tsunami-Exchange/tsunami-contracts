@@ -1100,6 +1100,17 @@ class Referral {
         return tx
     }
 
+    async claimRewards() {
+        let tx = await invoke({
+            dApp: address(this.e.seeds.referral),
+            functionName: "claimRewards",
+            arguments: []
+        }, this.sender)
+
+        await waitForTx(tx.id)
+        return tx
+    }
+
     async getLinksFor(_referrerAddress) {
         let allKeys = await accountData(address(this.e.seeds.referral))
         allKeys = Object.keys(allKeys).map(k => allKeys[k])
@@ -1117,7 +1128,12 @@ class Referral {
 
     async getEarned(_referrerAddress) {
         return await accountDataByKey(`k_referrer_earned_${_referrerAddress}`, address(this.e.seeds.referral))
-        .then(x => x && x.value / decimals)
+        .then(x => x && (x.value || 0) / decimals)
+    }
+
+    async getClaimed(_referrerAddress) {
+        return await accountDataByKey(`k_referrer_claimed_${_referrerAddress}`, address(this.e.seeds.referral))
+        .then(x => x && (x.value || 0) / decimals)
     }
 }
 
