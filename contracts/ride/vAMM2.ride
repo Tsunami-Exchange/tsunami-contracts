@@ -71,6 +71,7 @@ let k_quote_staking = "k_quote_staking"           # Address of quote asset staki
 let k_staking_address = "k_staking_address"       # Address that should receive staking benefits
 let k_miner_address = "k_miner_address"           # Liquidity mining contract address
 let k_orders_address = "k_orders_address"         # Order executor contract address
+let k_referral_address = "k_referral_address"     # Referral contract address
 
 ##### Coordinator data ##### 
 func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
@@ -82,6 +83,7 @@ func stakingAddress() = addressFromString(coordinator().getStringValue(k_staking
 func insuranceAddress() = addressFromString(coordinator().getStringValue(k_insurance_address)).valueOrErrorMessage("Insurance not set")
 func minerAddress() = addressFromString(coordinator().getStringValue(k_miner_address)).valueOrErrorMessage("Miner not set")
 func ordersAddress() = addressFromString(coordinator().getStringValue(k_orders_address)).valueOrErrorMessage("Orders not set")
+func referralAddress() = addressFromString(coordinator().getStringValue(k_referral_address)).valueOrErrorMessage("Referral not set")
 
 ##### Core constants #####
 
@@ -1094,7 +1096,8 @@ func decreasePosition(
 func increasePosition(
   _direction: Int,
   _leverage: Int,
-  _minBaseAssetAmount: Int
+  _minBaseAssetAmount: Int,
+  _refLink: String
 ) = {
   let _rawAmount = i.payments[0].amount
   if (
@@ -1107,14 +1110,29 @@ func increasePosition(
   ) then {
     throw("Invalid increasePosition parameters")
   } else {
-    let feeAmount = muld(_rawAmount, fee())
-    let _amount = _rawAmount - feeAmount
+    let _trader = i.caller.toString()
+    let rawFeeAmount = muld(_rawAmount, fee())
+
+    strict referrerFeeAny = invoke(
+      referralAddress(),
+      "acceptPaymentWithLink",
+      [_trader, _refLink],
+      [AttachedPayment(quoteAsset(), rawFeeAmount)]
+    )
+
+    let referrerFee = match(referrerFeeAny) {
+      case x: Int => x
+      case _ => throw("Invalid referrerFee")
+    }
+
+    let _amount = _rawAmount - rawFeeAmount
+    let feeAmount = rawFeeAmount - referrerFee
     let (
       oldPositionSize,
       oldPositionMargin,
       oldPositionOpenNotional,
       oldPositionLstUpdCPF
-    ) = getPosition(i.caller.toString())
+    ) = getPosition(_trader)
     let isNewPosition = oldPositionSize == 0
     let isSameDirection = if (oldPositionSize > 0) then {
       _direction == DIR_LONG
@@ -1207,19 +1225,19 @@ func increasePosition(
     strict notifyFee = invoke(
       minerAddress(),
       "notifyFees",
-      [i.caller.toString(), feeAmount],
+      [_trader, feeAmount],
       []
     )
 
     strict notifyNotional = invoke(
       minerAddress(),
       "notifyNotional",
-      [i.caller.toString(), newPositionOpenNotional],
+      [_trader, newPositionOpenNotional],
       []
     )
     
     updatePosition(
-      i.caller.toString(),
+      _trader,
       newPositionSize,
       newPositionRemainMargin,
       newPositionOpenNotional,
@@ -1253,15 +1271,30 @@ func addMargin() = {
   ) then {
     throw("Invalid addMargin parameters")
   } else {
-    let feeAmount = muld(_rawAmount, fee())
-    let _amount = _rawAmount - feeAmount
+    let _trader = i.caller.toString()
+    let rawFeeAmount = muld(_rawAmount, fee())
+
+    strict referrerFeeAny = invoke(
+      referralAddress(),
+      "acceptPayment",
+      [_trader],
+      [AttachedPayment(quoteAsset(), rawFeeAmount)]
+    )
+
+    let referrerFee = match(referrerFeeAny) {
+      case x: Int => x
+      case _ => throw("Invalid referrerFee")
+    }
+
+    let feeAmount = rawFeeAmount - referrerFee
+    let _amount = _rawAmount - rawFeeAmount
 
     let (
       oldPositionSize,
       oldPositionMargin,
       oldPositionOpenNotional,
       oldPositionLstUpdCPF
-    ) = getPosition(i.caller.toString())
+    ) = getPosition(_trader)
 
     let feeToStakers = feeAmount / 2
     let feeToInsurance = feeAmount - feeToStakers
@@ -1283,12 +1316,12 @@ func addMargin() = {
     strict notifyFee = invoke(
       minerAddress(),
       "notifyFees",
-      [i.caller.toString(), feeAmount],
+      [_trader, feeAmount],
       []
     )
 
     updatePosition(
-      i.caller.toString(),
+      _trader,
       oldPositionSize,
       oldPositionMargin + _amount,
       oldPositionOpenNotional,

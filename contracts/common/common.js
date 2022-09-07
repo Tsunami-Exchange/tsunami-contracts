@@ -60,6 +60,7 @@ class Environment {
             oracle:         0.01 * wvs,
             miner:          0.05 * wvs,
             orders:         0.05 * wvs,
+            referral:       0.05 * wvs,
         });
 
         this.seeds.coordinator  = accounts.coordinator
@@ -68,6 +69,7 @@ class Environment {
         this.seeds.oracle       = accounts.oracle
         this.seeds.miner        = accounts.miner
         this.seeds.orders       = accounts.orders
+        this.seeds.referral     = accounts.referral
 
         if (this.isLocal) {
             await setupAccounts({
@@ -118,6 +120,7 @@ class Environment {
         let p2 = deploy('insurance.ride'   , 3400000, this.seeds.insurance   , 'Insurance Fund')
         let p4 = deploy('mining.ride'      , 3400000, this.seeds.miner       , 'Miner', this.isLocal, address(this.seeds.timer))
         let p5 = deploy('orders.ride'      , 3400000, this.seeds.orders      , 'Orders', this.isLocal, address(this.seeds.timer))
+        let p6 = deploy('referral.ride'    , 3400000, this.seeds.referral    , 'Referral', this.isLocal, address(this.seeds.timer))
 
         let period = Math.floor((new Date()).getTime() / 1000 / 604800)
 
@@ -171,6 +174,14 @@ class Environment {
             }, this.seeds.admin)
 
             console.log(`setOrders in ${setOrdersTx.id}`)
+
+            const setReferralTx = await invoke({
+                dApp: address(this.seeds.coordinator),
+                functionName: "setReferral",
+                arguments: [ address(this.seeds.referral) ]
+            }, this.seeds.admin)
+
+            console.log(`setReferral in ${setReferralTx.id}`)
             
             const setQuoteAssetTx = await invoke({
                 dApp: address(this.seeds.coordinator),
@@ -193,6 +204,7 @@ class Environment {
             await waitForTx(setStakingAddressTx.id)
             await waitForTx(setMinerTx.id)
             await waitForTx(setOrdersTx.id)
+            await waitForTx(setReferralTx.id)
         }
 
         // Init insurance
@@ -231,9 +243,25 @@ class Environment {
             console.log('Orders initialized in ' + initOrdersTx.id)
         }
 
+        // Init referral
+        {
+            const initReferralTx = await invoke({
+                dApp: address(this.seeds.referral),
+                functionName: "initialize",
+                arguments: [ 
+                    address(this.seeds.coordinator),
+                    0.2 * decimals // 20% of fee goes to referrer
+                ]
+            }, this.seeds.admin)
+
+            await waitForTx(initReferralTx.id)
+            console.log('Referral initialized in ' + initReferralTx.id)
+        }
+
         this.insurance = new Insurance(this)
         this.miner = new Miner(this)
         this.orders = new Orders(this)
+        this.referral = new Referral(this)
 
         console.log(`Environment deployed`)
     }
@@ -529,7 +557,7 @@ class AMM {
         return changeSettingsTx
     }
 
-    async increasePosition(_amount, _direction, _leverage, _minBaseAssetAmount) {
+    async increasePosition(_amount, _direction, _leverage, _minBaseAssetAmount, _link) {
         const openPositionTx = invokeScript({
             dApp: address(this.e.seeds.amms[this.address]),
             call: {
@@ -538,6 +566,7 @@ class AMM {
                     { type: 'integer', value: _direction }, // _direction = LONG
                     { type: 'integer', value: _leverage * decimals }, // _leverage = 3
                     { type: 'integer', value: _minBaseAssetAmount * decimals }, // _minBaseAssetAmount = 0.1 WAVES
+                    { type: 'string' , value: _link || '' }, 
                 ]
             },
             payment: [
@@ -1046,6 +1075,49 @@ class Orders {
 
         await waitForTx(tx.id)
         return tx
+    }
+}
+
+class Referral {
+
+    constructor(e, sender) {
+        this.e = e
+        this.sender = sender
+    }
+
+    as(_sender) {
+        return new Referral(this.e, _sender)
+    }
+
+    async createReferralLink() {
+        let tx = await invoke({
+            dApp: address(this.e.seeds.referral),
+            functionName: "createReferralLink",
+            arguments: []
+        }, this.sender)
+
+        await waitForTx(tx.id)
+        return tx
+    }
+
+    async getLinksFor(_referrerAddress) {
+        let allKeys = await accountData(address(this.e.seeds.referral))
+        allKeys = Object.keys(allKeys).map(k => allKeys[k])
+        const result = allKeys
+            .filter(x => x.key.startsWith(`k_ref_link_owner`))
+            .filter(x => x.value === _referrerAddress)
+            .map(x => x.key.replace(`k_ref_link_owner_`, ``))
+        return result
+    }
+
+    async getReferrer(_referralAddress) {
+        return await accountDataByKey(`k_referrer_${_referralAddress}`, address(this.e.seeds.referral))
+        .then(x => x && x.value)
+    }
+
+    async getEarned(_referrerAddress) {
+        return await accountDataByKey(`k_referrer_earned_${_referrerAddress}`, address(this.e.seeds.referral))
+        .then(x => x && x.value / decimals)
     }
 }
 

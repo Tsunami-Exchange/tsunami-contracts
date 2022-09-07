@@ -17,6 +17,7 @@ let k_amm_data = "k_amm_data"                     # Contains data of AMM (for UI
 let k_governance_asset = "k_gov_asset"            # Governance (TSN) asset address
 let k_miner_address = "k_miner_address"           # Liquidity mining contract address
 let k_orders_address = "k_orders_address"         # Order executor contract address
+let k_referral_address = "k_referral_address"     # Referral contract address
 
 ##### View functions #####
 func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
@@ -68,6 +69,16 @@ func setOrders(
   let address = getAddressIfValid(_orders)
   [
     StringEntry(k_orders_address, address)
+  ]
+})
+
+@Callable(i)
+func setReferral(
+  _referral: String
+) = isAdmin(i).valueOrElse({
+  let address = getAddressIfValid(_referral)
+  [
+    StringEntry(k_referral_address, address)
   ]
 })
 

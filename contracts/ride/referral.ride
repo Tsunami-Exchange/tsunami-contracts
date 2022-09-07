@@ -1,0 +1,266 @@
+  {-# STDLIB_VERSION 6 #-}
+  {-# CONTENT_TYPE DAPP #-}
+  {-# SCRIPT_TYPE ACCOUNT #-}
+
+  ##### Key constants #####
+  let k_ref_link_owner = "k_ref_link_owner"
+  let k_referrer = "k_referrer"
+  let k_active = "k_active"
+  let k_defaultFee = "k_defaultFee"
+
+  let k_referrer_ref_count = "k_referrer_ref_count"
+  let k_referrer_earned =  "k_referrer_earned"
+  let k_referrer_claimed =  "k_referrer_claimed"
+
+  # Initialization status
+  let k_initialized = "k_initialized"
+
+  # Coordinator
+  let k_coordinatorAddress = "k_coordinatorAddress"
+  let k_governance_asset = "k_gov_asset"
+  let k_quote_asset = "k_quote_asset" 
+  let k_admin_public_key = "k_admin_public_key"   
+  let k_amm = "k_amm"
+
+  # Keys
+  func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
+  
+  func getReferrerLinkKey(_link: String) = {
+    k_ref_link_owner + "_" + _link
+  }
+
+  func getReferrerKey(_trader: String) = {
+    k_referrer + "_" + _trader
+  }
+
+  func getReferrerRefCountKey(_referrer: String) = {
+    k_referrer_ref_count + "_" + _referrer
+  }
+
+  func getReferrerEarnedKey(_referrer: String) = {
+    k_referrer_earned + "_" + _referrer
+  }
+
+  func getReferrerClaimedKey(_referrer: String) = {
+    k_referrer_claimed + "_" + _referrer
+  }
+
+  func getActiveKey(_trader: String) = {
+    k_active + "_" + _trader
+  }
+
+  ##### Coordinator constants #####
+  func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
+  func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
+  func governanceAsset() = fromBase58String(coordinator().getStringValue(k_governance_asset))
+  func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
+  func isWhitelist(_address: String) = getBoolean(coordinator(), k_amm.toCompositeKey(_address)).valueOrElse(false)
+
+  ##### Core constants #####
+
+  let DECIMAL_UNIT = 1 * (10 * 10 * 10 * 10 * 10 * 10) # 10 ** 6
+  let DURATION = 60 * 60 * 24 # 1 day
+  let NO_ADDRESS = ""
+  let NO_STAKER = 0
+
+  ##### Helper functions #####
+  func usdnFromDecimals(_amount: Int)  = _amount / 100
+  func usdnToDecimals(_amount: Int)    = _amount * 100
+
+  func divd(_x: Int, _y: Int) = fraction(_x, DECIMAL_UNIT, _y, HALFEVEN)
+  func muld(_x: Int, _y: Int) = fraction(_x, _y, DECIMAL_UNIT, HALFEVEN)
+  func abs(_x: Int) = if (_x > 0) then _x else -_x
+  func minv(_x: Int, _y: Int) = if (_x > _y) then _y else _x
+
+  ##### Accessor functions #####
+  func int(k: String) = this.getInteger(k).valueOrErrorMessage("no value for " + k)
+  func int0(k: String) = this.getInteger(k).valueOrElse(0)
+
+  func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
+
+  ##### Update functions #####
+
+  ##### View functions #####
+  func getLinkReferrer(_link: String) = {
+    this.getString(getReferrerLinkKey(_link)).valueOrElse("")
+  }
+
+  func getReferrer(_trader: String) = {
+    this.getString(getReferrerKey(_trader)).valueOrElse("")
+  }
+
+  func isReferral(_trader: String) = {
+    getReferrer(_trader) != ""
+  }
+
+  func isFirstTime(_trader: String) = {
+    this.getBoolean(getActiveKey(_trader)).valueOrElse(false) == false
+  }
+
+  func getDefaultFee() = int(k_defaultFee)
+
+  func getReferrerRefCount(_referrer: String) = {
+    this.getInteger(getReferrerRefCountKey(_referrer)).valueOrElse(0)
+  }
+
+  func getReferrerEarned(_referrer: String) = {
+    this.getInteger(getReferrerEarnedKey(_referrer)).valueOrElse(0)
+  }
+
+  func getReferrerClaimed(_referrer: String) = {
+    this.getInteger(getReferrerClaimedKey(_referrer)).valueOrElse(0)
+  }
+
+  ##### Callable functions #####
+
+  @Callable(i)
+  func createReferralLink() = {
+    let raw = toBase58String(i.transactionId) + toBase58String(i.callerPublicKey)
+    let bytes = raw.toBytes()
+    let long = toBase58String(sha256(bytes))
+    let short = long.take(10)
+
+    [
+      StringEntry(getReferrerLinkKey(short), i.caller.toString())
+    ]
+  }
+
+  @Callable(i)
+  func acceptPaymentWithLink(_trader: String, _refLink: String) = {
+    let _amount = i.payments[0].amount
+    let amm = i.caller.toString()
+    if (
+      !isWhitelist(amm)
+      || !initialized()
+    ) then {
+      throw("Invalid acceptPaymentWithLink params")
+    } else {
+      # If trader is already someone's referral or first time interacting with platform
+      let _isReferral = isReferral(_trader)
+      let _isFirstTime = isFirstTime(_trader)
+      if (isReferral(_trader) || isFirstTime(_trader)) then {
+        if (_isReferral) then {
+          # Existing referral. Just pay the referrer his fee and be done with it
+          let referrer = getReferrer(_trader)
+          let fee = getDefaultFee()
+          let amountToReferrer = muld(_amount, fee)
+          (
+            [
+              IntegerEntry(getReferrerEarnedKey(referrer), getReferrerEarned(referrer) + amountToReferrer),
+              ScriptTransfer(i.caller, i.payments[0].amount -  amountToReferrer, i.payments[0].assetId)
+            ], 
+            amountToReferrer
+          )
+        } else {
+          # New user or new referral. Mark user as active in any case.
+          let referrer = getLinkReferrer(_refLink)
+          if (referrer == "") then {
+            # Mark user as active and be done with it
+            (
+              [
+                ScriptTransfer(i.caller, i.payments[0].amount, i.payments[0].assetId),
+                BooleanEntry(getActiveKey(_trader), true)
+              ], 
+              0
+            )
+          } else {
+            # Register user as referral, mark as active and may the fee for referrer
+            let fee = getDefaultFee()
+            let amountToReferrer = muld(_amount, fee)
+            (
+              [
+                IntegerEntry(getReferrerRefCountKey(referrer), getReferrerRefCount(referrer) + 1),
+                IntegerEntry(getReferrerEarnedKey(referrer), getReferrerEarned(referrer) + amountToReferrer),
+                StringEntry(getReferrerKey(_trader), referrer),
+                BooleanEntry(getActiveKey(_trader), true),
+                ScriptTransfer(i.caller, i.payments[0].amount -  amountToReferrer, i.payments[0].assetId)
+              ], 
+              amountToReferrer
+            )
+          }
+        }
+      } else {
+        # Not a referral and not a first time trader - send full payment back
+        #
+        (
+          [
+            ScriptTransfer(i.caller, i.payments[0].amount, i.payments[0].assetId)
+          ],
+          0 # Zero fee taken
+        )
+      }
+    }
+  }
+
+  @Callable(i)
+  func acceptPayment(_trader: String) = {
+    let _amount = i.payments[0].amount
+    let amm = i.caller.toString()
+    if (
+      !isWhitelist(amm)
+      || !initialized()
+    ) then {
+      throw("Invalid acceptPayment params")
+    } else {
+      # If trader is already someone's referral or first time interacting with platform
+      let _isReferral = isReferral(_trader)
+      if (_isReferral) then {
+        # Existing referral. Just pay the referrer his fee and be done with it
+        let referrer = getReferrer(_trader)
+        let fee = getDefaultFee()
+        let amountToReferrer = muld(_amount, fee)
+        (
+          [
+            IntegerEntry(getReferrerEarnedKey(referrer), getReferrerEarned(referrer) + amountToReferrer),
+            ScriptTransfer(i.caller, i.payments[0].amount -  amountToReferrer, i.payments[0].assetId)
+          ], 
+          amountToReferrer
+        )
+      } else {
+        # Not a referral and not a first time trader - send full payment back
+        #
+        (
+          [
+            ScriptTransfer(i.caller, i.payments[0].amount, i.payments[0].assetId)
+          ],
+          0 # Zero fee taken
+        )
+      }
+    }
+  }
+
+  @Callable(i)
+  func claimRewards() = {
+    let referrer = i.caller.toString()
+    let totalRewards = getReferrerEarned(referrer)
+    let totalClaimed = getReferrerClaimed(referrer)
+    let toClaim = totalRewards - totalClaimed
+
+    if (toClaim > 0) then {
+      [
+        IntegerEntry(getReferrerClaimedKey(referrer), getReferrerClaimed(referrer) + toClaim),
+        ScriptTransfer(i.caller, toClaim, quoteAsset())
+      ]
+    } else {
+      throw("Nothing to claim")
+    }
+  }
+
+  @Callable(i)
+  func initialize(
+    _coordinator: String,
+    _defaultFee: Int
+  ) = {
+    if (initialized()) then {
+      throw("Already initialized")
+    } else {
+      [
+        StringEntry(k_coordinatorAddress, _coordinator),
+        IntegerEntry(k_defaultFee, _defaultFee),
+        BooleanEntry(k_initialized, true)
+      ]
+    }
+  }
+
+  @Verifier(tx)
+  func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], adminPublicKey())
