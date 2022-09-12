@@ -119,10 +119,14 @@
     let bytes = raw.toBytes()
     let long = toBase58String(sha256(bytes))
     let short = long.take(10)
-
-    [
-      StringEntry(getReferrerLinkKey(short), i.caller.toString())
-    ]
+    let key = getReferrerLinkKey(short)
+    if (this.getString(key).isDefined()) then {
+      throw("Short link exists, try generating it again")
+    } else {
+      [
+        StringEntry(key, i.caller.toString())
+      ]
+    }
   }
 
   @Callable(i)
