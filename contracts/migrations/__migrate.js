@@ -84,7 +84,11 @@ const run = async() => {
             try {
                 await m.migrate(e)
             } catch(e) {
-                console.error(`Migration failed`, e)
+                let error = JSON.stringify(e)
+                if (error === '{}') {
+                    error = "" + e
+                }
+                console.error(`Migration failed`, error)
                 success = false
             }
 

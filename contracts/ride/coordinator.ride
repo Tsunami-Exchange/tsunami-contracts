@@ -12,6 +12,7 @@ let k_admin_public_key = "k_admin_public_key"     # Pubic key of admin account
 let k_quote_asset = "k_quote_asset"               # Address of quote asset (USDN in our case)
 let k_quote_staking = "k_quote_staking"           # Address of quote asset staking contract (USDN staking in our case)
 let k_staking_address = "k_staking_address"       # Address that should receive staking benefits
+let k_farming_address = "k_farming_address"       # Address that is used to farm more TSN
 let k_amm = "k_amm"                               # Marks valid AMM addresses (for insurance)
 let k_amm_data = "k_amm_data"                     # Contains data of AMM (for UI)
 let k_governance_asset = "k_gov_asset"            # Governance (TSN) asset address
@@ -79,6 +80,16 @@ func setReferral(
   let address = getAddressIfValid(_referral)
   [
     StringEntry(k_referral_address, address)
+  ]
+})
+
+@Callable(i)
+func setFarming(
+  _farming: String
+) = isAdmin(i).valueOrElse({
+  let address = getAddressIfValid(_farming)
+  [
+    StringEntry(k_farming_address, address)
   ]
 })
 

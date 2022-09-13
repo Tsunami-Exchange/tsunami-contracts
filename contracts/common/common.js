@@ -61,6 +61,7 @@ class Environment {
             miner:          0.05 * wvs,
             orders:         0.05 * wvs,
             referral:       0.05 * wvs,
+            farming:        0.05 * wvs,
         });
 
         this.seeds.coordinator  = accounts.coordinator
@@ -70,17 +71,20 @@ class Environment {
         this.seeds.miner        = accounts.miner
         this.seeds.orders       = accounts.orders
         this.seeds.referral     = accounts.referral
+        this.seeds.farming      = accounts.farming
 
         if (this.isLocal) {
             await setupAccounts({
                 assetHolder:        3    * wvs,
                 neutrinoStaking:    0.15 * wvs,
+                puzzleSwap:         0.15 * wvs,
                 timer:              3    * wvs,
             });
 
             this.seeds.assetHolder = accounts.assetHolder
             this.seeds.neutrinoStaking = accounts.neutrinoStaking
             this.seeds.timer = accounts.timer
+            this.seeds.puzzleSwap = accounts.puzzleSwap
 
             // Issue TSN and Neutrino assets
             //
@@ -101,9 +105,10 @@ class Environment {
             const iTx1 = await broadcast(tx1)
             const iTx2 = await broadcast(tx2)
 
-            let p1 = deploy('mock_neutrinoStaking.ride' , 3400000, this.seeds.neutrinoStaking , 'Mock Neutrino Staking')
+            let p11 = deploy('mock_neutrinoStaking.ride' , 3400000, this.seeds.neutrinoStaking , 'Mock Neutrino Staking')
+            let p12 = deploy('mock_swap.ride' , 3400000, this.seeds.puzzleSwap , 'Mock Puzzle Swap')
 
-            await Promise.all([waitForTx(iTx1.id), waitForTx(iTx2.id, p1)])
+            await Promise.all([waitForTx(iTx1.id), waitForTx(iTx2.id, p11, p12)])
 
             this.assets.tsn         = iTx2.assetId
             this.assets.neutrino    = iTx1.assetId
@@ -121,6 +126,7 @@ class Environment {
         let p4 = deploy('mining.ride'      , 3400000, this.seeds.miner       , 'Miner', this.isLocal, address(this.seeds.timer))
         let p5 = deploy('orders.ride'      , 3400000, this.seeds.orders      , 'Orders', this.isLocal, address(this.seeds.timer))
         let p6 = deploy('referral.ride'    , 3400000, this.seeds.referral    , 'Referral', this.isLocal, address(this.seeds.timer))
+        let p7 = deploy('farming.ride'     , 3400000, this.seeds.farming     , 'Farming', this.isLocal, address(this.seeds.timer))
 
         let period = Math.floor((new Date()).getTime() / 1000 / 604800)
 
@@ -137,7 +143,7 @@ class Environment {
         await broadcast(seedOracleTx)
         console.log(`Seed oracle in ${seedOracleTx.id}`)
 
-        await Promise.all([p1, p2, p4, p5, seedOracleTx])
+        await Promise.all([p1, p2, p4, p5, p6, p7, seedOracleTx])
 
         // Init coordinator
         {
@@ -181,7 +187,13 @@ class Environment {
                 arguments: [ address(this.seeds.referral) ]
             }, this.seeds.admin)
 
-            console.log(`setReferral in ${setReferralTx.id}`)
+            const setFarmingTx = await invoke({
+                dApp: address(this.seeds.coordinator),
+                functionName: "setFarming",
+                arguments: [ address(this.seeds.farming) ]
+            }, this.seeds.admin)
+
+            console.log(`setFarming in ${setFarmingTx.id}`)
             
             const setQuoteAssetTx = await invoke({
                 dApp: address(this.seeds.coordinator),
@@ -205,8 +217,10 @@ class Environment {
             await waitForTx(setMinerTx.id)
             await waitForTx(setOrdersTx.id)
             await waitForTx(setReferralTx.id)
+            await waitForTx(setFarmingTx.id)
         }
 
+        let initTxs = []
         // Init insurance
         {
             const initInsuranceTx = await invoke({
@@ -215,7 +229,7 @@ class Environment {
                 arguments: [ address(this.seeds.coordinator) ]
             }, this.seeds.admin)
 
-            await waitForTx(initInsuranceTx.id)
+            initTxs.push(waitForTx(initInsuranceTx.id))
             console.log('Insurance initialized in ' + initInsuranceTx.id)
         }
 
@@ -227,7 +241,7 @@ class Environment {
                 arguments: [ address(this.seeds.coordinator), address(this.seeds.oracle) ]
             }, this.seeds.admin)
 
-            await waitForTx(initMinerTx.id)
+            initTxs.push(waitForTx(initMinerTx.id))
             console.log('Miner initialized in ' + initMinerTx.id)
         }
 
@@ -239,7 +253,7 @@ class Environment {
                 arguments: [ address(this.seeds.coordinator) ]
             }, this.seeds.admin)
 
-            await waitForTx(initOrdersTx.id)
+            initTxs.push(waitForTx(initOrdersTx.id))
             console.log('Orders initialized in ' + initOrdersTx.id)
         }
 
@@ -254,9 +268,31 @@ class Environment {
                 ]
             }, this.seeds.admin)
 
-            await waitForTx(initReferralTx.id)
+            initTxs.push(waitForTx(initReferralTx.id))
             console.log('Referral initialized in ' + initReferralTx.id)
         }
+
+        // Init farming
+        {
+            const initFarmingTx = await invoke({
+                dApp: address(this.seeds.farming),
+                functionName: "initialize",
+                arguments: [ 
+                    address(this.seeds.coordinator),
+                    address(this.seeds.puzzleSwap),
+                ]
+            }, this.seeds.admin)
+
+            initTxs.push(waitForTx(initFarmingTx.id))
+            initTxs.push(this.supplyTsn(
+                10000,
+                address(this.seeds.puzzleSwap)
+            ))
+            console.log('Farming initialized in ' + initFarmingTx.id)
+        }
+        
+
+        await Promise.all(initTxs)
 
         this.insurance = new Insurance(this)
         this.miner = new Miner(this)
@@ -299,6 +335,88 @@ class Environment {
 
             await waitForTx(initOrdersTx.id)
             console.log('Orders initialized in ' + initOrdersTx.id)
+        }
+    }
+
+    async deployReferral(_fee) {
+        if (!this.seeds.referral) {
+            throw Error(`No seed for Referral contract`)
+        }
+        if (!_fee) {
+            throw Error(`Fee not set`)
+        }
+        let coordinatorAddress = this.addresses.coordinator || address(this.seeds.coordinator)
+        let referralAddress = address(this.seeds.referral)
+        let fee = 3400000
+
+        await this.ensureDeploymentFee(referralAddress, fee)
+
+        await deploy('referral.ride', fee, this.seeds.referral, 'Referral')
+
+        let referral = await accountDataByKey(`k_referral_address`, coordinatorAddress).then(x => x && x.value)
+        if (referral !== referralAddress) {
+            const setReferralTx = await invoke({
+                dApp: coordinatorAddress,
+                functionName: "setReferral",
+                arguments: [ referralAddress ]
+            }, this.seeds.admin)
+
+            console.log(`setReferral in ${setReferralTx.id}`)
+        }
+
+        let initialized = await accountDataByKey(`k_initialized`, referralAddress).then(x => x && x.value)
+        if (!initialized) {
+            const initReferralTx = await invoke({
+                dApp: referralAddress,
+                functionName: "initialize",
+                arguments: [ 
+                    coordinatorAddress,
+                    Math.round(_fee * decimals)
+                ]
+            }, this.seeds.admin)
+
+            await waitForTx(initReferralTx.id)
+            console.log('Referral initialized in ' + initReferralTx.id)
+        }
+    }
+
+    async deployFarming() {
+        if (!this.seeds.farming) {
+            throw Error(`No seed for Farming contract`)
+        }
+
+        let coordinatorAddress = this.addresses.coordinator || address(this.seeds.coordinator)
+        let farmingAddress = address(this.seeds.farming)
+        let fee = 3400000
+
+        await this.ensureDeploymentFee(farmingAddress, fee)
+
+        await deploy('farming.ride', fee, this.seeds.farming, 'Farming')
+
+        let farming = await accountDataByKey(`k_farming_address`, coordinatorAddress).then(x => x && x.value)
+        if (farming !== farmingAddress) {
+            const setFarmingTx = await invoke({
+                dApp: coordinatorAddress,
+                functionName: "setFarming",
+                arguments: [ farmingAddress ]
+            }, this.seeds.admin)
+
+            console.log(`setFarming in ${setFarmingTx.id}`)
+        }
+
+        let initialized = await accountDataByKey(`k_initialized`, farmingAddress).then(x => x && x.value)
+        if (!initialized) {
+            const initFarmingTx = await invoke({
+                dApp: farmingAddress,
+                functionName: "initialize",
+                arguments: [ 
+                    coordinatorAddress,
+                    ""
+                ]
+            }, this.seeds.admin)
+
+            await waitForTx(initFarmingTx.id)
+            console.log('Farming initialized in ' + initFarmingTx.id)
         }
     }
 
@@ -507,7 +625,7 @@ class AMM {
     }
 
     async upgrade() {
-        return this.e.upgradeContract('vAMM2.ride', this.address, 5000000)
+        return this.e.upgradeContract('vAMM2.ride', this.address, 6000000)
     }
 
     async updateSettings(update) {

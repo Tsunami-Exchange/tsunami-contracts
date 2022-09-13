@@ -1,0 +1,389 @@
+  {-# STDLIB_VERSION 6 #-}
+  {-# CONTENT_TYPE DAPP #-}
+  {-# SCRIPT_TYPE ACCOUNT #-}
+
+  ##### Key constants #####
+  let k_totalSupply = "k_totalSupply"
+  let k_rewardBalance = "k_rewardBalance"
+  let k_swapAddress = "k_swapAddress"
+
+  # Global staking
+  let k_lastUpdateTime = "k_lastUpdateTime"
+  let k_rewardPerTokenStored = "k_rewardPerTokenStored"
+  let k_rewardRate = "k_rewardRate"
+  let k_periodFinish = "k_periodFinish"
+
+  # Staked balance of user
+  let k_balance = "k_balance"
+  let k_userRewardPerToken = "k_userRewardPerToken"
+  let k_userReward = "k_userReward"
+
+  # Initialization status
+  let k_initialized = "k_initialized"
+
+  # Coordinator
+  let k_coordinatorAddress = "k_coordinatorAddress"
+  let k_staking_address = "k_staking_address"
+  let k_governance_asset = "k_gov_asset"
+  let k_quote_asset = "k_quote_asset" 
+  let k_admin_public_key = "k_admin_public_key" 
+  let k_admin_address = "k_admin_address"   
+
+  ##### Coordinator constants #####
+  func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
+  func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
+  func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
+  func governanceAsset() = fromBase58String(coordinator().getStringValue(k_governance_asset))
+  func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
+  func stakingAddress() = addressFromString(coordinator().getStringValue(k_staking_address)).valueOrErrorMessage("Staking not set")
+
+  ##### Core constants #####
+
+  let DECIMAL_UNIT = 1 * (10 * 10 * 10 * 10 * 10 * 10 * 10 * 10) # 10 ** 8
+  let DURATION = 60 * 60 * 24 # 1 day
+  let NO_ADDRESS = ""
+  let NO_STAKER = 0
+
+  func divd(_x: Int, _y: Int) = fraction(_x, DECIMAL_UNIT, _y, HALFEVEN)
+  func muld(_x: Int, _y: Int) = fraction(_x, _y, DECIMAL_UNIT, HALFEVEN)
+  func abs(_x: Int) = if (_x > 0) then _x else -_x
+  func minv(_x: Int, _y: Int) = if (_x > _y) then _y else _x
+  func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
+
+  ##### Accessor functions #####
+  func int(k: String) = this.getInteger(k).valueOrErrorMessage("no value for " + k)
+  func int0(k: String) = this.getInteger(k).valueOrElse(0)
+
+  func totalSupply() = int0(k_totalSupply)
+  func rewardPerTokenStored() = int0(k_rewardPerTokenStored)
+  func lastUpdateTime() = int0(k_lastUpdateTime)
+  func rewardRate() = int0(k_rewardRate)
+  func periodFinish() = int0(k_periodFinish)
+  func rewardBalance() = int0(k_rewardBalance)
+
+  func swapAddress() = addressFromString(this.getString(k_swapAddress).valueOrErrorMessage("Now swap address")).valueOrErrorMessage("Invalid swap address")
+
+  func rewards(_staker: String) = int0(k_userReward.toCompositeKey(_staker))
+  func userRewardPerTokenPaid(_staker: String) = int0(k_userRewardPerToken.toCompositeKey(_staker))
+  func balanceOf(_staker: String) = int0(k_balance.toCompositeKey(_staker))
+
+  func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
+
+  ##### Update functions #####
+  func updateRewardBalance(_delta: Int) = {
+    [
+      IntegerEntry(k_rewardBalance, rewardBalance() + _delta)
+    ]
+  }
+
+  func updateRewardRate(_rewardRate: Int) = {
+    [
+      IntegerEntry(k_rewardRate, _rewardRate)
+    ]
+  }
+
+  func updateTime(
+    _lastUpdateTime: Int,
+    _periodFinish: Int
+  ) = {
+    [
+      IntegerEntry(k_lastUpdateTime, _lastUpdateTime),
+      IntegerEntry(k_periodFinish, _periodFinish)
+    ]
+  }
+
+  func updateRewardPerTokenStored(_rewardPerTokenStored: Int) = {
+    [
+      IntegerEntry(k_rewardPerTokenStored, _rewardPerTokenStored)
+    ]
+  }
+
+  func updateUserRewards(
+    _staker: String,
+    _reward: Int,
+    _userRewardPerToken: Int
+  ) = {
+    [
+      IntegerEntry(k_userReward.toCompositeKey(_staker), _reward),
+      IntegerEntry(k_userRewardPerToken.toCompositeKey(_staker), _userRewardPerToken)
+    ]
+  }
+
+  func updateBalance(
+    _staker: String,
+    _delta: Int
+  ) = {
+    [
+      IntegerEntry(k_balance.toCompositeKey(_staker), balanceOf(_staker) + _delta),
+      IntegerEntry(k_totalSupply, totalSupply() + _delta)
+    ]
+  }
+
+  ##### View functions #####
+  func currentTimestampSec() = lastBlock.timestamp / 1000
+
+  func lastTimeRewardApplicable() = {
+    minv(currentTimestampSec(), periodFinish())
+  }
+
+  func rewardPerToken(_balanceDelta: Int) = {
+    if (totalSupply() + _balanceDelta == 0) then {
+      rewardPerTokenStored()
+    } else {
+      let timeInterval = lastTimeRewardApplicable() - lastUpdateTime()
+      let actualTimeInterval = if (timeInterval < 0) then 0 else timeInterval
+      let diff = divd(rewardRate() * actualTimeInterval, totalSupply() + _balanceDelta)
+      rewardPerTokenStored() + diff
+    }
+  }
+
+  ##### Callable functions #####
+
+  func earned(_staker: String, _balanceDelta: Int) = {
+    let rewardDelta = rewardPerToken(_balanceDelta) - userRewardPerTokenPaid(_staker)
+    muld((balanceOf(_staker) + _balanceDelta), rewardDelta) + rewards(_staker)
+  }
+
+  func updateReward(_staker: String, _balanceDelta: Int) = {
+    let newRewardPerTokenStored = rewardPerToken(_balanceDelta)
+    let newLastUpdateTime = currentTimestampSec()
+    let (stakerEarned, stakerRewardPerTokenPaid) = if (_staker != "") then {
+      (
+        earned(_staker, _balanceDelta),
+        newRewardPerTokenStored
+      )
+    } else {
+      (0, 0)
+    }
+
+    (
+      newRewardPerTokenStored,
+      newLastUpdateTime,
+      stakerEarned,
+      stakerRewardPerTokenPaid
+    )
+  }
+
+  @Callable(i)
+  func initialize(
+    _coordinator: String,
+    _swapAddress: String
+  ) = {
+    if (initialized()) then {
+      throw("Already initialized")
+    } else {
+      [
+        StringEntry(k_coordinatorAddress, _coordinator),
+        StringEntry(k_swapAddress, _swapAddress),
+        BooleanEntry(k_initialized, true)
+      ]
+    }
+  }
+
+@Callable(i)
+func setSwap(
+  _swapAddress: String
+) = {
+  if (i.caller != adminAddress()) then {
+    throw("Invalid setSwap params")
+  } else {
+    [
+      StringEntry(k_swapAddress, _swapAddress)
+    ]
+  }
+}
+
+  @Callable(i)
+  func stake() = {
+    let _staker = i.caller.toString()
+    let _amount = i.payments[0].amount
+    if (i.payments[0].assetId != governanceAsset() 
+      || !initialized()
+    ) then {
+      throw("Invalid call to  stake")
+    } else {
+        let (
+          newRewardPerTokenStored,
+          newLastUpdateTime,
+          stakerEarned,
+          stakerRewardPerTokenPaid
+        ) = updateReward(_staker, 0)
+
+        strict doStake = invoke(
+          stakingAddress(),
+          "stake",
+          [],
+          [AttachedPayment(governanceAsset(), _amount)]
+        )
+
+        updateUserRewards(_staker, stakerEarned, stakerRewardPerTokenPaid)
+        ++
+        updateRewardPerTokenStored(newRewardPerTokenStored)
+        ++
+        updateTime(newLastUpdateTime, periodFinish())
+        ++
+        updateBalance(_staker, _amount)
+    }
+  }
+
+  @Callable(i)
+  func unStake(_amount: Int) = {
+    strict doAckRewards = invoke(
+      this,
+      "ackRewards",
+      [],
+      []
+    )
+
+    let _staker = i.caller.toString()
+    if (
+      _amount > balanceOf(_staker)
+      || i.payments != []
+      || !initialized()
+    ) then {
+      throw("Invalid unStake parameters")
+    } else {
+        let (
+          newRewardPerTokenStored,
+          newLastUpdateTime,
+          stakerEarned,
+          stakerRewardPerTokenPaid
+        ) = updateReward(_staker, 0)
+
+        strict doUnStake = invoke(
+          stakingAddress(), 
+          "unStake", 
+          [_amount], 
+          []
+        )
+
+        updateUserRewards(_staker, stakerEarned, stakerRewardPerTokenPaid)
+        ++
+        updateRewardPerTokenStored(newRewardPerTokenStored)
+        ++
+        updateTime(newLastUpdateTime, periodFinish())
+        ++
+        updateBalance(_staker, -_amount)
+        ++
+        [
+          ScriptTransfer(i.caller, _amount, governanceAsset())
+        ]
+    }
+  }
+
+  # Claim my reward
+  @Callable(i)
+  func withdrawRewards() = {
+    # First ACK all rewards (so that there is no undistributed $TSN)
+    #
+    strict doAckRewards = invoke(
+      this,
+      "ackRewards",
+      [],
+      []
+    )
+
+    let _staker = i.caller.toString()
+    let (
+      newRewardPerTokenStored,
+      newLastUpdateTime,
+      stakerEarned,
+      stakerRewardPerTokenPaid
+    ) = updateReward(_staker, 0)
+    if (stakerEarned <= 0 || !initialized()) then {
+      throw("No reward")
+    } else {
+      strict doUnStake = invoke(
+        stakingAddress(), 
+        "unStake", 
+        [stakerEarned], 
+        []
+      )
+
+      updateUserRewards(_staker, 0, stakerRewardPerTokenPaid)
+      ++
+      updateRewardPerTokenStored(newRewardPerTokenStored)
+      ++
+      updateTime(newLastUpdateTime, periodFinish())
+      ++
+      updateRewardBalance(-stakerEarned)
+      ++
+      [
+        ScriptTransfer(i.caller, stakerEarned, governanceAsset())
+      ]
+    }
+  }
+
+  @Callable(i)
+  func ackRewards() = {
+    # First claim rewards
+    #
+    strict doClaimRewards = invoke(
+      stakingAddress(),
+      "withdrawRewards",
+      [],
+      []
+    )
+
+    # Now we will have USDN on balance, so proceed to exchange it
+    #
+    strict doSwap = invoke(
+      swapAddress(),
+      "swap",
+      [toBase58String(governanceAsset()), 0], # Want Gov Asset
+      [AttachedPayment(quoteAsset(), assetBalance(this, quoteAsset()))] # In exchange for Quote Asset
+    )
+
+    # We do not keep any governance asset on this contract balance, so everything, 
+    # that's on balance, we got from the swap. This is our delta.
+    #
+    let rewardDelta = assetBalance(this, governanceAsset())
+
+    # Now stake all reward delta and compute rewards as usual
+    #
+    strict doStake = invoke(
+      stakingAddress(),
+      "stake",
+      [],
+      [AttachedPayment(governanceAsset(), rewardDelta)]
+    )
+
+    if (rewardDelta <= 0) then {
+      throw("Invalid ackRewards params")
+    } else {
+      let _reward = rewardDelta
+      # assume DURATION = 1 day, (existing) rewardRate = 1, and new incoming _reward = 2
+      let newRewardPerTokenStored = updateReward(NO_ADDRESS, NO_STAKER)._1
+
+      let timestamp = currentTimestampSec()
+      let newRewardRate = if (timestamp > periodFinish()) then {
+        # there is no reward during the interval after the end of the previous period and before new rewards arrive
+        # rewardRate = 2/1 = 2
+        _reward / DURATION
+      } else {
+        let remainingTime = periodFinish() - timestamp
+        let leftover = rewardRate() * remainingTime
+        (_reward + leftover) / DURATION
+      }
+      
+      updateRewardRate(newRewardRate)
+      ++
+      updateRewardPerTokenStored(newRewardPerTokenStored)
+      ++
+      updateRewardBalance(_reward)
+      ++
+      updateTime(
+        timestamp,
+        timestamp + DURATION
+      )
+    }
+  }
+
+  @Callable(i)
+  func view_reward(_staker: String) = {
+      let stakerEarned = updateReward(_staker, 0)._3
+      throw(stakerEarned.toString())
+  }
+
+  @Verifier(tx)
+  func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], adminPublicKey())

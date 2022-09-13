@@ -1,0 +1,20 @@
+# This is a mock swap contract
+#
+{-# STDLIB_VERSION 6 #-}
+{-# SCRIPT_TYPE ACCOUNT #-}
+{-# CONTENT_TYPE DAPP #-}
+
+##### Key constants #####
+
+# Swaps at 1-to-1 rate
+@Callable(i)
+func swap(_token: String, _minAmount: Int) = {
+  let _amount = i.payments[0].amount
+
+  [
+    ScriptTransfer(i.caller, _amount, fromBase58String(_token))
+  ]
+}
+
+@Verifier(tx)
+func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)
