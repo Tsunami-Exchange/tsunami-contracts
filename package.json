@@ -14,6 +14,8 @@
     "_ride-test:vAMM2:attack2": "cd contracts && surfboard test vAMM2-attack2.ride-test.js",
     "ride-test:miner:basic": "cd contracts && surfboard test miner-basic.ride-test.js",
     "ride-test:miner:multiamm": "cd contracts && surfboard test miner-multiamm.ride-test.js",
+    "ride-test:staking": "cd contracts && surfboard test staking.ride-test.js",
+    "ride-test:farming": "cd contracts && surfboard test farming.ride-test.js",
     "ride-test:vAMM2": "npm-run-all ride-test:vAMM2:*",
     "ride-test:miner": "npm-run-all ride-test:miner:*",
     "ride-test": "npm-run-all ride-test:vAMM2 ride-test:miner",

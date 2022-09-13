@@ -127,6 +127,7 @@ class Environment {
         let p5 = deploy('orders.ride'      , 3400000, this.seeds.orders      , 'Orders', this.isLocal, address(this.seeds.timer))
         let p6 = deploy('referral.ride'    , 3400000, this.seeds.referral    , 'Referral', this.isLocal, address(this.seeds.timer))
         let p7 = deploy('farming.ride'     , 3400000, this.seeds.farming     , 'Farming', this.isLocal, address(this.seeds.timer))
+        let p8 = deploy('rewards.ride'     , 3400000, this.seeds.staking     , 'Staking', this.isLocal, address(this.seeds.timer))
 
         let period = Math.floor((new Date()).getTime() / 1000 / 604800)
 
@@ -143,7 +144,9 @@ class Environment {
         await broadcast(seedOracleTx)
         console.log(`Seed oracle in ${seedOracleTx.id}`)
 
-        await Promise.all([p1, p2, p4, p5, p6, p7, seedOracleTx])
+        await Promise.all([p1, p2, p4, p5, p6, p7, p8, seedOracleTx])
+        
+        let initTxs = []
 
         // Init coordinator
         {
@@ -203,6 +206,14 @@ class Environment {
 
             console.log(`setQuoteAsset in ${setQuoteAssetTx.id}`)
 
+            const setGovAssetTx = await invoke({
+                dApp: address(this.seeds.coordinator),
+                functionName: "setGovernanceAsset",
+                arguments: [ this.assets.tsn ]
+            }, this.seeds.admin)
+
+            console.log(`setGovernanceAsset in ${setGovAssetTx.id}`)
+
             const setStakingAddressTx = await invoke({
                 dApp: address(this.seeds.coordinator),
                 functionName: "setStakingAddress",
@@ -211,16 +222,16 @@ class Environment {
 
             console.log(`setStakingAddress in ${setStakingAddressTx.id}`)
 
-            await waitForTx(setInsuranceFundTx.id)
-            await waitForTx(setQuoteAssetTx.id)
-            await waitForTx(setStakingAddressTx.id)
-            await waitForTx(setMinerTx.id)
-            await waitForTx(setOrdersTx.id)
-            await waitForTx(setReferralTx.id)
-            await waitForTx(setFarmingTx.id)
+            initTxs.push(waitForTx(setInsuranceFundTx.id))
+            initTxs.push(waitForTx(setQuoteAssetTx.id))
+            initTxs.push(waitForTx(setGovAssetTx.id))
+            initTxs.push(waitForTx(setStakingAddressTx.id))
+            initTxs.push(waitForTx(setMinerTx.id))
+            initTxs.push(waitForTx(setOrdersTx.id))
+            initTxs.push(waitForTx(setReferralTx.id))
+            initTxs.push(waitForTx(setFarmingTx.id))
         }
 
-        let initTxs = []
         // Init insurance
         {
             const initInsuranceTx = await invoke({
@@ -231,6 +242,18 @@ class Environment {
 
             initTxs.push(waitForTx(initInsuranceTx.id))
             console.log('Insurance initialized in ' + initInsuranceTx.id)
+        }
+
+        // Init staking
+        {
+            const initStakingTx = await invoke({
+                dApp: address(this.seeds.staking),
+                functionName: "initialize",
+                arguments: [ address(this.seeds.coordinator) ]
+            }, this.seeds.admin)
+
+            initTxs.push(waitForTx(initStakingTx.id))
+            console.log('Staking initialized in ' + initStakingTx.id)
         }
 
         // Init miner
@@ -298,6 +321,8 @@ class Environment {
         this.miner = new Miner(this)
         this.orders = new Orders(this)
         this.referral = new Referral(this)
+        this.staking = new Staking(this)
+        this.farming = new Farming(this)
 
         console.log(`Environment deployed`)
     }
@@ -1299,6 +1324,131 @@ class Referral {
     async getClaimed(_referrerAddress) {
         return await accountDataByKey(`k_referrer_claimed_${_referrerAddress}`, address(this.e.seeds.referral))
         .then(x => x && (x.value || 0) / decimals)
+    }
+}
+
+class Staking {
+
+    constructor(e, sender) {
+        this.e = e
+        this.sender = sender
+    }
+
+    as(_sender) {
+        return new Staking(this.e, _sender)
+    }
+
+    async stake(_amount) {
+        let tx = await invoke({
+            dApp: address(this.e.seeds.staking),
+            functionName: "stake",
+            arguments: [],
+            payment: [{
+                amount: Math.round(_amount * wvs),
+                assetId: this.e.assets.tsn
+            }]
+        }, this.sender)
+
+        await waitForTx(tx.id)
+        return tx
+    }
+
+    async unStake(_amount) {
+        let tx = await invoke({
+            dApp: address(this.e.seeds.staking),
+            functionName: "unStake",
+            arguments: [Math.round(_amount * wvs)]
+        }, this.sender)
+
+        await waitForTx(tx.id)
+        return tx
+    }
+
+    async withdrawRewards() {
+        let tx = await invoke({
+            dApp: address(this.e.seeds.staking),
+            functionName: "withdrawRewards",
+            arguments: []
+        }, this.sender)
+
+        await waitForTx(tx.id)
+        return tx
+    }
+
+    async addRewards(_amount) {
+        let tx = await invoke({
+            dApp: address(this.e.seeds.staking),
+            functionName: "addRewards",
+            arguments: [],
+            payment: [{
+                amount: Math.round(_amount * decimals),
+                assetId: this.e.assets.neutrino
+            }]
+        }, this.sender)
+
+        await waitForTx(tx.id)
+        return tx
+    }
+}
+
+class Farming {
+
+    constructor(e, sender) {
+        this.e = e
+        this.sender = sender
+    }
+
+    as(_sender) {
+        return new Farming(this.e, _sender)
+    }
+
+    async stake(_amount) {
+        let tx = await invoke({
+            dApp: address(this.e.seeds.farming),
+            functionName: "stake",
+            arguments: [],
+            payment: [{
+                amount: Math.round(_amount * wvs),
+                assetId: this.e.assets.tsn
+            }]
+        }, this.sender)
+
+        await waitForTx(tx.id)
+        return tx
+    }
+
+    async unStake(_amount) {
+        let tx = await invoke({
+            dApp: address(this.e.seeds.farming),
+            functionName: "unStake",
+            arguments: [Math.round(_amount * wvs)]
+        }, this.sender)
+
+        await waitForTx(tx.id)
+        return tx
+    }
+
+    async withdrawRewards() {
+        let tx = await invoke({
+            dApp: address(this.e.seeds.farming),
+            functionName: "withdrawRewards",
+            arguments: []
+        }, this.sender)
+
+        await waitForTx(tx.id)
+        return tx
+    }
+
+    async ackRewards(_amount) {
+        let tx = await invoke({
+            dApp: address(this.e.seeds.farming),
+            functionName: "ackRewards",
+            arguments: [],
+            payment: []
+        }, this.e.seeds.admin)
+
+        await waitForTx(tx.id)
+        return tx
     }
 }
 

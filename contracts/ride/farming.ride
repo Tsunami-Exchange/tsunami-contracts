@@ -291,7 +291,7 @@ func setSwap(
       stakerRewardPerTokenPaid
     ) = updateReward(_staker, 0)
     if (stakerEarned <= 0 || !initialized()) then {
-      throw("No reward")
+      throw("No farming reward")
     } else {
       strict doUnStake = invoke(
         stakingAddress(), 
@@ -316,66 +316,84 @@ func setSwap(
 
   @Callable(i)
   func ackRewards() = {
-    # First claim rewards
-    #
-    strict doClaimRewards = invoke(
+    strict _rewardAmount = invoke(
       stakingAddress(),
-      "withdrawRewards",
-      [],
+      "computeReward",
+      [this.toString()],
       []
     )
 
-    # Now we will have USDN on balance, so proceed to exchange it
-    #
-    strict doSwap = invoke(
-      swapAddress(),
-      "swap",
-      [toBase58String(governanceAsset()), 0], # Want Gov Asset
-      [AttachedPayment(quoteAsset(), assetBalance(this, quoteAsset()))] # In exchange for Quote Asset
-    )
+    let rewardAmount = match (_rewardAmount) {
+      case t:Int => t
+      case _ => throw("Reward amount not a number")
+    }
 
-    # We do not keep any governance asset on this contract balance, so everything, 
-    # that's on balance, we got from the swap. This is our delta.
-    #
-    let rewardDelta = assetBalance(this, governanceAsset())
-
-    # Now stake all reward delta and compute rewards as usual
-    #
-    strict doStake = invoke(
-      stakingAddress(),
-      "stake",
-      [],
-      [AttachedPayment(governanceAsset(), rewardDelta)]
-    )
-
-    if (rewardDelta <= 0) then {
-      throw("Invalid ackRewards params")
+    if (rewardAmount == 0) then {
+      []
     } else {
-      let _reward = rewardDelta
-      # assume DURATION = 1 day, (existing) rewardRate = 1, and new incoming _reward = 2
-      let newRewardPerTokenStored = updateReward(NO_ADDRESS, NO_STAKER)._1
-
-      let timestamp = currentTimestampSec()
-      let newRewardRate = if (timestamp > periodFinish()) then {
-        # there is no reward during the interval after the end of the previous period and before new rewards arrive
-        # rewardRate = 2/1 = 2
-        _reward / DURATION
-      } else {
-        let remainingTime = periodFinish() - timestamp
-        let leftover = rewardRate() * remainingTime
-        (_reward + leftover) / DURATION
-      }
-      
-      updateRewardRate(newRewardRate)
-      ++
-      updateRewardPerTokenStored(newRewardPerTokenStored)
-      ++
-      updateRewardBalance(_reward)
-      ++
-      updateTime(
-        timestamp,
-        timestamp + DURATION
+      strict doClaimRewards = invoke(
+        stakingAddress(),
+        "withdrawRewards",
+        [],
+        []
       )
+
+      let rewardsAmount = assetBalance(this, quoteAsset())
+
+      # Now we will have USDN on balance, so proceed to exchange it
+      #
+      strict doSwap = invoke(
+        swapAddress(),
+        "swap",
+        [toBase58String(governanceAsset()), 0], # Want Gov Asset
+        [AttachedPayment(quoteAsset(), rewardsAmount)] # In exchange for Quote Asset
+      )
+
+      # We do not keep any governance asset on this contract balance, so everything, 
+      # that's on balance, we got from the swap. This is our delta.
+      #
+      strict rewardDelta = assetBalance(this, governanceAsset())
+
+      # strict x = throw("rewardDelta=" + rewardDelta.toString())
+      
+      if (rewardDelta <= 0) then {
+        throw("Invalid ackRewards params")
+      } else {
+        let _reward = rewardDelta
+        # assume DURATION = 1 day, (existing) rewardRate = 1, and new incoming _reward = 2
+        let newRewardPerTokenStored = updateReward(NO_ADDRESS, NO_STAKER)._1
+
+        let timestamp = currentTimestampSec()
+        let newRewardRate = if (timestamp > periodFinish()) then {
+          # there is no reward during the interval after the end of the previous period and before new rewards arrive
+          # rewardRate = 2/1 = 2
+          _reward / DURATION
+        } else {
+          let remainingTime = periodFinish() - timestamp
+          let leftover = rewardRate() * remainingTime
+          (_reward + leftover) / DURATION
+        }
+        
+        # Now stake all reward delta and compute rewards as usual
+        #
+        strict doStake = invoke(
+          stakingAddress(),
+          "stake",
+          [],
+          [AttachedPayment(governanceAsset(), rewardDelta)]
+        )
+        
+        updateRewardRate(newRewardRate)
+        ++
+        updateRewardPerTokenStored(newRewardPerTokenStored)
+        ++
+        updateRewardBalance(_reward)
+        ++
+        updateTime(
+          timestamp,
+          timestamp + DURATION
+        )
+      }
     }
   }
 

@@ -14,15 +14,15 @@ const { expect } = require('chai');
 const { Environment } = require('../common/common');
 const { decimals, wvs } = require('../common/utils');
 
-describe('Staking should allow', async function () {
+describe('Farming should allow', async function () {
 
     this.timeout(600000);
 
     let e, staker1, staker2, rewardPayer
 
-    const usdnBalance = async(seed) => {
-        const raw = await assetBalance( e.assets.neutrino, address(seed))
-        return Number.parseFloat((raw / decimals).toFixed(4))
+    const tsnBalance = async(seed) => {
+        const raw = await assetBalance( e.assets.tsn, address(seed))
+        return Number.parseFloat((raw / wvs).toFixed(4))
     }
 
     before(async function () {
@@ -42,46 +42,54 @@ describe('Staking should allow', async function () {
         await Promise.all([
             e.fundAccounts({ [rewardPayer] : 50000 }),
             e.supplyTsn(1000, address(staker1)),
-            e.supplyTsn(1000, address(staker2)),
+            e.supplyTsn(500, address(staker2)),
         ])
 
     });
 
     it('Can stake TSN', async function () {
-        await e.staking.as(staker1).stake(1000)
+        await e.farming.as(staker1).stake(1000)
     })
 
     it('Can add rewards to Staking', async function () {
         await e.staking.as(rewardPayer).addRewards(1000)
     })
 
-    it('Can claim rewards after some time', async function () {
+    it('Can ack rewards', async function () {
         await e.setTime(now + 0.5 * day)
-        await e.staking.as(staker1).withdrawRewards()
+        let ttx = await e.farming.ackRewards()
+        console.log(`Ack in ${ttx.id}`)
+    })
+    
+    it('Can claim rewards after some time', async function () {
+        await e.setTime(now + 1 * day)
+        await e.farming.as(staker1).withdrawRewards()
 
-        const st1Balance = await usdnBalance(staker1)
+        const st1Balance = await tsnBalance(staker1)
+        
+        expect(st1Balance).to.be.closeTo(250, 0.2)
+    })
+
+    it('Can stake TSN mid period', async function () {
+        await e.farming.as(staker2).stake(500)
+    })
+
+    it('Can claim rewards multiple stakers', async function () {
+        await e.setTime(now + 1.5 * day)
+        await e.farming.as(staker1).withdrawRewards()
+
+        const st1Balance = await tsnBalance(staker1)
         
         expect(st1Balance).to.be.closeTo(500, 0.2)
     })
 
-    it('Can stake TSN mid period', async function () {
-        await e.staking.as(staker2).stake(500)
-    })
-
-    it('Can claim rewards multiple stakers', async function () {
-        await e.setTime(now + 1 * day)
-        await e.staking.as(staker1).withdrawRewards()
-
-        const st1Balance = await usdnBalance(staker1)
-        
-        expect(st1Balance).to.be.closeTo((500 + (1000/1500) * 500), 0.2)
-    })
-
     it('Can claim rewards after un-stake', async function () {
-        await e.staking.as(staker2).withdrawRewards()
+        await e.farming.as(staker2).unStake(500)
+        await e.farming.as(staker2).withdrawRewards()
 
-        const st2Balance = await usdnBalance(staker2)
+        const st2Balance = await tsnBalance(staker2)
         
-        expect(st2Balance).to.be.closeTo((0 + (500/1500) * 500), 0.2)
+        expect(st2Balance).to.be.closeTo(625, 0.2)
     })
+    
 })

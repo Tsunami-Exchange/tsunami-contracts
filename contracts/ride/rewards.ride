@@ -335,5 +335,14 @@
       throw(stakerEarned.usdnFromDecimals().toString())
   }
 
+  @Callable(i)
+  func computeReward(_staker: String) = {
+      let stakerEarned = updateReward(_staker, 0)._3
+      (
+        [],
+        stakerEarned
+      )
+  }
+
   @Verifier(tx)
   func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], adminPublicKey())
