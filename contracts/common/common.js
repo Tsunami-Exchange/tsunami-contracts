@@ -34,6 +34,9 @@ class Environment {
 
         const govAsset = await accountDataByKey(`k_gov_asset`, coordinatorAddress).then(x => x.value)
         const quoteAsset = await accountDataByKey(`k_quote_asset`, coordinatorAddress).then(x => x.value)
+        
+        const stakingAddress = await accountDataByKey(`k_staking_address`, coordinatorAddress).then(x => x.value)
+        const farmingAddress = await accountDataByKey(`k_farming_address`, coordinatorAddress).then(x => x.value)
 
         let allKeys = await accountData(coordinatorAddress)
         allKeys = Object.keys(allKeys).map(k => allKeys[k])
@@ -47,6 +50,8 @@ class Environment {
         this.amms = ammAddresses.map(x => new AMM(this, x))
         this.insurance = new Insurance(this)
         this.miner = new Miner(this)
+        this.staking = new Staking(this, stakingAddress)
+        this.farming = new Farming(this, farmingAddress)
 
         console.log(`Loaded environment with ${this.amms.length} AMMs`)
     }
@@ -1329,13 +1334,18 @@ class Referral {
 
 class Staking {
 
-    constructor(e, sender) {
+    constructor(e, address, sender) {
         this.e = e
+        this.address = address
         this.sender = sender
     }
 
     as(_sender) {
-        return new Staking(this.e, _sender)
+        return new Staking(this.e, this.address, _sender)
+    }
+
+    async upgrade() {
+        return this.e.upgradeContract('rewards.ride', this.address, 3700000)
     }
 
     async stake(_amount) {
@@ -1393,13 +1403,18 @@ class Staking {
 
 class Farming {
 
-    constructor(e, sender) {
+    constructor(e, address, sender) {
         this.e = e
+        this.address = address
         this.sender = sender
     }
 
     as(_sender) {
-        return new Farming(this.e, _sender)
+        return new Farming(this.e, address, _sender)
+    }
+
+    async upgrade() {
+        return this.e.upgradeContract('farming.ride', this.address, 3700000)
     }
 
     async stake(_amount) {
