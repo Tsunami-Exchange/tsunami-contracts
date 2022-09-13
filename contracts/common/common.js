@@ -327,7 +327,7 @@ class Environment {
         await broadcast(seedOracleTx)
         console.log(`Seed AMM oracle in ${seedOracleTx.id}`)
 
-        let p3 = deploy('vAMM2.ride', 4700000, ammSeed, 'vAMM', this.isLocal, address(this.seeds.timer))
+        let p3 = deploy('vAMM2.ride', 4900000, ammSeed, 'vAMM', this.isLocal, address(this.seeds.timer))
 
         const addAmmTx = await invoke({
             dApp: address(this.seeds.coordinator),
@@ -703,6 +703,25 @@ class AMM {
         return payFundingTx
     }
 
+    async adjustPeg(_price) {
+        const payFundingTx = invokeScript({
+            dApp: address(this.e.seeds.amms[this.address]),
+            call: {
+                function: "adjustPeg",
+                args: [
+                    { 'type': 'integer', value: Math.round(_price * decimals) }
+                ]
+            }
+        }, this.e.seeds.admin)
+
+        console.log('Adjust peg tx: ' + payFundingTx.id)
+
+        await broadcast(payFundingTx);   
+        await waitForTx(payFundingTx.id);
+
+        return payFundingTx
+    }
+
     async getPositionInfo(_trader) {
         let trader = address(_trader)
         let dApp = address(this.e.seeds.amms[this.address])
@@ -815,6 +834,34 @@ class AMM {
                 openNotional: info.openNotional / decimals,
                 leverage: (info.openNotional / decimals) / (info.margin / decimals)
             }
+        }
+    }
+
+    async getPegAdjustCost(_price) {
+        const invokeTx = invokeScript({
+            dApp: address(this.e.seeds.amms[this.address]),
+            call: {
+                function: "view_getPegAdjustCost",
+                args: [
+                    { type: 'integer', value: Math.round(_price * decimals) }
+                ]
+            },
+        }, this.e.seeds.admin);
+
+        try {
+            await broadcast(invokeTx);
+        } catch (e) {
+            let { message } = JSON.parse(JSON.stringify(e))
+            let parts = message.replace('Error while executing account-script: ', '').split(',')
+            let cost = Number.parseFloat((parseInt(parts[0]) / 10**6).toFixed(4))
+
+            // if (!cost) {
+            //    throw new Error(message)
+            //}
+
+            console.log(message)
+            
+            return cost
         }
     }
 }

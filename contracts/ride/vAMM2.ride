@@ -457,6 +457,39 @@ func getPositionAdjustedOpenNotional(
 # Returns position notional (current value of a position) and
 # position profit/loss (delta between initial position notional and current notional)
 # Accept calculation option - to use spot or index price
+func getPositionNotionalAndUnrealizedPnlByValues(
+    _positionSize: Int, 
+    _positionOpenNotional: Int, 
+    _quoteAssetReserve: Int,
+    _baseAssetReserve: Int,
+    _option: Int
+  ) = {
+    if (_positionSize == 0) then {
+      throw("Invalid position size")
+    } else {
+      let isShort = _positionSize < 0
+      let positionNotional = getPositionAdjustedOpenNotional(
+        _positionSize,
+        _option,
+        _quoteAssetReserve,
+        _baseAssetReserve
+      )
+
+      let unrealizedPnl = if (isShort) then {
+        _positionOpenNotional - positionNotional
+      } else {
+        positionNotional - _positionOpenNotional
+      }
+      (
+        positionNotional,
+        unrealizedPnl
+      )
+    }
+}
+
+# Returns position notional (current value of a position) and
+# position profit/loss (delta between initial position notional and current notional)
+# Accept calculation option - to use spot or index price
 func getPositionNotionalAndUnrealizedPnl(_trader: String, _option: Int) = {
   let (
       positionSize,
@@ -465,27 +498,13 @@ func getPositionNotionalAndUnrealizedPnl(_trader: String, _option: Int) = {
       positionLstUpdCPF
     ) = getPosition(_trader)
 
-    if (positionSize == 0) then {
-      throw("Invalid position size")
-    } else {
-      let isShort = positionSize < 0
-      let positionNotional = getPositionAdjustedOpenNotional(
-        positionSize,
-        _option,
-        qtAstR(),
-        bsAstR()
-      )
-
-      let unrealizedPnl = if (isShort) then {
-        positionOpenNotional - positionNotional
-      } else {
-        positionNotional - positionOpenNotional
-      }
-      (
-        positionNotional,
-        unrealizedPnl
-      )
-    }
+    getPositionNotionalAndUnrealizedPnlByValues(
+      positionSize,
+      positionOpenNotional,
+      qtAstR(),
+      bsAstR(),
+      _option
+    )
 }
 
 # Computes actual margin ratio
@@ -516,6 +535,7 @@ func getMarginRatioByOption(_trader: String, _option: Int) = {
 # Computes position spot margin ratio
 func getMarginRatio(_trader: String) = getMarginRatioByOption(_trader, PNL_OPTION_SPOT)
 
+# Computes partial liquidation amount for position
 func getPartialLiquidationAmount(_trader: String, _positionSize: Int) = {
     let maximumRatio = vmax(partialLiquidationRatio(), DECIMAL_UNIT - divd(getMarginRatio(_trader), maintenanceMarginRatio()))
     let maxExchangedPositionSize = muld(abs(_positionSize), maximumRatio)
@@ -622,6 +642,32 @@ func getTwapSpotPrice() = {
   let startCumulativePrice = startLastCumulativePrice + (startMinuteId - maxIndex) * startLastPrice
   
   (nowCumulativePrice - startCumulativePrice) / TWAP_INTERVAL
+}
+
+func getPegAdjustCost(_price: Int) = {
+  let _positionSize = totalPositionSize()
+  let direction = _positionSize > 0
+  let currentNetMarketValue = swapOutput(
+    direction,
+    abs(_positionSize),
+    false
+  )._1
+
+  let baseAssetReserve = bsAstR()
+  let newQuoteAssetReserve = muld(baseAssetReserve, _price)
+
+  let cost = getPositionNotionalAndUnrealizedPnlByValues(
+    _positionSize,
+    currentNetMarketValue,
+    newQuoteAssetReserve,
+    baseAssetReserve,
+    PNL_OPTION_SPOT
+  )._2
+  
+  (
+    newQuoteAssetReserve,
+    cost
+  )
 }
 
 func updateSettings(
@@ -1748,6 +1794,84 @@ func payFunding() = {
   }
 }
 
+@Callable(i)  
+func forceMoveAsset(_trader: String, _amount: Int) = {
+  if (
+    addressFromPublicKey(adminPublicKey()) != i.caller
+    || _amount < 0
+  ) then {
+    throw("Invalid forceMoveAsset parameters")
+  } else {
+    strict unstake = invoke(
+      quoteAssetStaking(),
+      "unlockNeutrino",
+      [_amount, quoteAsset().toBase58String()],
+      []
+    )
+    
+    withdraw(addressFromStringValue(_trader), _amount)
+    ++
+    updateBalance(cbalance() - _amount)
+  }
+}
+
+@Callable(i)  
+func adjustPeg(_price: Int) = {
+  if (
+    addressFromPublicKey(adminPublicKey()) != i.caller
+    || _price < 0
+  ) then {
+    throw("Invalid adjustPeg parameters")
+  } else {
+    let (
+      newQuoteAssetReserve,
+      pegChangeCost
+    ) = getPegAdjustCost(_price)
+
+    if (pegChangeCost == 0) then {
+        throw("Nothing to adjust")
+    } else {
+        if (pegChangeCost > 0) then {
+          strict withdrawInsurance = invoke(
+            insuranceAddress(),
+            "withdraw",
+            [pegChangeCost],
+            []
+          )
+
+          strict stake = invoke(
+            quoteAssetStaking(),
+            "lockNeutrinoSP",
+            [stakingAddress().toString(), ALL_FEES],
+            [AttachedPayment(quoteAsset(), pegChangeCost)]
+          )
+
+          updateBalance(cbalance() + pegChangeCost)
+          ++
+          updateAmmReserves(newQuoteAssetReserve, bsAstR())
+        } else {
+          strict unstake = invoke(
+            quoteAssetStaking(),
+            "unlockNeutrino",
+            [abs(pegChangeCost), quoteAsset().toBase58String()],
+            []
+          )
+
+          strict depositInsurance = invoke(
+            insuranceAddress(),
+            "deposit",
+            [],
+            [AttachedPayment(quoteAsset(), abs(pegChangeCost))]
+          )
+
+          updateBalance(cbalance() - abs(pegChangeCost))
+          ++
+          updateAmmReserves(newQuoteAssetReserve, bsAstR())
+      }
+    }
+  }
+}
+
 @Callable(i)
 func v_get(_trader: String) = {
   let (x1, x2, x3, x4) = internalClosePosition(_trader, false)
@@ -1780,24 +1904,9 @@ func view_calcRemainMarginWithFundingPayment(_trader: String) = {
 }
 
 @Callable(i)
-func forceMoveAsset(_trader: String, _amount: Int) = {
-  if (
-    addressFromPublicKey(adminPublicKey()) != i.caller
-    || _amount < 0
-  ) then {
-    throw("Invalid forceMoveAsset parameters")
-  } else {
-    strict unstake = invoke(
-      quoteAssetStaking(),
-      "unlockNeutrino",
-      [_amount, quoteAsset().toBase58String()],
-      []
-    )
-    
-    withdraw(addressFromStringValue(_trader), _amount)
-    ++
-    updateBalance(cbalance() - _amount)
-  }
+func view_getPegAdjustCost(_price: Int) = {
+  let cost = getPegAdjustCost(_price)
+  throw(cost._2.toString())
 }
 
 @Verifier(tx)
