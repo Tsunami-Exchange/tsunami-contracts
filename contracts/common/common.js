@@ -37,6 +37,7 @@ class Environment {
         
         const stakingAddress = await accountDataByKey(`k_staking_address`, coordinatorAddress).then(x => x.value)
         const farmingAddress = await accountDataByKey(`k_farming_address`, coordinatorAddress).then(x => x.value)
+        const referralAddress = await accountDataByKey(`k_referral_address`, coordinatorAddress).then(x => x.value)
 
         let allKeys = await accountData(coordinatorAddress)
         allKeys = Object.keys(allKeys).map(k => allKeys[k])
@@ -52,6 +53,7 @@ class Environment {
         this.miner = new Miner(this)
         this.staking = new Staking(this, stakingAddress)
         this.farming = new Farming(this, farmingAddress)
+        this.referral = new Referral(this, referralAddress)
 
         console.log(`Loaded environment with ${this.amms.length} AMMs`)
     }
@@ -625,6 +627,7 @@ class Environment {
     }
 
     async upgradeContract(file, address, fee) {
+        console.log(`Upgrading contract at ${address} with ${file}`)
         await this.ensureDeploymentFee(address, fee)
 
         const tx = await upgrade(file, address, fee, this.seeds.admin)
@@ -1275,13 +1278,18 @@ class Orders {
 
 class Referral {
 
-    constructor(e, sender) {
+    constructor(e, address, sender) {
         this.e = e
+        this.address = address
         this.sender = sender
     }
 
     as(_sender) {
-        return new Referral(this.e, _sender)
+        return new Referral(this.e, this.address, _sender)
+    }
+
+    async upgrade() {
+        return this.e.upgradeContract('referral.ride', this.address, 3700000)
     }
 
     async createReferralLink() {

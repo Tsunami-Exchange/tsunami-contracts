@@ -4,6 +4,8 @@
 
   ##### Key constants #####
   let k_ref_link_owner = "k_ref_link_owner"
+  let k_ref_link_owner_count = "k_ref_link_owner_count"
+  let k_ref_owner_link = "k_ref_owner_link"
   let k_referrer = "k_referrer"
   let k_active = "k_active"
   let k_defaultFee = "k_defaultFee"
@@ -35,6 +37,14 @@
 
   func getReferrerRefCountKey(_referrer: String) = {
     k_referrer_ref_count + "_" + _referrer
+  }
+
+  func getReferrerLinkCountKey(_referrer: String) = {
+    k_ref_link_owner_count + "_" + _referrer
+  }
+
+  func getReferrerLinkKeyAt(_referrer: String, _linkId: Int) = {
+    k_ref_owner_link + "_" + _referrer + "_" + _linkId.toString()
   }
 
   func getReferrerEarnedKey(_referrer: String) = {
@@ -103,6 +113,10 @@
     this.getInteger(getReferrerRefCountKey(_referrer)).valueOrElse(0)
   }
 
+  func getReferrerLinkCount(_referrer: String) = {
+    this.getInteger(getReferrerLinkCountKey(_referrer)).valueOrElse(0)
+  }
+
   func getReferrerEarned(_referrer: String) = {
     this.getInteger(getReferrerEarnedKey(_referrer)).valueOrElse(0)
   }
@@ -120,10 +134,12 @@
     let long = toBase58String(sha256(bytes))
     let short = long.take(10)
     let key = getReferrerLinkKey(short)
+    let linkId = getReferrerLinkCount(i.caller.toString()) + 1
     if (this.getString(key).isDefined()) then {
       throw("Short link exists, try generating it again")
     } else {
       [
+        StringEntry(getReferrerLinkKeyAt(i.caller.toString(), linkId), short),
         StringEntry(key, i.caller.toString())
       ]
     }
