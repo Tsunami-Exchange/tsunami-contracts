@@ -670,6 +670,34 @@ func getPegAdjustCost(_price: Int) = {
   )
 }
 
+func getFunding() = {
+  let underlyingPrice = getOracleTwapPrice()
+  let spotTwapPrice = getTwapSpotPrice()
+  let premium = spotTwapPrice - underlyingPrice
+  
+  if (totalShortPositionSize() == 0 || totalLongPositionSize() == 0) then {
+    (0, 0)
+  } else {
+    if (premium < 0) then {
+      # underlyingPrice > spotTwapPrice, need to push spotTwapPrice UP, short pays the longs
+      # how much to take from shorts this funding period
+      let shortPremiumFraction = divd(muld(premium, fundingPeriodDecimal()), ONE_DAY)
+
+      # how much longs will get from shorts total this funding period
+      let longPremiumFraction = divd(muld(shortPremiumFraction, totalShortPositionSize()), totalLongPositionSize())
+      (shortPremiumFraction, longPremiumFraction)
+    } else {
+      # underlyingPrice < spotTwapPrice, need to push spotTwapPrice DOWN, longs pays the shorts
+      # how much to take from longs this funding period
+      let longPremiumFraction = divd(muld(premium, fundingPeriodDecimal()), ONE_DAY)
+
+      # how much shorts will get from longs total this funding period
+      let shortPremiumFraction = divd(muld(longPremiumFraction, totalLongPositionSize()), totalShortPositionSize())
+      (shortPremiumFraction, longPremiumFraction)
+    }
+  }
+}
+
 func updateSettings(
   _initMarginRatio: Int,
   _mmr: Int,
@@ -1757,32 +1785,7 @@ func payFunding() = {
     throw("Invalid funding block timestamp: " + lastBlock.timestamp.toString() + " < " + fundingBlockTimestamp.toString())
   } else {
     let underlyingPrice = getOracleTwapPrice()
-    let spotTwapPrice = getTwapSpotPrice()
-    let premium = spotTwapPrice - underlyingPrice
-    let (shortPremiumFraction, longPremiumFraction) =
-      # Handle special case: no shorts, or no longs. In this case funding in this period not exchanged.  
-      #
-      if (totalShortPositionSize() == 0 || totalLongPositionSize() == 0) then {
-        (0, 0)
-      } else {
-        if (premium < 0) then {
-          # underlyingPrice > spotTwapPrice, need to push spotTwapPrice UP, short pays the longs
-          # how much to take from shorts this funding period
-          let shortPremiumFraction = divd(muld(premium, fundingPeriodDecimal()), ONE_DAY)
-
-          # how much longs will get from shorts total this funding period
-          let longPremiumFraction = divd(muld(shortPremiumFraction, totalShortPositionSize()), totalLongPositionSize())
-          (shortPremiumFraction, longPremiumFraction)
-        } else {
-          # underlyingPrice < spotTwapPrice, need to push spotTwapPrice DOWN, longs pays the shorts
-          # how much to take from longs this funding period
-          let longPremiumFraction = divd(muld(premium, fundingPeriodDecimal()), ONE_DAY)
-
-          # how much shorts will get from longs total this funding period
-          let shortPremiumFraction = divd(muld(longPremiumFraction, totalLongPositionSize()), totalShortPositionSize())
-          (shortPremiumFraction, longPremiumFraction)
-        }
-      }
+    let (shortPremiumFraction, longPremiumFraction) = getFunding()
     
     updateFunding(
       fundingBlockTimestamp + fundingPeriodSeconds(),
@@ -1907,6 +1910,15 @@ func view_calcRemainMarginWithFundingPayment(_trader: String) = {
 func view_getPegAdjustCost(_price: Int) = {
   let cost = getPegAdjustCost(_price)
   throw(cost._2.toString())
+}
+
+@Callable(i)
+func view_getFunding() = {
+  let underlyingPrice = getOracleTwapPrice()
+  let (shortPremiumFraction, longPremiumFraction) = getFunding()
+  let longFunding = divd(longPremiumFraction, underlyingPrice)
+  let shortFunding = divd(shortPremiumFraction, underlyingPrice)
+  throw(s(longFunding) + s(shortFunding))
 }
 
 @Verifier(tx)
