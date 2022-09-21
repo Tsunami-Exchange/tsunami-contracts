@@ -23,6 +23,14 @@
             "COORDINATOR_ADDRESS": "3MzdomR4UkWKtVXq6YGouPJsYXDunjCvSJ8",
             "timeout": 60000,
             "WALLET": "./wallet/devnet.wallet.json"
+        },
+        "mainnet": {
+            "API_BASE": "https://nodes.wavesplatform.com",
+            "DS_API_BASE": "https://api.wavesplatform.com",
+            "CHAIN_ID": "W",
+            "COORDINATOR_ADDRESS": "3PPZ8hSuQuVNMw2AFWAidopQGVMqCujB13Z",
+            "timeout": 60000,
+            "WALLET": "./wallet/mainnet.wallet.json"
         }
     },
     "defaultEnv": "custom",

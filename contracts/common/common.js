@@ -24,6 +24,9 @@ class Environment {
     }
 
     async load(coordinatorAddress) {
+        if (!coordinatorAddress) {
+            throw Error(`No coordinator address`)
+        }
         this.addresses = {}
         this.addresses.coordinator = coordinatorAddress
 
@@ -35,9 +38,9 @@ class Environment {
         const govAsset = await accountDataByKey(`k_gov_asset`, coordinatorAddress).then(x => x.value)
         const quoteAsset = await accountDataByKey(`k_quote_asset`, coordinatorAddress).then(x => x.value)
         
-        const stakingAddress = await accountDataByKey(`k_staking_address`, coordinatorAddress).then(x => x.value)
-        const farmingAddress = await accountDataByKey(`k_farming_address`, coordinatorAddress).then(x => x.value)
-        const referralAddress = await accountDataByKey(`k_referral_address`, coordinatorAddress).then(x => x.value)
+        const stakingAddress = await accountDataByKey(`k_staking_address`, coordinatorAddress).then(x => x && x.value)
+        const farmingAddress = await accountDataByKey(`k_farming_address`, coordinatorAddress).then(x => x && x.value)
+        const referralAddress = await accountDataByKey(`k_referral_address`, coordinatorAddress).then(x => x && x.value)
 
         let allKeys = await accountData(coordinatorAddress)
         allKeys = Object.keys(allKeys).map(k => allKeys[k])

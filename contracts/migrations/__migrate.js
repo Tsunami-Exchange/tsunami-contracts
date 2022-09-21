@@ -66,12 +66,12 @@ const run = async() => {
     const allFiles = await fs.readdir(__dirname);
     const migrations = allFiles.filter(x => x.match('[0-9]+_.*')).map(x => x.replace('.js', ''))
 
-    const e = new Environment(process.env[`${chainId}_ADMIN_SEED`])
-    await e.load(env.COORDINATOR_ADDRESS)
-
     let run = false
 
     for (let migration of migrations) {
+        const e = new Environment(process.env[`${chainId}_ADMIN_SEED`])
+        await e.load(env.COORDINATOR_ADDRESS)
+
         const seq = migration.split('_')[0]
         const isRun = await isMigrated(seq, chainId)
         if (!isRun) {
