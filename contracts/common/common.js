@@ -627,12 +627,18 @@ class Environment {
     }
 
     async upgradeContract(file, address, fee) {
-        console.log(`Upgrading contract at ${address} with ${file}`)
-        await this.ensureDeploymentFee(address, fee)
+        if ((await shouldUpgrade(file, address)))  {
+            console.log(`Upgrading contract at ${address} with ${file}`)
+            await this.ensureDeploymentFee(address, fee)
 
-        const tx = await upgrade(file, address, fee, this.seeds.admin)
-        console.log(`Upgraded contract at ${address} in ${tx.id}`)
-        return tx
+            const tx = await upgrade(file, address, fee, this.seeds.admin)
+            if (tx) {
+                console.log(`Upgraded contract at ${address} in ${tx.id}`)
+                return tx
+            }
+        } else {
+            console.log(`Already deployed ${file} to ${address}`)
+        }
     }
 
     async clearAdminScript() {
@@ -642,7 +648,9 @@ class Environment {
 
     async upgradeCoordinator() {
         const tx = await this.upgradeContract('coordinator.ride', this.addresses.coordinator, 3400000)
-        console.log(`Upgraded coordinator in ${tx.id}`)
+        if (tx) {
+            console.log(`Upgraded coordinator in ${tx.id}`)
+        }
     }
 }
 

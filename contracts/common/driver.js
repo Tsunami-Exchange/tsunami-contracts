@@ -1,4 +1,5 @@
 const { publicKeyByAddress } = require('./dataservice')
+const { scriptByAddress } = require('./node')
 
 const deploy = async (filename, fee, seed, name, injectTimer, timerAddress) => {
     let code = file(filename)
@@ -7,10 +8,25 @@ const deploy = async (filename, fee, seed, name, injectTimer, timerAddress) => {
         console.log(`Injected timer to ${name}`)
     }
     const script = compile(code)
+    const oldScript = await scriptByAddress(address(seed))
+    if (script === oldScript) {
+        console.log(`${name} already deployed to ${address(seed)}`)
+        return
+    }
     const tx = setScript({ script, fee}, seed);
     await broadcast(tx);
     console.log(`${name} deployed to ${address(seed)} in ${tx.id}`)
     return waitForTx(tx.id)
+}
+
+const shouldUpgrade = async(filename, address) => {
+    const code = file(filename)
+    const script = compile(code)
+    if (!address) {
+        throw(`Address not defined`)
+    }
+    const oldScript = await scriptByAddress(address)
+    return script !== oldScript
 }
 
 const upgrade = async(filename, address, fee, adminSeed) => {
@@ -18,6 +34,11 @@ const upgrade = async(filename, address, fee, adminSeed) => {
     const script = compile(code)
     if (!address) {
         throw(`Address not defined`)
+    }
+    const oldScript = await scriptByAddress(address)
+    if (script === oldScript) {
+        console.log(`${filename} already deployed to ${address}`)
+        return
     }
     const senderPublicKey = await publicKeyByAddress(address)
     console.log(`senderPublicKey=${senderPublicKey} for address=${address}`)
@@ -55,5 +76,6 @@ const clearScript = async(seed) => {
 module.exports = {
     deploy,
     upgrade,
-    clearScript
+    clearScript,
+    shouldUpgrade
 }
