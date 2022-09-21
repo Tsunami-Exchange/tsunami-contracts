@@ -1918,7 +1918,7 @@ func view_getFunding() = {
   let (shortPremiumFraction, longPremiumFraction) = getFunding()
   let longFunding = divd(longPremiumFraction, underlyingPrice)
   let shortFunding = divd(shortPremiumFraction, underlyingPrice)
-  throw(s(longFunding) + s(shortFunding))
+  throw(s(longFunding) + s(shortFunding) + s(getTwapSpotPrice()) + s(getOracleTwapPrice()))
 }
 
 @Verifier(tx)

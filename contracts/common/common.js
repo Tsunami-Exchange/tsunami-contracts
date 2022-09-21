@@ -1,4 +1,4 @@
-let { deploy, upgrade, clearScript } = require("../common/driver")
+let { deploy, upgrade, clearScript, shouldUpgrade } = require("../common/driver")
 let { wait } = require("../common/utils")
 
 const wvs = 10 ** 8;
