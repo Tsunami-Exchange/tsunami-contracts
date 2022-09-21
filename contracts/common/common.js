@@ -658,6 +658,7 @@ class AMM {
     }
 
     async upgrade() {
+        console.log(`Upgrading AMM ${this.address}`)
         return this.e.upgradeContract('vAMM2.ride', this.address, 6000000)
     }
 
@@ -1289,6 +1290,7 @@ class Referral {
     }
 
     async upgrade() {
+        console.log(`Upgrading Referral ${this.address}`)
         return this.e.upgradeContract('referral.ride', this.address, 3700000)
     }
 
@@ -1353,6 +1355,7 @@ class Staking {
     }
 
     async upgrade() {
+        console.log(`Upgrading Rewards ${this.address}`)
         return this.e.upgradeContract('rewards.ride', this.address, 3700000)
     }
 
@@ -1422,6 +1425,7 @@ class Farming {
     }
 
     async upgrade() {
+        console.log(`Upgrading Farming ${this.address}`)
         return this.e.upgradeContract('farming.ride', this.address, 3700000)
     }
 

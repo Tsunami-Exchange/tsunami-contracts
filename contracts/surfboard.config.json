@@ -10,7 +10,7 @@
         },
         "testnet": {
             "API_BASE": "https://nodes-testnet.wavesnodes.com",
-            "DS_API_BASE": "https://api-testnet.wavesplatform.com",
+            "DS_API_BASE": "https://testnet.waves.exchange/api/v1/forward/data_service",
             "CHAIN_ID": "T",
             "COORDINATOR_ADDRESS": "3MxXA443AARoS3rQ9RNdPeBur74yBTCTyxJ",
             "timeout": 60000,
@@ -18,7 +18,7 @@
         },
         "devnet": {
             "API_BASE": "https://nodes-testnet.wavesnodes.com",
-            "DS_API_BASE": "https://api-testnet.wavesplatform.com",
+            "DS_API_BASE": "https://testnet.waves.exchange/api/v1/forward/data_service",
             "CHAIN_ID": "T",
             "COORDINATOR_ADDRESS": "3MzdomR4UkWKtVXq6YGouPJsYXDunjCvSJ8",
             "timeout": 60000,
