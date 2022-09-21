@@ -90,6 +90,7 @@ const run = async() => {
                 }
                 console.error(`Migration failed`, error)
                 success = false
+                break
             }
 
             if (success) {
