@@ -1317,6 +1317,17 @@ class Referral {
         return tx
     }
 
+    async setSwapAddress(_swapAddress) {
+        let tx = await invoke({
+            dApp: this.address,
+            functionName: "setSwapAddress",
+            arguments: [_swapAddress]
+        }, this.e.seeds.admin)
+
+        await waitForTx(tx.id)
+        return tx
+    }
+
     async claimRewards() {
         let tx = await invoke({
             dApp: address(this.e.seeds.referral),

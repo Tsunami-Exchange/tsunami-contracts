@@ -20,6 +20,9 @@ const loadSeed = (alias) => {
     return w[alias]
 }
 
+const loadAddress = loadSeed
+
 module.exports = {
-    loadSeed
+    loadSeed,
+    loadAddress
 }

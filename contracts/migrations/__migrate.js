@@ -67,11 +67,7 @@ const run = async() => {
     const migrations = allFiles.filter(x => x.match('[0-9]+_.*')).map(x => x.replace('.js', ''))
 
     let run = false
-
     for (let migration of migrations) {
-        const e = new Environment(process.env[`${chainId}_ADMIN_SEED`])
-        await e.load(env.COORDINATOR_ADDRESS)
-
         const seq = migration.split('_')[0]
         const isRun = await isMigrated(seq, chainId)
         if (!isRun) {
@@ -82,6 +78,9 @@ const run = async() => {
             const m = require(`./${migration}`)
             let success = true
             try {
+                const e = new Environment(process.env[`${chainId}_ADMIN_SEED`])
+                await e.load(env.COORDINATOR_ADDRESS)
+                
                 await m.migrate(e)
             } catch(e) {
                 let error = JSON.stringify(e)
