@@ -9,6 +9,7 @@
   let k_referrer = "k_referrer"
   let k_active = "k_active"
   let k_defaultFee = "k_defaultFee"
+  let k_swapAddress = "k_swapAddress"
 
   let k_referrer_ref_count = "k_referrer_ref_count"
   let k_referrer_earned =  "k_referrer_earned"
@@ -22,6 +23,7 @@
   let k_governance_asset = "k_gov_asset"
   let k_quote_asset = "k_quote_asset" 
   let k_admin_public_key = "k_admin_public_key"   
+  let k_admin_address = "k_admin_address"
   let k_amm = "k_amm"
 
   # Keys
@@ -62,6 +64,7 @@
   ##### Coordinator constants #####
   func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
   func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
+  func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
   func governanceAsset() = fromBase58String(coordinator().getStringValue(k_governance_asset))
   func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
   func isWhitelist(_address: String) = getBoolean(coordinator(), k_amm.toCompositeKey(_address)).valueOrElse(false)
@@ -69,11 +72,10 @@
   ##### Core constants #####
 
   let DECIMAL_UNIT = 1 * (10 * 10 * 10 * 10 * 10 * 10) # 10 ** 6
-  let DURATION = 60 * 60 * 24 # 1 day
-  let NO_ADDRESS = ""
-  let NO_STAKER = 0
 
   ##### Helper functions #####
+  func swapAddress() = addressFromString(this.getString(k_swapAddress).valueOrErrorMessage("Now swap address")).valueOrErrorMessage("Invalid swap address")
+
   func usdnFromDecimals(_amount: Int)  = _amount / 100
   func usdnToDecimals(_amount: Int)    = _amount * 100
 
@@ -147,7 +149,8 @@
 
   @Callable(i)
   func acceptPaymentWithLink(_trader: String, _refLink: String) = {
-    let _amount = i.payments[0].amount
+    let _rawAmount = i.payments[0].amount
+
     let amm = i.caller.toString()
     if (
       !isWhitelist(amm)
@@ -163,11 +166,24 @@
           # Existing referral. Just pay the referrer his fee and be done with it
           let referrer = getReferrer(_trader)
           let fee = getDefaultFee()
-          let amountToReferrer = muld(_amount, fee)
+          let amountToReferrer = muld(_rawAmount, fee)
+
+          strict beforeSwap = assetBalance(this, governanceAsset())
+
+          strict doSwap = invoke(
+            swapAddress(),
+            "swap",
+            [toBase58String(governanceAsset()), 0], # Want Gov Asset
+            [AttachedPayment(quoteAsset(), amountToReferrer)] # In exchange for Quote Asset
+          )
+
+          strict afterSwap = assetBalance(this, governanceAsset())
+          strict amountGovToReferrer = afterSwap - beforeSwap
+
           (
             [
-              IntegerEntry(getReferrerEarnedKey(referrer), getReferrerEarned(referrer) + amountToReferrer),
-              ScriptTransfer(i.caller, i.payments[0].amount -  amountToReferrer, i.payments[0].assetId)
+              IntegerEntry(getReferrerEarnedKey(referrer), getReferrerEarned(referrer) + amountGovToReferrer),
+              ScriptTransfer(i.caller, i.payments[0].amount - amountToReferrer, i.payments[0].assetId)
             ], 
             amountToReferrer
           )
@@ -186,11 +202,24 @@
           } else {
             # Register user as referral, mark as active and may the fee for referrer
             let fee = getDefaultFee()
-            let amountToReferrer = muld(_amount, fee)
+            let amountToReferrer = muld(_rawAmount, fee)
+
+            strict beforeSwap = assetBalance(this, governanceAsset())
+            
+            strict doSwap = invoke(
+              swapAddress(),
+              "swap",
+              [toBase58String(governanceAsset()), 0], # Want Gov Asset
+              [AttachedPayment(quoteAsset(), amountToReferrer)] # In exchange for Quote Asset
+            )
+
+            strict afterSwap = assetBalance(this, governanceAsset())
+            strict amountGovToReferrer = afterSwap - beforeSwap
+            
             (
               [
                 IntegerEntry(getReferrerRefCountKey(referrer), getReferrerRefCount(referrer) + 1),
-                IntegerEntry(getReferrerEarnedKey(referrer), getReferrerEarned(referrer) + amountToReferrer),
+                IntegerEntry(getReferrerEarnedKey(referrer), getReferrerEarned(referrer) + amountGovToReferrer),
                 StringEntry(getReferrerKey(_trader), referrer),
                 BooleanEntry(getActiveKey(_trader), true),
                 ScriptTransfer(i.caller, i.payments[0].amount -  amountToReferrer, i.payments[0].assetId)
@@ -214,7 +243,7 @@
 
   @Callable(i)
   func acceptPayment(_trader: String) = {
-    let _amount = i.payments[0].amount
+    let _rawAmount = i.payments[0].amount
     let amm = i.caller.toString()
     if (
       !isWhitelist(amm)
@@ -228,10 +257,23 @@
         # Existing referral. Just pay the referrer his fee and be done with it
         let referrer = getReferrer(_trader)
         let fee = getDefaultFee()
-        let amountToReferrer = muld(_amount, fee)
+        let amountToReferrer = muld(_rawAmount, fee)
+
+        strict beforeSwap = assetBalance(this, governanceAsset())
+
+        strict doSwap = invoke(
+          swapAddress(),
+          "swap",
+          [toBase58String(governanceAsset()), 0], # Want Gov Asset
+          [AttachedPayment(quoteAsset(), amountToReferrer)] # In exchange for Quote Asset
+        )
+
+        strict afterSwap = assetBalance(this, governanceAsset())
+        strict amountGovToReferrer = afterSwap - beforeSwap
+        
         (
           [
-            IntegerEntry(getReferrerEarnedKey(referrer), getReferrerEarned(referrer) + amountToReferrer),
+            IntegerEntry(getReferrerEarnedKey(referrer), getReferrerEarned(referrer) + amountGovToReferrer),
             ScriptTransfer(i.caller, i.payments[0].amount -  amountToReferrer, i.payments[0].assetId)
           ], 
           amountToReferrer
@@ -259,7 +301,7 @@
     if (toClaim > 0) then {
       [
         IntegerEntry(getReferrerClaimedKey(referrer), getReferrerClaimed(referrer) + toClaim),
-        ScriptTransfer(i.caller, toClaim, quoteAsset())
+        ScriptTransfer(i.caller, toClaim, governanceAsset())
       ]
     } else {
       throw("Nothing to claim")
@@ -269,15 +311,30 @@
   @Callable(i)
   func initialize(
     _coordinator: String,
-    _defaultFee: Int
+    _defaultFee: Int,
+    _swapAddress: String
   ) = {
     if (initialized()) then {
       throw("Already initialized")
     } else {
       [
         StringEntry(k_coordinatorAddress, _coordinator),
+        StringEntry(k_swapAddress, _swapAddress),
         IntegerEntry(k_defaultFee, _defaultFee),
         BooleanEntry(k_initialized, true)
+      ]
+    }
+  }
+
+  @Callable(i)
+  func setSwapAddress(
+    _swapAddress: String
+  ) = {
+    if (i.caller != adminAddress()) then {
+      throw("Invalid setSwapAddress params")
+    } else {
+      [
+        StringEntry(k_swapAddress, _swapAddress)
       ]
     }
   }

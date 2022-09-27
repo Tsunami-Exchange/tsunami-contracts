@@ -297,7 +297,8 @@ class Environment {
                 functionName: "initialize",
                 arguments: [ 
                     address(this.seeds.coordinator),
-                    0.2 * decimals // 20% of fee goes to referrer
+                    0.2 * decimals, // 20% of fee goes to referrer
+                    address(this.seeds.puzzleSwap)
                 ]
             }, this.seeds.admin)
 
@@ -1344,12 +1345,12 @@ class Referral {
 
     async getEarned(_referrerAddress) {
         return await accountDataByKey(`k_referrer_earned_${_referrerAddress}`, address(this.e.seeds.referral))
-        .then(x => x && (x.value || 0) / decimals)
+        .then(x => x && (x.value || 0) / wvs)
     }
 
     async getClaimed(_referrerAddress) {
         return await accountDataByKey(`k_referrer_claimed_${_referrerAddress}`, address(this.e.seeds.referral))
-        .then(x => x && (x.value || 0) / decimals)
+        .then(x => x && (x.value || 0) / wvs)
     }
 }
 
