@@ -161,7 +161,7 @@
       # If trader is already someone's referral or first time interacting with platform
       let _isReferral = isReferral(_trader)
       let _isFirstTime = isFirstTime(_trader)
-      if (isReferral(_trader) || isFirstTime(_trader)) then {
+      if (_isReferral || _isFirstTime) then {
         if (_isReferral) then {
           # Existing referral. Just pay the referrer his fee and be done with it
           let referrer = getReferrer(_trader)
@@ -190,7 +190,7 @@
         } else {
           # New user or new referral. Mark user as active in any case.
           let referrer = getLinkReferrer(_refLink)
-          if (referrer == "") then {
+          if (referrer == "" || referrer == _trader) then {
             # Mark user as active and be done with it
             (
               [
