@@ -19,7 +19,7 @@ describe('vAMM should be able to simulate attack', async function () {
 
     before(async function () {
         await setupAccounts({
-            admin: 0.1 * wvs,
+            admin: 1 * wvs,
             attacker1: 0.1 * wvs,
             attacker2: 0.1 * wvs,
             defender1: 0.1 * wvs,

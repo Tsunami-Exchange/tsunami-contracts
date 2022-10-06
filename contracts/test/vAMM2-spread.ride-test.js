@@ -20,7 +20,7 @@ describe('vAMM should not be able to go more than 40% off index price', async fu
 
     before(async function () {
         await setupAccounts({
-            admin: 0.1 * wvs,
+            admin: 1 * wvs,
             longer: 0.1 * wvs,
             shorter: 0.1 * wvs,
             liquidator: 0.1 * wvs,

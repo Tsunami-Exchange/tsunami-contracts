@@ -19,6 +19,7 @@ let k_governance_asset = "k_gov_asset"            # Governance (TSN) asset addre
 let k_miner_address = "k_miner_address"           # Liquidity mining contract address
 let k_orders_address = "k_orders_address"         # Order executor contract address
 let k_referral_address = "k_referral_address"     # Referral contract address
+let k_manager_address = "k_manager_address"       # Fund manager address
 
 ##### View functions #####
 func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
@@ -90,6 +91,16 @@ func setFarming(
   let address = getAddressIfValid(_farming)
   [
     StringEntry(k_farming_address, address)
+  ]
+})
+
+@Callable(i)
+func setManager(
+  _manager: String
+) = isAdmin(i).valueOrElse({
+  let address = getAddressIfValid(_manager)
+  [
+    StringEntry(k_manager_address, address)
   ]
 })
 

@@ -16,7 +16,7 @@ let k_admin_address = "k_admin_address"           # Address of admin account
 let k_admin_public_key = "k_admin_public_key"     # Pubic key of admin account
 let k_quote_asset = "k_quote_asset"               # Address of quote asset (USDN in our case)
 let k_quote_staking = "k_quote_staking"           # Address of quote asset staking contract (USDN staking in our case)
-let k_staking_address = "k_staking_address"       # Address that should receive staking benefits
+let k_manager_address = "k_manager_address"       # Fund manager address
 
 # Global initialization state
 let k_initialized = "k_initialized"               # If Insurance was properly initialized
@@ -25,14 +25,14 @@ let k_initialized = "k_initialized"               # If Insurance was properly in
 func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
 
 func insurance() = this.getInteger(k_insurance).valueOrElse(0)
-func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
+func coordinator() = addressFromString(this.getString(k_coordinatorAddress).valueOrErrorMessage("Coordinator not set")).valueOrErrorMessage("Coordinator not set")
 func isWhitelist(_address: String) = getBoolean(coordinator(), k_amm.toCompositeKey(_address)).valueOrElse(false)
 func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
-func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
-func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
-func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
-func quoteAssetStaking() = addressFromString(coordinator().getStringValue(k_quote_staking)).valueOrErrorMessage("Quote asset staking not set")
-func stakingAddress() = addressFromString(coordinator().getStringValue(k_staking_address)).valueOrErrorMessage("Insurance not set")
+func adminAddress() = addressFromString(coordinator().getString(k_admin_address).valueOrErrorMessage("Admin address not set"))
+func adminPublicKey() = fromBase58String(coordinator().getString(k_admin_public_key).valueOrErrorMessage("Admin public key not set"))
+func quoteAsset() = fromBase58String(coordinator().getString(k_quote_asset).valueOrErrorMessage("Quote asset not set"))
+func quoteAssetStaking() = addressFromString(coordinator().getString(k_quote_staking).valueOrErrorMessage("Quote asset staking not set")).valueOrErrorMessage("Quote asset staking not set")
+func managerAddress() = addressFromString(coordinator().getString(k_manager_address).valueOrErrorMessage("Manager not set")).valueOrErrorMessage("Manager not set")
 
 ##### Internal functions #####
 func updateInsurance(i: Int) = {
@@ -65,9 +65,9 @@ func withdraw(_amount: Int) = {
     throw("Invalid withdraw params " + _amount.toString() + " > " + insurance().toString())
   } else {
     strict unstake = invoke(
-      quoteAssetStaking(),
-      "unlockNeutrino",
-      [_amount, quoteAsset().toBase58String()],
+      managerAddress(),
+      "withdraw",
+      [quoteAsset().toBase58String(), _amount],
       []
     )
 
@@ -91,14 +91,35 @@ func deposit() = {
     throw("Invalid deposit params")
   } else {
     strict stake = invoke(
-      quoteAssetStaking(),
-      "lockNeutrino",
+      managerAddress(),
+      "deposit",
       [],
       [AttachedPayment(quoteAsset(), _amount)]
     )
 
     updateInsurance(insurance() + _amount)
   }
+}
+
+@Callable(i)
+func migrateLiquidity() = {
+  let amount = insurance()
+
+  strict unstake = invoke(
+    quoteAssetStaking(),
+    "unlockNeutrino",
+    [amount, quoteAsset().toBase58String()],
+    []
+  )
+
+  strict stake = invoke(
+    managerAddress(),
+    "deposit",
+    [],
+    [AttachedPayment(quoteAsset(),amount)]
+  )
+
+  []
 }
 
 @Verifier(tx)

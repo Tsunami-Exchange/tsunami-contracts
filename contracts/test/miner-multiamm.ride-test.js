@@ -24,7 +24,7 @@ describe('Miner should work with multiple AMMs and same reward token', async fun
 
     before(async function () {
         await setupAccounts({
-            admin: 0.1 * wvs,
+            admin: 1 * wvs,
             amm1: 0.2 * wvs,
             amm2: 0.2 * wvs,
             trader1: 0.2 * wvs,

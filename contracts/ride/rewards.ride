@@ -24,13 +24,15 @@
   let k_coordinatorAddress = "k_coordinatorAddress"
   let k_governance_asset = "k_gov_asset"
   let k_quote_asset = "k_quote_asset" 
-  let k_admin_public_key = "k_admin_public_key"   
+  let k_admin_public_key = "k_admin_public_key"
+  let k_manager_address = "k_manager_address"   
 
   ##### Coordinator constants #####
   func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
   func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
   func governanceAsset() = fromBase58String(coordinator().getStringValue(k_governance_asset))
   func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
+  func managerAddress() = addressFromString(coordinator().getStringValue(k_manager_address)).valueOrErrorMessage("Manager not set")
 
   ##### Core constants #####
 
@@ -245,6 +247,13 @@
     if (stakerEarned <= 0 || !initialized()) then {
       throw("No reward")
     } else {
+      strict unstake = invoke(
+        managerAddress(),
+        "withdraw",
+        [quoteAsset().toBase58String(), stakerEarned.usdnFromDecimals()],
+        []
+      )
+
       updateUserRewards(_staker, 0, stakerRewardPerTokenPaid)
       ++
       updateRewardPerTokenStored(newRewardPerTokenStored)
@@ -266,6 +275,14 @@
       throw("Invalid addRewards params")
     } else {
       let _reward = i.payments[0].amount.usdnToDecimals()
+
+      strict stake = invoke(
+        managerAddress(),
+        "deposit",
+        [],
+        [AttachedPayment(quoteAsset(), _reward.usdnFromDecimals())]
+      )
+
       # assume DURATION = 1 day, (existing) rewardRate = 1, and new incoming _reward = 2
       let newRewardPerTokenStored = updateReward(NO_ADDRESS, NO_STAKER)._1
 
@@ -301,6 +318,13 @@
     if (rewardDelta <= 0) then {
       throw("Invalid ackRewards params")
     } else {
+      strict stake = invoke(
+        managerAddress(),
+        "deposit",
+        [],
+        [AttachedPayment(quoteAsset(), rewardDelta.usdnFromDecimals())]
+      )
+
       let _reward = rewardDelta
       # assume DURATION = 1 day, (existing) rewardRate = 1, and new incoming _reward = 2
       let newRewardPerTokenStored = updateReward(NO_ADDRESS, NO_STAKER)._1
@@ -342,6 +366,20 @@
         [],
         stakerEarned
       )
+  }
+
+  @Callable(i)
+  func migrateLiquidity() = {
+    let amount = rewardBalance().usdnFromDecimals()
+
+    strict stake = invoke(
+      managerAddress(),
+      "deposit",
+      [],
+      [AttachedPayment(quoteAsset(),amount)]
+    )
+
+    []
   }
 
   @Verifier(tx)

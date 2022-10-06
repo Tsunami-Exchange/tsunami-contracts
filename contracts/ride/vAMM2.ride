@@ -72,6 +72,7 @@ let k_staking_address = "k_staking_address"       # Address that should receive 
 let k_miner_address = "k_miner_address"           # Liquidity mining contract address
 let k_orders_address = "k_orders_address"         # Order executor contract address
 let k_referral_address = "k_referral_address"     # Referral contract address
+let k_manager_address = "k_manager_address"       # Fund manager address
 
 ##### Coordinator data ##### 
 func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
@@ -84,6 +85,7 @@ func insuranceAddress() = addressFromString(coordinator().getStringValue(k_insur
 func minerAddress() = addressFromString(coordinator().getStringValue(k_miner_address)).valueOrErrorMessage("Miner not set")
 func ordersAddress() = addressFromString(coordinator().getStringValue(k_orders_address)).valueOrErrorMessage("Orders not set")
 func referralAddress() = addressFromString(coordinator().getStringValue(k_referral_address)).valueOrErrorMessage("Referral not set")
+func managerAddress() = addressFromString(coordinator().getStringValue(k_manager_address)).valueOrErrorMessage("Manager not set")
 
 ##### Core constants #####
 
@@ -1283,9 +1285,9 @@ func increasePosition(
     let feeToInsurance = feeAmount - feeToStakers
     
     strict stake = invoke(
-      quoteAssetStaking(),
-      "lockNeutrinoSP",
-      [stakingAddress().toString(), ALL_FEES],
+      managerAddress(),
+      "deposit",
+      [],
       [AttachedPayment(quoteAsset(), _amount)]
     )
 
@@ -1372,11 +1374,11 @@ func addMargin() = {
 
     let feeToStakers = feeAmount / 2
     let feeToInsurance = feeAmount - feeToStakers
-    
+  
     strict stake = invoke(
-      quoteAssetStaking(),
-      "lockNeutrinoSP",
-      [stakingAddress().toString(), ALL_FEES],
+      managerAddress(),
+      "deposit",
+      [],
       [AttachedPayment(quoteAsset(), _amount)]
     )
 
@@ -1443,9 +1445,9 @@ func removeMargin(
         throw("Too much margin removed: " + marginRatio.toString() + " < " + initMarginRatio().toString())
       } else {
         strict unstake = invoke(
-          quoteAssetStaking(),
-          "unlockNeutrino",
-          [_amount, quoteAsset().toBase58String()],
+          managerAddress(),
+          "withdraw",
+          [quoteAsset().toBase58String(), _amount],
           []
         )
         
@@ -1516,9 +1518,9 @@ func closePosition() = {
       }
 
       strict unstake = invoke(
-        quoteAssetStaking(),
-        "unlockNeutrino",
-        [withdrawAmount - getFromInsurance, quoteAsset().toBase58String()],
+        managerAddress(),
+        "withdraw",
+        [quoteAsset().toBase58String(), withdrawAmount - getFromInsurance],
         []
       )
 
@@ -1649,9 +1651,9 @@ func liquidate(_trader: String) = {
       }
 
       strict unstake = invoke(
-        quoteAssetStaking(),
-        "unlockNeutrino",
-        [liquidationPenalty - takeFromInsurance, quoteAsset().toBase58String()],
+        managerAddress(),
+        "withdraw",
+        [quoteAsset().toBase58String(), liquidationPenalty - takeFromInsurance],
         []
       )
 
@@ -1735,9 +1737,9 @@ func liquidate(_trader: String) = {
       }
 
       strict unstake = invoke(
-        quoteAssetStaking(),
-        "unlockNeutrino",
-        [liquidationPenalty - takeFromInsurance, quoteAsset().toBase58String()],
+        managerAddress(),
+        "withdraw",
+        [quoteAsset().toBase58String(), liquidationPenalty - takeFromInsurance],
         []
       )
 
@@ -1806,9 +1808,9 @@ func forceMoveAsset(_trader: String, _amount: Int) = {
     throw("Invalid forceMoveAsset parameters")
   } else {
     strict unstake = invoke(
-      quoteAssetStaking(),
-      "unlockNeutrino",
-      [_amount, quoteAsset().toBase58String()],
+      managerAddress(),
+      "withdraw",
+      [quoteAsset().toBase58String(), _amount],
       []
     )
     
@@ -1835,28 +1837,28 @@ func adjustPeg(_price: Int) = {
         throw("Nothing to adjust")
     } else {
         if (pegChangeCost > 0) then {
-          strict withdrawInsurance = invoke(
-            insuranceAddress(),
-            "withdraw",
-            [pegChangeCost],
-            []
-          )
+          # strict withdrawInsurance = invoke(
+          #   insuranceAddress(),
+          #   "withdraw",
+          #   [pegChangeCost],
+          #   []
+          # )
 
-          strict stake = invoke(
-            quoteAssetStaking(),
-            "lockNeutrinoSP",
-            [stakingAddress().toString(), ALL_FEES],
-            [AttachedPayment(quoteAsset(), pegChangeCost)]
-          )
+          # strict stake = invoke(
+          #   quoteAssetStaking(),
+          #   "lockNeutrinoSP",
+          #   [stakingAddress().toString(), ALL_FEES],
+          #   [AttachedPayment(quoteAsset(), pegChangeCost)]
+          # )
 
-          updateBalance(cbalance() + pegChangeCost)
-          ++
+          # updateBalance(cbalance() + pegChangeCost)
+          # ++
           updateAmmReserves(newQuoteAssetReserve, bsAstR())
         } else {
           strict unstake = invoke(
-            quoteAssetStaking(),
-            "unlockNeutrino",
-            [abs(pegChangeCost), quoteAsset().toBase58String()],
+            managerAddress(),
+            "withdraw",
+            [quoteAsset().toBase58String(), abs(pegChangeCost)],
             []
           )
 
@@ -1873,6 +1875,27 @@ func adjustPeg(_price: Int) = {
       }
     }
   }
+}
+
+@Callable(i)
+func migrateLiquidity() = {
+  let amount = cbalance()
+
+  strict unstake = invoke(
+    quoteAssetStaking(),
+    "unlockNeutrino",
+    [amount, quoteAsset().toBase58String()],
+    []
+  )
+
+  strict stake = invoke(
+    managerAddress(),
+    "deposit",
+    [],
+    [AttachedPayment(quoteAsset(),amount)]
+  )
+
+  []
 }
 
 @Callable(i)

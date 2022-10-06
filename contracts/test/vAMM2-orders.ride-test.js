@@ -38,7 +38,7 @@ describe('vAMM should be able to execute delayed take profit orders', async func
 
     before(async function () {
         await setupAccounts({
-            admin: 0.1 * wvs,
+            admin: 1 * wvs,
             longer: 0.1 * wvs,
             user: 0.1 * wvs,
             shorter: 0.1 * wvs,
@@ -132,7 +132,7 @@ describe('vAMM should be able to execute delayed stop loss orders', async functi
 
     before(async function () {
         await setupAccounts({
-            admin: 0.1 * wvs,
+            admin: 1 * wvs,
             longer: 0.1 * wvs,
             user: 0.1 * wvs,
             shorter: 0.1 * wvs,

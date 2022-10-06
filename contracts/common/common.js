@@ -38,6 +38,7 @@ class Environment {
         const govAsset = await accountDataByKey(`k_gov_asset`, coordinatorAddress).then(x => x.value)
         const quoteAsset = await accountDataByKey(`k_quote_asset`, coordinatorAddress).then(x => x.value)
         
+        const insuranceAddress = await accountDataByKey(`k_insurance_address`, coordinatorAddress).then(x => x && x.value)
         const stakingAddress = await accountDataByKey(`k_staking_address`, coordinatorAddress).then(x => x && x.value)
         const farmingAddress = await accountDataByKey(`k_farming_address`, coordinatorAddress).then(x => x && x.value)
         const referralAddress = await accountDataByKey(`k_referral_address`, coordinatorAddress).then(x => x && x.value)
@@ -52,7 +53,7 @@ class Environment {
         this.assets.neutrino    = quoteAsset
 
         this.amms = ammAddresses.map(x => new AMM(this, x))
-        this.insurance = new Insurance(this)
+        this.insurance = new Insurance(this, insuranceAddress)
         this.miner = new Miner(this)
         this.staking = new Staking(this, stakingAddress)
         this.farming = new Farming(this, farmingAddress)
@@ -72,6 +73,7 @@ class Environment {
             orders:         0.05 * wvs,
             referral:       0.05 * wvs,
             farming:        0.05 * wvs,
+            manager:        0.05 * wvs,
         });
 
         this.seeds.coordinator  = accounts.coordinator
@@ -82,6 +84,7 @@ class Environment {
         this.seeds.orders       = accounts.orders
         this.seeds.referral     = accounts.referral
         this.seeds.farming      = accounts.farming
+        this.seeds.manager      = accounts.manager
 
         if (this.isLocal) {
             await setupAccounts({
@@ -89,12 +92,14 @@ class Environment {
                 neutrinoStaking:    0.15 * wvs,
                 puzzleSwap:         0.15 * wvs,
                 timer:              3    * wvs,
+                vires:              0.15 * wvs,
             });
 
             this.seeds.assetHolder = accounts.assetHolder
             this.seeds.neutrinoStaking = accounts.neutrinoStaking
             this.seeds.timer = accounts.timer
             this.seeds.puzzleSwap = accounts.puzzleSwap
+            this.seeds.vires = accounts.vires
 
             // Issue TSN and Neutrino assets
             //
@@ -117,8 +122,9 @@ class Environment {
 
             let p11 = deploy('mock_neutrinoStaking.ride' , 3400000, this.seeds.neutrinoStaking , 'Mock Neutrino Staking')
             let p12 = deploy('mock_swap.ride' , 3400000, this.seeds.puzzleSwap , 'Mock Puzzle Swap')
+            let p13 = deploy('mock_vires.ride' , 3400000, this.seeds.vires , 'Mock Vires')
 
-            await Promise.all([waitForTx(iTx1.id), waitForTx(iTx2.id, p11, p12)])
+            await Promise.all([waitForTx(iTx1.id), waitForTx(iTx2.id, p11, p12, p13)])
 
             this.assets.tsn         = iTx2.assetId
             this.assets.neutrino    = iTx1.assetId
@@ -138,6 +144,7 @@ class Environment {
         let p6 = deploy('referral.ride'    , 3400000, this.seeds.referral    , 'Referral', this.isLocal, address(this.seeds.timer))
         let p7 = deploy('farming.ride'     , 3400000, this.seeds.farming     , 'Farming', this.isLocal, address(this.seeds.timer))
         let p8 = deploy('rewards.ride'     , 3400000, this.seeds.staking     , 'Staking', this.isLocal, address(this.seeds.timer))
+        let p9 = deploy('manager.ride'     , 3400000, this.seeds.manager     , 'Manager', this.isLocal, address(this.seeds.manager))
 
         let period = Math.floor((new Date()).getTime() / 1000 / 604800)
 
@@ -154,7 +161,7 @@ class Environment {
         await broadcast(seedOracleTx)
         console.log(`Seed oracle in ${seedOracleTx.id}`)
 
-        await Promise.all([p1, p2, p4, p5, p6, p7, p8, seedOracleTx])
+        await Promise.all([p1, p2, p4, p5, p6, p7, p8, p9, seedOracleTx])
         
         let initTxs = []
 
@@ -232,6 +239,15 @@ class Environment {
 
             console.log(`setStakingAddress in ${setStakingAddressTx.id}`)
 
+
+            const setManagerAddressTx = await invoke({
+                dApp: address(this.seeds.coordinator),
+                functionName: "setManager",
+                arguments: [ address(this.seeds.manager) ]
+            }, this.seeds.admin)
+
+            console.log(`setStakingAddress in ${setManagerAddressTx.id}`)
+
             initTxs.push(waitForTx(setInsuranceFundTx.id))
             initTxs.push(waitForTx(setQuoteAssetTx.id))
             initTxs.push(waitForTx(setGovAssetTx.id))
@@ -240,6 +256,7 @@ class Environment {
             initTxs.push(waitForTx(setOrdersTx.id))
             initTxs.push(waitForTx(setReferralTx.id))
             initTxs.push(waitForTx(setFarmingTx.id))
+            initTxs.push(waitForTx(setManagerAddressTx.id))
         }
 
         // Init insurance
@@ -325,6 +342,22 @@ class Environment {
             console.log('Farming initialized in ' + initFarmingTx.id)
         }
         
+        // Init manager
+        {
+            const initManagerTx = await invoke({
+                dApp: address(this.seeds.manager),
+                functionName: "initialize",
+                arguments: [ 
+                    address(this.seeds.coordinator),
+                    address(this.seeds.vires),
+                    this.assets.neutrino,
+                    address(this.seeds.vires),
+                ]
+            }, this.seeds.admin)
+
+            initTxs.push(waitForTx(initManagerTx.id))
+            console.log('Manager initialized in ' + initManagerTx.id)
+        }
 
         await Promise.all(initTxs)
 
@@ -453,6 +486,52 @@ class Environment {
 
             await waitForTx(initFarmingTx.id)
             console.log('Farming initialized in ' + initFarmingTx.id)
+        }
+    }
+
+    async deployManager(_vires, _usdn, _viresUsdnVires) {
+        if (!this.seeds.manager) {
+            throw Error(`No seed for Manager contract`)
+        }
+
+        if (!_vires || !_usdn || !_viresUsdnVires) {
+            throw Error(`Invalid deployManager params`)
+        }
+
+        let coordinatorAddress = this.addresses.coordinator || address(this.seeds.coordinator)
+        let managerAddress = address(this.seeds.manager)
+        let fee = 3400000
+
+        await this.ensureDeploymentFee(managerAddress, fee)
+
+        await deploy('manager.ride', fee, this.seeds.manager, 'Manager')
+
+        let manager = await accountDataByKey(`k_manager_address`, coordinatorAddress).then(x => x && x.value)
+        if (manager !== managerAddress) {
+            const setManagerTx = await invoke({
+                dApp: coordinatorAddress,
+                functionName: "setManager",
+                arguments: [ managerAddress ]
+            }, this.seeds.admin)
+
+            console.log(`setManager in ${setManagerTx.id}`)
+        }
+
+        let initialized = await accountDataByKey(`k_initialized`, managerAddress).then(x => x && x.value)
+        if (!initialized) {
+            const initManagerTx = await invoke({
+                dApp: managerAddress,
+                functionName: "initialize",
+                arguments: [ 
+                    coordinatorAddress,
+                    _vires,
+                    _usdn,
+                    _viresUsdnVires
+                ]
+            }, this.seeds.admin)
+
+            await waitForTx(initManagerTx.id)
+            console.log('Manager initialized in ' + initManagerTx.id)
         }
     }
 
@@ -672,6 +751,18 @@ class AMM {
     async upgrade() {
         console.log(`Upgrading AMM ${this.address}`)
         return this.e.upgradeContract('vAMM2.ride', this.address, 6000000)
+    }
+
+    async migrateLiquidity() {
+        let tx = await invoke({
+            dApp: this.address,
+            functionName: "migrateLiquidity",
+            arguments: [],
+            payment: []
+        }, this.e.seeds.admin)
+
+        await waitForTx(tx.id)
+        return tx
     }
 
     async updateSettings(update) {
@@ -1032,8 +1123,26 @@ class AMM {
 
 class Insurance {
 
-    constructor(e) {
+    constructor(e, address) {
         this.e = e
+        this.address = address
+    }
+
+    async upgrade() {
+        console.log(`Upgrading Insurance ${this.address}`)
+        return this.e.upgradeContract('insurance.ride', this.address, 3700000)
+    }
+
+    async migrateLiquidity() {
+        let tx = await invoke({
+            dApp: this.address,
+            functionName: "migrateLiquidity",
+            arguments: [],
+            payment: []
+        }, this.e.seeds.admin)
+
+        await waitForTx(tx.id)
+        return tx
     }
 
     async deposit(_amount) {
@@ -1380,6 +1489,18 @@ class Staking {
     async upgrade() {
         console.log(`Upgrading Rewards ${this.address}`)
         return this.e.upgradeContract('rewards.ride', this.address, 3700000)
+    }
+
+    async migrateLiquidity() {
+        let tx = await invoke({
+            dApp: this.address,
+            functionName: "migrateLiquidity",
+            arguments: [],
+            payment: []
+        }, this.e.seeds.admin)
+
+        await waitForTx(tx.id)
+        return tx
     }
 
     async stake(_amount) {

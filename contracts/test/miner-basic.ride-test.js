@@ -24,7 +24,7 @@ describe('Miner should compute and distribute m rewards', async function () {
 
     before(async function () {
         await setupAccounts({
-            admin: 0.1 * wvs,
+            admin: 1 * wvs,
             amm: 0.2 * wvs,
             trader1: 0.2 * wvs,
             trader2: 0.2 * wvs,

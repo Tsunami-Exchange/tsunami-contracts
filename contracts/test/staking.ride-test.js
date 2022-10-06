@@ -27,7 +27,7 @@ describe('Staking should allow', async function () {
 
     before(async function () {
         await setupAccounts({
-            admin: 0.1 * wvs,
+            admin: 1 * wvs,
             staker1: 0.1 * wvs,
             staker2: 0.1 * wvs,
             rewardPayer: 0.1 * wvs
