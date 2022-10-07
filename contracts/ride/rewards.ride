@@ -312,9 +312,7 @@
 
   @Callable(i)
   func ackRewards() = {
-    let currentBalance = assetBalance(this, quoteAsset()).usdnToDecimals()
-    let _rewardBalance = rewardBalance()
-    let rewardDelta = currentBalance - _rewardBalance
+    let rewardDelta = assetBalance(this, quoteAsset()).usdnToDecimals()
     if (rewardDelta <= 0) then {
       throw("Invalid ackRewards params")
     } else {

@@ -9,7 +9,7 @@ const migrate = async(e) => {
         loadAddress("viresUsdnVault")
     )
     await e.staking.upgrade()
-    //await e.staking.migrateLiquidity()
+    await e.staking.migrateLiquidity()
     await e.insurance.upgrade() 
     await e.insurance.migrateLiquidity()
 
