@@ -1881,21 +1881,24 @@ func adjustPeg(_price: Int) = {
 func migrateLiquidity() = {
   let amount = cbalance()
 
-  strict unstake = invoke(
-    quoteAssetStaking(),
-    "unlockNeutrino",
-    [amount, quoteAsset().toBase58String()],
+  if (amount > 0) then {
+    strict unstake = invoke(
+      quoteAssetStaking(),
+      "unlockNeutrino",
+      [amount, quoteAsset().toBase58String()],
+      []
+    )
+
+    strict stake = invoke(
+      managerAddress(),
+      "deposit",
+      [],
+      [AttachedPayment(quoteAsset(),amount)]
+    )
     []
-  )
-
-  strict stake = invoke(
-    managerAddress(),
-    "deposit",
-    [],
-    [AttachedPayment(quoteAsset(),amount)]
-  )
-
-  []
+  } else {
+    []
+  }
 }
 
 @Callable(i)
