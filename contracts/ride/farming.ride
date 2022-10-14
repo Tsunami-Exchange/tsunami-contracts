@@ -237,8 +237,7 @@ func setSwap(
 
     let _staker = i.caller.toString()
     if (
-      _amount > balanceOf(_staker)
-      || i.payments != []
+      i.payments != []
       || !initialized()
     ) then {
       throw("Invalid unStake parameters")
@@ -250,24 +249,42 @@ func setSwap(
           stakerRewardPerTokenPaid
         ) = updateReward(_staker, 0)
 
-        strict doUnStake = invoke(
-          stakingAddress(), 
-          "unStake", 
-          [_amount], 
-          []
-        )
+        if (_amount > balanceOf(_staker) + stakerEarned) then {
+          throw("Invalid unStake parameters")
+        } else {
+          strict doUnStake = invoke(
+            stakingAddress(), 
+            "unStake", 
+            [_amount], 
+            []
+          )
 
-        updateUserRewards(_staker, stakerEarned, stakerRewardPerTokenPaid)
-        ++
-        updateRewardPerTokenStored(newRewardPerTokenStored)
-        ++
-        updateTime(newLastUpdateTime, periodFinish())
-        ++
-        updateBalance(_staker, -_amount)
-        ++
-        [
-          ScriptTransfer(i.caller, _amount, governanceAsset())
-        ]
+          let rewardChange = if (balanceOf(_staker) >= _amount) then {
+            0
+          } else {
+            _amount - balanceOf(_staker)
+          }
+
+          let balanceChange = if (balanceOf(_staker) >= _amount) then {
+            _amount
+          } else {
+            balanceOf(_staker)
+          }
+
+          updateUserRewards(_staker, stakerEarned - rewardChange, stakerRewardPerTokenPaid)
+          ++
+          updateRewardPerTokenStored(newRewardPerTokenStored)
+          ++
+          updateTime(newLastUpdateTime, periodFinish())
+          ++
+          updateBalance(_staker, -balanceChange)
+          ++
+          updateRewardBalance(-rewardChange)
+          ++
+          [
+            ScriptTransfer(i.caller, _amount, governanceAsset())
+          ]
+        }
     }
   }
 

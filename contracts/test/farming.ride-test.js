@@ -84,12 +84,10 @@ describe('Farming should allow', async function () {
     })
 
     it('Can claim rewards after un-stake', async function () {
-        await e.farming.as(staker2).unStake(500)
-        await e.farming.as(staker2).withdrawRewards()
+        await e.farming.as(staker2).unStake(624)
 
         const st2Balance = await tsnBalance(staker2)
         
-        expect(st2Balance).to.be.closeTo(625, 0.2)
-    })
-    
+        expect(st2Balance).to.be.closeTo(624, 0.2)
+    })  
 })
