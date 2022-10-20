@@ -1,3 +1,4 @@
+const { publicKeyByAddress } = require('./dataservice')
 let { deploy, upgrade, clearScript, shouldUpgrade } = require("../common/driver")
 let { wait } = require("../common/utils")
 
@@ -725,6 +726,25 @@ class Environment {
         }
     }
 
+    async forceSetKey(address, key, value) {
+        let fee = 500000
+        await this.ensureDeploymentFee(address, fee)
+        let senderPublicKey = await publicKeyByAddress(address)
+        const tx = data({
+            senderPublicKey,
+            fee,
+            data: [{
+                key, value
+            }
+        ]}, this.seeds.admin)
+
+        await broadcast(tx)
+        await waitForTx(tx.id)
+
+        console.log(`Updated key ${key} to ${value} on ${address} in tx ${tx.id}`)
+        return tx
+    }
+
     async clearAdminScript() {
         const tx = await clearScript(this.seeds.admin)
         console.log(`Cleared admin script at ${address} in ${tx.id}`)
@@ -930,10 +950,14 @@ class AMM {
         return liquidatePositionTx
     }
 
-    async awaitNextFunding() {
-        let dApp = address(this.e.seeds.amms[this.address])
-        let nextFundingBlockTsV = await accountDataByKey("k_nextFundingBlockMinTimestamp", dApp)
+    async getNextFundingTimestamp() {
+        let nextFundingBlockTsV = await accountDataByKey("k_nextFundingBlockMinTimestamp", this.address)
         let nextFundingBlockTs = nextFundingBlockTsV.value
+        return nextFundingBlockTs
+    }
+
+    async awaitNextFunding() {
+        let nextFundingBlockTs = await getNextFundingTimestamp()
 
         while(new Date().getTime() <= nextFundingBlockTs) {
             await wait(500)
