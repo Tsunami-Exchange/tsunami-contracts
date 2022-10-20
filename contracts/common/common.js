@@ -76,6 +76,7 @@ class Environment {
             referral:       0.05 * wvs,
             farming:        0.05 * wvs,
             manager:        0.05 * wvs,
+            housekeeper:    0.05 * wvs,
         });
 
         this.seeds.coordinator  = accounts.coordinator
@@ -87,6 +88,8 @@ class Environment {
         this.seeds.referral     = accounts.referral
         this.seeds.farming      = accounts.farming
         this.seeds.manager      = accounts.manager
+        this.seeds.housekeeper  = accounts.housekeeper
+        
 
         if (this.isLocal) {
             await setupAccounts({
@@ -139,14 +142,15 @@ class Environment {
             console.log(`USDN Staking: ${this.addresses.neutrinoStaking}`)
         }
 
-        let p1 = deploy('coordinator.ride' , 3400000, this.seeds.coordinator , 'Coordinator')
-        let p2 = deploy('insurance.ride'   , 3400000, this.seeds.insurance   , 'Insurance Fund')
-        let p4 = deploy('mining.ride'      , 3400000, this.seeds.miner       , 'Miner', this.isLocal, address(this.seeds.timer))
-        let p5 = deploy('orders.ride'      , 3400000, this.seeds.orders      , 'Orders', this.isLocal, address(this.seeds.timer))
-        let p6 = deploy('referral.ride'    , 3400000, this.seeds.referral    , 'Referral', this.isLocal, address(this.seeds.timer))
-        let p7 = deploy('farming.ride'     , 3400000, this.seeds.farming     , 'Farming', this.isLocal, address(this.seeds.timer))
-        let p8 = deploy('rewards.ride'     , 3400000, this.seeds.staking     , 'Staking', this.isLocal, address(this.seeds.timer))
-        let p9 = deploy('manager.ride'     , 3400000, this.seeds.manager     , 'Manager', this.isLocal, address(this.seeds.manager))
+        let p1 =    deploy('coordinator.ride' , 3400000, this.seeds.coordinator , 'Coordinator')
+        let p2 =    deploy('insurance.ride'   , 3400000, this.seeds.insurance   , 'Insurance Fund')
+        let p4 =    deploy('mining.ride'      , 3400000, this.seeds.miner       , 'Miner', this.isLocal, address(this.seeds.timer))
+        let p5 =    deploy('orders.ride'      , 3400000, this.seeds.orders      , 'Orders', this.isLocal, address(this.seeds.timer))
+        let p6 =    deploy('referral.ride'    , 3400000, this.seeds.referral    , 'Referral', this.isLocal, address(this.seeds.timer))
+        let p7 =    deploy('farming.ride'     , 3400000, this.seeds.farming     , 'Farming', this.isLocal, address(this.seeds.timer))
+        let p8 =    deploy('rewards.ride'     , 3400000, this.seeds.staking     , 'Staking', this.isLocal, address(this.seeds.timer))
+        let p9 =    deploy('manager.ride'     , 3400000, this.seeds.manager     , 'Manager', this.isLocal, address(this.seeds.manager))
+        let p10 =   deploy('housekeeper.ride' , 3400000, this.seeds.housekeeper , 'Housekeeper', this.isLocal, address(this.seeds.housekeeper))
 
         let period = Math.floor((new Date()).getTime() / 1000 / 604800)
 
@@ -163,7 +167,7 @@ class Environment {
         await broadcast(seedOracleTx)
         console.log(`Seed oracle in ${seedOracleTx.id}`)
 
-        await Promise.all([p1, p2, p4, p5, p6, p7, p8, p9, seedOracleTx])
+        await Promise.all([p1, p2, p4, p5, p6, p7, p8, p9, p10, seedOracleTx])
         
         let initTxs = []
 
@@ -250,6 +254,14 @@ class Environment {
 
             console.log(`setStakingAddress in ${setManagerAddressTx.id}`)
 
+            const setHousekeeperAddressTx = await invoke({
+                dApp: address(this.seeds.coordinator),
+                functionName: "setHousekeeper",
+                arguments: [ address(this.seeds.housekeeper) ]
+            }, this.seeds.admin)
+
+            console.log(`setHousekeeper in ${setHousekeeperAddressTx.id}`)
+
             initTxs.push(waitForTx(setInsuranceFundTx.id))
             initTxs.push(waitForTx(setQuoteAssetTx.id))
             initTxs.push(waitForTx(setGovAssetTx.id))
@@ -259,6 +271,7 @@ class Environment {
             initTxs.push(waitForTx(setReferralTx.id))
             initTxs.push(waitForTx(setFarmingTx.id))
             initTxs.push(waitForTx(setManagerAddressTx.id))
+            initTxs.push(waitForTx(setHousekeeperAddressTx.id))
         }
 
         // Init insurance
@@ -361,6 +374,20 @@ class Environment {
             console.log('Manager initialized in ' + initManagerTx.id)
         }
 
+        // Init housekeeper
+        {
+            const initHousekeeperTx = await invoke({
+                dApp: address(this.seeds.housekeeper),
+                functionName: "initialize",
+                arguments: [ 
+                    address(this.seeds.coordinator),
+                ]
+            }, this.seeds.admin)
+
+            initTxs.push(waitForTx(initHousekeeperTx.id))
+            console.log('Housekeeper initialized in ' + initHousekeeperTx.id)
+        }
+
         await Promise.all(initTxs)
 
         this.insurance = new Insurance(this)
@@ -369,6 +396,7 @@ class Environment {
         this.referral = new Referral(this)
         this.staking = new Staking(this)
         this.farming = new Farming(this)
+        this.housekeeper = new Housekeeper(this)
 
         console.log(`Environment deployed`)
     }
@@ -488,6 +516,45 @@ class Environment {
 
             await waitForTx(initFarmingTx.id)
             console.log('Farming initialized in ' + initFarmingTx.id)
+        }
+    }
+
+    async deployHousekeeper() {
+        if (!this.seeds.housekeeper) {
+            throw Error(`No seed for Housekeeper contract`)
+        }
+
+        let coordinatorAddress = this.addresses.coordinator || address(this.seeds.coordinator)
+        let housekeeperAddress = address(this.seeds.housekeeper)
+        let fee = 3400000
+
+        await this.ensureDeploymentFee(housekeeperAddress, fee)
+
+        await deploy('housekeeper.ride', fee, this.seeds.housekeeper, 'Housekeeper')
+
+        let housekeeper = await accountDataByKey(`k_housekeeper_address`, coordinatorAddress).then(x => x && x.value)
+        if (housekeeper !== housekeeperAddress) {
+            const setHousekeeperTx = await invoke({
+                dApp: coordinatorAddress,
+                functionName: "setHousekeeper",
+                arguments: [ housekeeperAddress ]
+            }, this.seeds.admin)
+
+            console.log(`setHousekeeper in ${setHousekeeperTx.id}`)
+        }
+
+        let initialized = await accountDataByKey(`k_initialized`, housekeeperAddress).then(x => x && x.value)
+        if (!initialized) {
+            const initHousekeeperTx = await invoke({
+                dApp: housekeeperAddress,
+                functionName: "initialize",
+                arguments: [ 
+                    coordinatorAddress
+                ]
+            }, this.seeds.admin)
+
+            await waitForTx(initHousekeeperTx.id)
+            console.log('Housekeeper initialized in ' + initHousekeeperTx.id)
         }
     }
 
@@ -957,7 +1024,7 @@ class AMM {
     }
 
     async awaitNextFunding() {
-        let nextFundingBlockTs = await getNextFundingTimestamp()
+        let nextFundingBlockTs = await this.getNextFundingTimestamp()
 
         while(new Date().getTime() <= nextFundingBlockTs) {
             await wait(500)
@@ -1646,6 +1713,36 @@ class Farming {
             dApp: address(this.e.seeds.farming),
             functionName: "ackRewards",
             arguments: [],
+            payment: []
+        }, this.e.seeds.admin)
+
+        await waitForTx(tx.id)
+        return tx
+    }
+}
+
+class Housekeeper {
+
+    constructor(e, address, sender) {
+        this.e = e
+        this.address = address
+        this.sender = sender
+    }
+
+    as(_sender) {
+        return new Housekeeper(this.e, address, _sender)
+    }
+
+    async upgrade() {
+        console.log(`Upgrading Housekeeper ${this.address}`)
+        return this.e.upgradeContract('housekeeper.ride', this.address, 3700000)
+    }
+
+    async performHousekeeping(amms) {
+        let tx = await invoke({
+            dApp: address(this.e.seeds.housekeeper),
+            functionName: "performHousekeeping",
+            arguments: [amms],
             payment: []
         }, this.e.seeds.admin)
 

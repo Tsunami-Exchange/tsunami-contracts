@@ -13,6 +13,7 @@ let k_quote_asset = "k_quote_asset"               # Address of quote asset (USDN
 let k_quote_staking = "k_quote_staking"           # Address of quote asset staking contract (USDN staking in our case)
 let k_staking_address = "k_staking_address"       # Address that should receive staking benefits
 let k_farming_address = "k_farming_address"       # Address that is used to farm more TSN
+let k_housekeeper_address = "k_housekeeper_address" # Address that is used to perform housekeeping
 let k_amm = "k_amm"                               # Marks valid AMM addresses (for insurance)
 let k_amm_data = "k_amm_data"                     # Contains data of AMM (for UI)
 let k_governance_asset = "k_gov_asset"            # Governance (TSN) asset address
@@ -101,6 +102,16 @@ func setManager(
   let address = getAddressIfValid(_manager)
   [
     StringEntry(k_manager_address, address)
+  ]
+})
+
+@Callable(i)
+func setHousekeeper(
+  _housekeeper: String
+) = isAdmin(i).valueOrElse({
+  let address = getAddressIfValid(_housekeeper)
+  [
+    StringEntry(k_housekeeper_address, address)
   ]
 })
 
