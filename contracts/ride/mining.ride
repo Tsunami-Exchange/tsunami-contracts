@@ -258,6 +258,17 @@
     that.getBoolean(key).valueOrElse(false)
   }
 
+  func adjust(_amount: Int, _assetId: String) = {
+    let asset = assetInfo(fromBase58String(_assetId)).valueOrErrorMessage("Invalid asset id")
+    let decimals = asset.decimals
+
+    if (decimals == 6) then {
+      _amount / 100
+    } else {
+      _amount
+    }
+  }
+
   func claimAllRewardForPeriodForTrader(_trader: String, _assetId: String, _periods: String) = {
     let periods = strToList(_periods)
 
@@ -287,7 +298,7 @@
       [
         ScriptTransfer(
           addressFromStringValue(_trader),
-          amount,
+          amount.adjust(_assetId),
           fromBase58String(_assetId)
         ),
         IntegerEntry(

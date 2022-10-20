@@ -42,6 +42,7 @@ class Environment {
         const stakingAddress = await accountDataByKey(`k_staking_address`, coordinatorAddress).then(x => x && x.value)
         const farmingAddress = await accountDataByKey(`k_farming_address`, coordinatorAddress).then(x => x && x.value)
         const referralAddress = await accountDataByKey(`k_referral_address`, coordinatorAddress).then(x => x && x.value)
+        const minerAddress = await accountDataByKey(`k_miner_address`, coordinatorAddress).then(x => x && x.value)
 
         let allKeys = await accountData(coordinatorAddress)
         allKeys = Object.keys(allKeys).map(k => allKeys[k])
@@ -54,7 +55,7 @@ class Environment {
 
         this.amms = ammAddresses.map(x => new AMM(this, x))
         this.insurance = new Insurance(this, insuranceAddress)
-        this.miner = new Miner(this)
+        this.miner = new Miner(this, minerAddress)
         this.staking = new Staking(this, stakingAddress)
         this.farming = new Farming(this, farmingAddress)
         this.referral = new Referral(this, referralAddress)
@@ -1169,13 +1170,19 @@ class Insurance {
 
 class Miner {
 
-    constructor(e, sender) {
+    constructor(e, address, sender) {
         this.e = e
+        this.address = address
         this.sender = sender
     }
 
     as(_sender) {
-        return new Miner(this.e, _sender)
+        return new Miner(this.e, this.address, _sender)
+    }
+
+    async upgrade() {
+        console.log(`Upgrading Miner ${this.address}`)
+        return this.e.upgradeContract('mining.ride', this.address, 3700000)
     }
 
     async notifyFees(_trader, _fee) {

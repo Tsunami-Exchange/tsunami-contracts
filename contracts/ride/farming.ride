@@ -345,7 +345,7 @@ func setSwap(
       case _ => throw("Reward amount not a number")
     }
 
-    if (rewardAmount == 0) then {
+    if (rewardAmount < 1 * DECIMAL_UNIT) then {
       []
     } else {
       strict doClaimRewards = invoke(

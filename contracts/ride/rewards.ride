@@ -313,8 +313,8 @@
   @Callable(i)
   func ackRewards() = {
     let rewardDelta = assetBalance(this, quoteAsset()).usdnToDecimals()
-    if (rewardDelta <= 0) then {
-      throw("Invalid ackRewards params")
+    if (rewardDelta < 1 * DECIMAL_UNIT) then {
+      []
     } else {
       strict stake = invoke(
         managerAddress(),
