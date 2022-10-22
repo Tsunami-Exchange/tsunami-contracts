@@ -1,0 +1,81 @@
+  {-# STDLIB_VERSION 6 #-}
+  {-# CONTENT_TYPE DAPP #-}
+  {-# SCRIPT_TYPE ACCOUNT #-}
+
+  # Initialization status
+  let k_initialized = "k_initialized"
+
+  # Coordinator
+  let k_coordinatorAddress = "k_coordinatorAddress"
+  let k_admin_public_key = "k_admin_public_key" 
+  let k_admin_address = "k_admin_address"
+
+  # Own constants  
+  let k_rewarder_public_key = "k_rewarder_public_key"
+  let k_spent = "k_spent"
+
+  ##### Coordinator constants #####
+  func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
+  func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
+  func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
+  func rewarderPublicKey() = fromBase58String(this.getStringValue(k_rewarder_public_key))
+
+  func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
+
+  # Key functions
+  func getSpentKey(_signature: String) = {
+    k_spent + "," + _signature
+  }
+
+  func isSpent(_signature: String) = {
+    let key = getSpentKey(_signature)
+    this.getBoolean(key).valueOrElse(false)
+  }
+
+  @Callable(i)
+  func initialize(
+    _coordinator: String,
+    _rewarderPublicKey: String
+  ) = {
+    if (initialized()) then {
+      throw("Already initialized")
+    } else {
+      [
+        StringEntry(k_coordinatorAddress, _coordinator),
+        StringEntry(k_rewarder_public_key, _rewarderPublicKey),
+        BooleanEntry(k_initialized, true)
+      ]
+    }
+  }
+
+  @Callable(i)
+  func claimPrize(
+    _nonce: String,
+    _recipient: String,
+    _assetId: String,
+    _amount: Int,
+    _signature: String
+  ) = {
+    let message = (
+     _nonce
+     + "," + _recipient
+     + "," + _assetId
+     + "," + _amount.toString()
+    ).toBytes()
+
+    if (
+      !sigVerify(message, fromBase58String(_signature), rewarderPublicKey())
+      || i.caller.toString() != _recipient
+      || isSpent(_signature)
+    ) then {
+      throw("Invalid claimPrize parameters")
+    } else {
+      [
+        BooleanEntry(getSpentKey(_signature), true),
+        ScriptTransfer(addressFromStringValue(_recipient), _amount, fromBase58String(_assetId))
+      ]
+    }
+  }
+
+  @Verifier(tx)
+  func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], adminPublicKey())

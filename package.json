@@ -17,6 +17,7 @@
     "ride-test:staking": "cd contracts && surfboard test staking.ride-test.js",
     "ride-test:farming": "cd contracts && surfboard test farming.ride-test.js",
     "ride-test:housekeeper": "cd contracts && surfboard test housekeeper.ride-test.js",
+    "ride-test:prizes": "cd contracts && surfboard test prizes.ride-test.js",
     "ride-test:vAMM2": "npm-run-all ride-test:vAMM2:*",
     "ride-test:miner": "npm-run-all ride-test:miner:*",
     "ride-test": "npm-run-all ride-test:vAMM2 ride-test:miner",

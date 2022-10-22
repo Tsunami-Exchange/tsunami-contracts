@@ -77,6 +77,7 @@ class Environment {
             farming:        0.05 * wvs,
             manager:        0.05 * wvs,
             housekeeper:    0.05 * wvs,
+            prizes:         0.05 * wvs,
         });
 
         this.seeds.coordinator  = accounts.coordinator
@@ -89,6 +90,7 @@ class Environment {
         this.seeds.farming      = accounts.farming
         this.seeds.manager      = accounts.manager
         this.seeds.housekeeper  = accounts.housekeeper
+        this.seeds.prizes       = accounts.prizes
         
 
         if (this.isLocal) {
@@ -151,6 +153,7 @@ class Environment {
         let p8 =    deploy('rewards.ride'     , 3400000, this.seeds.staking     , 'Staking', this.isLocal, address(this.seeds.timer))
         let p9 =    deploy('manager.ride'     , 3400000, this.seeds.manager     , 'Manager', this.isLocal, address(this.seeds.manager))
         let p10 =   deploy('housekeeper.ride' , 3400000, this.seeds.housekeeper , 'Housekeeper', this.isLocal, address(this.seeds.housekeeper))
+        let p11 =   deploy('prizes.ride'      , 3400000, this.seeds.prizes      , 'Prizes', this.isLocal, address(this.seeds.housekeeper))
 
         let period = Math.floor((new Date()).getTime() / 1000 / 604800)
 
@@ -167,7 +170,7 @@ class Environment {
         await broadcast(seedOracleTx)
         console.log(`Seed oracle in ${seedOracleTx.id}`)
 
-        await Promise.all([p1, p2, p4, p5, p6, p7, p8, p9, p10, seedOracleTx])
+        await Promise.all([p1, p2, p4, p5, p6, p7, p8, p9, p10, p11, seedOracleTx])
         
         let initTxs = []
 
@@ -262,6 +265,14 @@ class Environment {
 
             console.log(`setHousekeeper in ${setHousekeeperAddressTx.id}`)
 
+            const setPrizesAddressTx = await invoke({
+                dApp: address(this.seeds.coordinator),
+                functionName: "setPrizes",
+                arguments: [ address(this.seeds.prizes) ]
+            }, this.seeds.admin)
+
+            console.log(`setPrizes in ${setPrizesAddressTx.id}`)
+
             initTxs.push(waitForTx(setInsuranceFundTx.id))
             initTxs.push(waitForTx(setQuoteAssetTx.id))
             initTxs.push(waitForTx(setGovAssetTx.id))
@@ -272,6 +283,7 @@ class Environment {
             initTxs.push(waitForTx(setFarmingTx.id))
             initTxs.push(waitForTx(setManagerAddressTx.id))
             initTxs.push(waitForTx(setHousekeeperAddressTx.id))
+            initTxs.push(waitForTx(setPrizesAddressTx.id))
         }
 
         // Init insurance
@@ -388,6 +400,21 @@ class Environment {
             console.log('Housekeeper initialized in ' + initHousekeeperTx.id)
         }
 
+        // Init prizes
+        {
+            const initPrizesTx = await invoke({
+                dApp: address(this.seeds.prizes),
+                functionName: "initialize",
+                arguments: [ 
+                    address(this.seeds.coordinator),
+                    publicKey(this.seeds.admin)
+                ]
+            }, this.seeds.admin)
+
+            initTxs.push(waitForTx(initPrizesTx.id))
+            console.log('Prizes initialized in ' + initPrizesTx.id)
+        }
+
         await Promise.all(initTxs)
 
         this.insurance = new Insurance(this)
@@ -397,6 +424,7 @@ class Environment {
         this.staking = new Staking(this)
         this.farming = new Farming(this)
         this.housekeeper = new Housekeeper(this)
+        this.prizes = new Prizes(this)
 
         console.log(`Environment deployed`)
     }
@@ -1745,6 +1773,37 @@ class Housekeeper {
             arguments: [amms],
             payment: []
         }, this.e.seeds.admin)
+
+        await waitForTx(tx.id)
+        return tx
+    }
+}
+
+class Prizes {
+
+    constructor(e, address, sender) {
+        this.e = e
+        this.address = address
+        this.sender = sender
+    }
+
+    as(_sender) {
+        return new Prizes(this.e, address, _sender)
+    }
+
+    async upgrade() {
+        console.log(`Upgrading Prizes ${this.address}`)
+        return this.e.upgradeContract('prizes.ride', this.address, 3700000)
+    }
+
+    async claimPrize(nonce, recipient, assetId, amount, signature) {
+        console.log(`${nonce} ${recipient} ${assetId} ${amount} ${signature}`)
+        let tx = await invoke({
+            dApp: address(this.e.seeds.prizes),
+            functionName: "claimPrize",
+            arguments: [nonce, recipient, assetId, amount, signature],
+            payment: []
+        }, this.sender)
 
         await waitForTx(tx.id)
         return tx
