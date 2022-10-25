@@ -237,6 +237,21 @@
     }
   }
 
+  func rewardForAmmInAssetInPeriod(_amm: String, _assetId: String, _weekId: Int) = {
+    let rewardAssetRate = getAmmRewardRate(_amm, _assetId)
+    if (rewardAssetRate == 0) then {
+      0
+    } else {
+      let totalFeesInPeriod = getTotalFeesInPeriod(_amm, _weekId)
+      let rewardAssetPrice = getRewardAssetPrice(_assetId, _weekId)
+      let maxAmountOfAssetToDistribute = getMaxAmountOfAssetToDistribute(_amm, _assetId, _weekId)
+      let totalAssetToDistribute = totalFeesInPeriod.muld(rewardAssetRate).divd(rewardAssetPrice)
+      let actualTotalAssetToDistribute = minv(totalAssetToDistribute, maxAmountOfAssetToDistribute)
+
+      actualTotalAssetToDistribute
+    }
+  }
+
   func totalRewardForTraderInAssetInPeriod(_trader: String, _assetId: String, _weekId: Int) = {
     let amms = getAmms()
     func compute(_acc: Int, _amm: String) = _acc + rewardForTraderInAssetInPeriod(_amm, _trader, _assetId, _weekId)
@@ -427,6 +442,12 @@
   func view_claimAllRewards(_trader: String, _assetId: String, _periods: String) = {
     let result = claimAllRewardForPeriodForTrader(_trader, _assetId, _periods)
     throw(result._1.toString() + "," + getTotalClaimedForTraderAndAsset(_trader, _assetId).toString())
+  }
+
+  @Callable(i)
+  func view_earnedRewards(_amm: String, _assetId: String, _period: Int) = {
+    let result = rewardForAmmInAssetInPeriod(_amm, _assetId, _period)
+    throw(result.toString())
   }
 
   @Callable(i)
