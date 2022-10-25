@@ -617,6 +617,94 @@ class Environment {
         }
     }
 
+    async deployPrizes(rewarderPublicKey) {
+        if (!this.seeds.prizes) {
+            throw Error(`No seed for Prizes contract`)
+        }
+
+        if (!rewarderPublicKey) {
+            throw Error(`No rewarder public key`)
+        }
+
+        let coordinatorAddress = this.addresses.coordinator || address(this.seeds.coordinator)
+        let prizesAddress = address(this.seeds.prizes)
+        let fee = 3400000
+
+        await this.ensureDeploymentFee(prizesAddress, fee)
+
+        await deploy('prizes.ride', fee, this.seeds.prizes, 'Prizes')
+
+        let prizes = await accountDataByKey(`k_prizes_address`, coordinatorAddress).then(x => x && x.value)
+        if (prizes !== prizesAddress) {
+            const setPrizesTx = await invoke({
+                dApp: coordinatorAddress,
+                functionName: "setPrizes",
+                arguments: [ prizesAddress ]
+            }, this.seeds.admin)
+
+            console.log(`setPrizes in ${setPrizesTx.id}`)
+        }
+
+        let initialized = await accountDataByKey(`k_initialized`, prizesAddress).then(x => x && x.value)
+        if (!initialized) {
+            const initPrizesTx = await invoke({
+                dApp: prizesAddress,
+                functionName: "initialize",
+                arguments: [ 
+                    coordinatorAddress,
+                    rewarderPublicKey
+                ]
+            }, this.seeds.admin)
+
+            await waitForTx(initPrizesTx.id)
+            console.log('Prizes initialized in ' + initPrizesTx.id)
+        }
+    }
+
+    async deployNfts(marketplaceAddress) {
+        if (!this.seeds.nfts) {
+            throw Error(`No seed for NFT Manager contract`)
+        }
+
+        if (!marketplaceAddress) {
+            throw Error(`No marketplace address`)
+        }
+
+        let coordinatorAddress = this.addresses.coordinator || address(this.seeds.coordinator)
+        let nftsAddress = address(this.seeds.nfts)
+        let fee = 3400000
+
+        await this.ensureDeploymentFee(nftsAddress, fee)
+
+        await deploy('nfts.ride', fee, this.seeds.nfts, 'NFT Manager')
+
+        let nfts = await accountDataByKey(`k_nft_manager_address`, coordinatorAddress).then(x => x && x.value)
+        if (nfts !== nftsAddress) {
+            const setNftManagerTx = await invoke({
+                dApp: coordinatorAddress,
+                functionName: "setNftManager",
+                arguments: [ nftsAddress ]
+            }, this.seeds.admin)
+
+            console.log(`setNftManager in ${setNftManagerTx.id}`)
+        }
+
+        let initialized = await accountDataByKey(`k_initialized`, nftsAddress).then(x => x && x.value)
+        if (!initialized) {
+            const initNftsTx = await invoke({
+                dApp: nftsAddress,
+                functionName: "initialize",
+                arguments: [ 
+                    coordinatorAddress,
+                    marketplaceAddress
+                ]
+            }, this.seeds.admin)
+
+            await waitForTx(initNftsTx.id)
+            console.log('NFT Manager initialized in ' + initNftsTx.id)
+        }
+    }
+
     async deployManager(_vires, _usdn, _viresUsdnVires) {
         if (!this.seeds.manager) {
             throw Error(`No seed for Manager contract`)
