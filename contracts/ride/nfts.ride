@@ -1,0 +1,169 @@
+  {-# STDLIB_VERSION 6 #-}
+  {-# CONTENT_TYPE DAPP #-}
+  {-# SCRIPT_TYPE ACCOUNT #-}
+
+  # Initialization status
+  let k_initialized = "k_initialized"
+
+  # Coordinator
+  let k_coordinatorAddress = "k_coordinatorAddress"
+  let k_admin_public_key = "k_admin_public_key" 
+  let k_admin_address = "k_admin_address"
+  let k_prizes_address = "k_prizes_address"
+
+  # Own constants  
+  let k_nft_creator_address = "k_nft_creator_address"
+  # let k_minter = "k_minter"
+  let k_token_param = "k_token_param"
+  let k_token_type = "k_token_type"
+  let k_meta_type = "k_meta_type"
+  let k_type_counter = "k_type_counter"
+  
+
+  ##### Coordinator constants #####
+  func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
+  func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
+  func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
+
+  func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
+  func nftCreatorAddress() = addressFromStringValue(this.getString(k_nft_creator_address).valueOrErrorMessage("No NFT creator address"))
+  # func minterAddress() = addressFromStringValue(this.getStringValue(k_nft_creator_address))
+  func prizesAddress() = addressFromString(coordinator().getString(k_prizes_address).valueOrErrorMessage("No Prizes address set"))
+
+  # Key functions
+  func getMetaTypeKey(_type: String) = {
+    k_meta_type + "_" + _type
+  }
+
+  func getTokenTypeKey(_tokenId: String) = {
+    k_token_type + "_" + _tokenId
+  }
+
+  func getTokenParamKey( _tokenId: String) = {
+    k_token_param + "_" + _tokenId
+  }
+
+  func getTypeCounterKey(_type: String) = {
+    k_type_counter + "_" + _type
+  }
+
+  # View functions
+  func getMetaType(_type: String) = {
+    let key = getMetaTypeKey(_type)
+    let typeData = this.getString(key).valueOrErrorMessage("Unknown type: " + _type)
+    let parsed = typeData.split(",")
+    let name = parsed.getElement(0)
+    let description = parsed.getElement(1)
+    let nftImageLink = parsed.getElement(2)
+    let collection = parsed.getElement(3)
+    let typeValue = parsed.getElement(4).parseInt().valueOrErrorMessage("Invalid type value")
+
+    (name, description, nftImageLink, collection, typeValue)
+  }
+
+  func getTypeCounter(_type: String) = {
+    let key = getTypeCounterKey(_type)
+    this.getInteger(key).valueOrElse(0)
+  }
+
+  let iterator = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+  @Callable(i)
+  func initialize(
+    _coordinator: String,
+    _nftCreatorAddress: String
+    # _nftMinter: String
+  ) = {
+    if (initialized()) then {
+      throw("Already initialized")
+    } else {
+      [
+        StringEntry(k_coordinatorAddress, _coordinator),
+        StringEntry(k_nft_creator_address, _nftCreatorAddress),
+        # StringEntry(k_minter, _nftMinter),
+        BooleanEntry(k_initialized, true)
+      ]
+    }
+  }
+
+  @Callable(i)
+  func createNftType(
+    _name: String,
+    _description: String,
+    _nftImageLink: String,
+    _collection: String,
+    _type: String,
+    _typeValue: Int
+  ) = {
+    if (i.caller != adminAddress()) then {
+        throw("Invalid createNftType parameters")
+    } else {
+        let type = _name + "," + _description + "," + _nftImageLink + "," + _collection + "," + _typeValue.toString()
+        [
+            StringEntry(getMetaTypeKey(_type), type)
+        ]
+    }
+  }
+
+  @Callable(i)
+  func mint(
+    _recipient: String,
+    _type: String,
+    _amount: Int
+  ) = {
+    if (
+        i.caller != prizesAddress()
+        || _amount > 10
+        || _amount < 0
+    ) then {
+        throw("Invalid mint parameters")
+    } else {
+        let (name, description, nftImageLink, collection, typeValue) = getMetaType(_type)
+        let recipientAddress = addressFromStringValue(_recipient)
+        let typeCounter = getTypeCounter(_type)
+
+        func doMint(_acc: (List[ScriptTransfer|StringEntry|IntegerEntry], List[String]), _index: Int) = {
+            if (_index <= _amount) then {
+                let (result, ids) = _acc
+
+                strict stakedNFTId = match (
+                    invoke(
+                        nftCreatorAddress(), 
+                        "createNFT",
+                        [
+                            name + " # " + (typeCounter + _index).toString(), 
+                            description,
+                            nftImageLink, 
+                            collection
+                        ], []
+                    )
+                ) {
+                    case x: String => x
+                    case _ => throw("Something went wrong during the creation of NFT")
+                }
+                
+                let _ids = ids :+ stakedNFTId
+                let _result = result ++ [ 
+                    ScriptTransfer(recipientAddress, 1, fromBase58String(stakedNFTId)),
+                    StringEntry(getTokenTypeKey(stakedNFTId), _type),
+                    IntegerEntry(getTokenParamKey(stakedNFTId), typeValue)
+                ]
+                
+                (_result, _ids)
+            } else {
+                _acc
+            }
+        }
+
+        let result = FOLD<10>(iterator, ([], []), doMint)
+        (
+            result._1 ++ [
+                IntegerEntry(getTypeCounterKey(_type), typeCounter + _amount)
+            ],
+            result._2
+        )
+    }
+  }
+
+  @Verifier(tx)
+  func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], adminPublicKey())

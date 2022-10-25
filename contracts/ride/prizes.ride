@@ -9,6 +9,7 @@
   let k_coordinatorAddress = "k_coordinatorAddress"
   let k_admin_public_key = "k_admin_public_key" 
   let k_admin_address = "k_admin_address"
+  let k_nft_manager_address = "k_nft_manager_address"
 
   # Own constants  
   let k_rewarder_public_key = "k_rewarder_public_key"
@@ -19,8 +20,13 @@
   func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
   func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
   func rewarderPublicKey() = fromBase58String(this.getStringValue(k_rewarder_public_key))
+  func nftManagerAddress() = addressFromString(coordinator().getStringValue(k_nft_manager_address)).valueOrErrorMessage("NFT Manager not set")
 
   func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
+  
+  # Core constants
+  let TYPE_ASSET = "asset"
+  let TYPE_MINT = "mint"
 
   # Key functions
   func getSpentKey(_signature: String) = {
@@ -53,14 +59,14 @@
     _nonce: String,
     _recipient: String,
     _assetId: String,
-    _amount: Int,
+    _amount: String,
     _signature: String
   ) = {
     let message = (
      _nonce
      + "," + _recipient
      + "," + _assetId
-     + "," + _amount.toString()
+     + "," + _amount
     ).toBytes()
 
     if (
@@ -70,9 +76,48 @@
     ) then {
       throw("Invalid claimPrize parameters")
     } else {
+      let assetIds = split(_assetId, ",")
+      let amounts = split(_amount, ",")
+      let recipientAddress = addressFromStringValue(_recipient)
+
+      func zipAndTransfer(acc: (List[ScriptTransfer], Int), nextValue: String) = {
+        let (result, index) = acc
+        let valueParts = nextValue.split(":")
+        let type = valueParts.getElement(0)
+        let assetId = valueParts.getElement(1)
+        let amount = parseIntValue(amounts.getElement(index))
+        if (type == TYPE_ASSET) then {
+          (
+            result :+ ScriptTransfer(recipientAddress, amount, fromBase58String(assetId)),
+            index + 1
+          )
+        } else {
+          if (type == TYPE_MINT) then {
+              strict invokeResult = invoke(
+                    nftManagerAddress(), 
+                    "mint",
+                    [
+                        _recipient,
+                        assetId, 
+                        amount
+                    ], []
+                )
+
+              (
+                result,
+                index + 1
+              )
+          } else {
+            throw("Invalid type: " + type)
+          }
+        }
+      }
+      let result = FOLD<10>(assetIds, ([], 0), zipAndTransfer)
+
+      result._1
+      ++
       [
-        BooleanEntry(getSpentKey(_signature), true),
-        ScriptTransfer(addressFromStringValue(_recipient), _amount, fromBase58String(_assetId))
+        BooleanEntry(getSpentKey(_signature), true)
       ]
     }
   }

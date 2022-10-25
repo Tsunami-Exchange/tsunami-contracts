@@ -78,6 +78,7 @@ class Environment {
             manager:        0.05 * wvs,
             housekeeper:    0.05 * wvs,
             prizes:         0.05 * wvs,
+            nfts:           0.05 * wvs,
         });
 
         this.seeds.coordinator  = accounts.coordinator
@@ -91,6 +92,7 @@ class Environment {
         this.seeds.manager      = accounts.manager
         this.seeds.housekeeper  = accounts.housekeeper
         this.seeds.prizes       = accounts.prizes
+        this.seeds.nfts         = accounts.nfts
         
 
         if (this.isLocal) {
@@ -100,6 +102,7 @@ class Environment {
                 puzzleSwap:         0.15 * wvs,
                 timer:              3    * wvs,
                 vires:              0.15 * wvs,
+                marketplace:        0.15 * wvs,
             });
 
             this.seeds.assetHolder = accounts.assetHolder
@@ -107,6 +110,7 @@ class Environment {
             this.seeds.timer = accounts.timer
             this.seeds.puzzleSwap = accounts.puzzleSwap
             this.seeds.vires = accounts.vires
+            this.seeds.marketplace = accounts.marketplace
 
             // Issue TSN and Neutrino assets
             //
@@ -130,8 +134,9 @@ class Environment {
             let p11 = deploy('mock_neutrinoStaking.ride' , 3400000, this.seeds.neutrinoStaking , 'Mock Neutrino Staking')
             let p12 = deploy('mock_swap.ride' , 3400000, this.seeds.puzzleSwap , 'Mock Puzzle Swap')
             let p13 = deploy('mock_vires.ride' , 3400000, this.seeds.vires , 'Mock Vires')
+            let p14 = deploy('mock_nft.ride' , 3400000, this.seeds.marketplace , 'Mock NFT Marketplace')
 
-            await Promise.all([waitForTx(iTx1.id), waitForTx(iTx2.id, p11, p12, p13)])
+            await Promise.all([waitForTx(iTx1.id), waitForTx(iTx2.id, p11, p12, p13, p14)])
 
             this.assets.tsn         = iTx2.assetId
             this.assets.neutrino    = iTx1.assetId
@@ -154,6 +159,7 @@ class Environment {
         let p9 =    deploy('manager.ride'     , 3400000, this.seeds.manager     , 'Manager', this.isLocal, address(this.seeds.manager))
         let p10 =   deploy('housekeeper.ride' , 3400000, this.seeds.housekeeper , 'Housekeeper', this.isLocal, address(this.seeds.housekeeper))
         let p11 =   deploy('prizes.ride'      , 3400000, this.seeds.prizes      , 'Prizes', this.isLocal, address(this.seeds.housekeeper))
+        let p12 =   deploy('nfts.ride'        , 3400000, this.seeds.nfts        , 'NFT Manager', this.isLocal, address(this.seeds.nfts))
 
         let period = Math.floor((new Date()).getTime() / 1000 / 604800)
 
@@ -170,7 +176,7 @@ class Environment {
         await broadcast(seedOracleTx)
         console.log(`Seed oracle in ${seedOracleTx.id}`)
 
-        await Promise.all([p1, p2, p4, p5, p6, p7, p8, p9, p10, p11, seedOracleTx])
+        await Promise.all([p1, p2, p4, p5, p6, p7, p8, p9, p10, p11, p12, seedOracleTx])
         
         let initTxs = []
 
@@ -273,6 +279,14 @@ class Environment {
 
             console.log(`setPrizes in ${setPrizesAddressTx.id}`)
 
+            const setNftManagerTx = await invoke({
+                dApp: address(this.seeds.coordinator),
+                functionName: "setNftManager",
+                arguments: [ address(this.seeds.nfts) ]
+            }, this.seeds.admin)
+
+            console.log(`setNftManager in ${setNftManagerTx.id}`)
+
             initTxs.push(waitForTx(setInsuranceFundTx.id))
             initTxs.push(waitForTx(setQuoteAssetTx.id))
             initTxs.push(waitForTx(setGovAssetTx.id))
@@ -284,6 +298,7 @@ class Environment {
             initTxs.push(waitForTx(setManagerAddressTx.id))
             initTxs.push(waitForTx(setHousekeeperAddressTx.id))
             initTxs.push(waitForTx(setPrizesAddressTx.id))
+            initTxs.push(waitForTx(setNftManagerTx.id))
         }
 
         // Init insurance
@@ -415,6 +430,21 @@ class Environment {
             console.log('Prizes initialized in ' + initPrizesTx.id)
         }
 
+         // Init NFT Manager
+         {
+            const initNFTManagerTx = await invoke({
+                dApp: address(this.seeds.nfts),
+                functionName: "initialize",
+                arguments: [ 
+                    address(this.seeds.coordinator),
+                    address(this.seeds.marketplace),
+                ]
+            }, this.seeds.admin)
+
+            initTxs.push(waitForTx(initNFTManagerTx.id))
+            console.log('NFT Manager initialized in ' + initNFTManagerTx.id)
+        }
+
         await Promise.all(initTxs)
 
         this.insurance = new Insurance(this)
@@ -425,6 +455,7 @@ class Environment {
         this.farming = new Farming(this)
         this.housekeeper = new Housekeeper(this)
         this.prizes = new Prizes(this)
+        this.nfts = new NFTManager(this)
 
         console.log(`Environment deployed`)
     }
@@ -634,7 +665,7 @@ class Environment {
 
     async deployAmm(_liquidity, _price, options = {}) {
         await setupAccounts({
-            amm: 0.05 * wvs,
+            amm: 0.15 * wvs,
         });
 
         if (!this.seeds.amms) {
@@ -657,7 +688,7 @@ class Environment {
         await broadcast(seedOracleTx)
         console.log(`Seed AMM oracle in ${seedOracleTx.id}`)
 
-        let p3 = deploy('vAMM2.ride', 4900000, ammSeed, 'vAMM', this.isLocal, address(this.seeds.timer))
+        let p3 = deploy('vAMM2.ride', 5500000, ammSeed, 'vAMM', this.isLocal, address(this.seeds.timer))
 
         const addAmmTx = await invoke({
             dApp: address(this.seeds.coordinator),
@@ -928,7 +959,19 @@ class AMM {
         return changeSettingsTx
     }
 
-    async increasePosition(_amount, _direction, _leverage, _minBaseAssetAmount, _link) {
+    async increasePosition(_amount, _direction, _leverage, _minBaseAssetAmount, _link, _artifact) {
+        let payment = [
+            {
+                amount: _amount * decimals,
+                assetId: this.e.assets.neutrino
+            }
+        ]
+        if (_artifact) {
+            payment.push({
+                amount: 1,
+                assetId: _artifact
+            })
+        }
         const openPositionTx = invokeScript({
             dApp: address(this.e.seeds.amms[this.address]),
             call: {
@@ -940,12 +983,7 @@ class AMM {
                     { type: 'string' , value: _link || '' }, 
                 ]
             },
-            payment: [
-                {
-                    amount: _amount * decimals,
-                    assetId: this.e.assets.neutrino
-                }
-            ]
+            payment
         }, this.sender)
 
         await broadcast(openPositionTx);
@@ -1801,12 +1839,52 @@ class Prizes {
         let tx = await invoke({
             dApp: address(this.e.seeds.prizes),
             functionName: "claimPrize",
-            arguments: [nonce, recipient, assetId, amount, signature],
+            arguments: [nonce, recipient, assetId, "" + amount, signature],
             payment: []
         }, this.sender)
 
         await waitForTx(tx.id)
         return tx
+    }
+}
+
+class NFTManager {
+
+    constructor(e, address, sender) {
+        this.e = e
+        this.address = address
+        this.sender = sender
+    }
+
+    as(_sender) {
+        return new NFTManager(this.e, address, _sender)
+    }
+
+    async upgrade() {
+        console.log(`Upgrading NFTManager ${this.address}`)
+        return this.e.upgradeContract('nfts.ride', this.address, 3700000)
+    }
+
+    async createNftType(name, description, nftImageLink, collection, type, typeValue) {
+        let tx = await invoke({
+            dApp: address(this.e.seeds.nfts),
+            functionName: "createNftType",
+            arguments: [name, description, nftImageLink, collection, type, typeValue],
+            payment: []
+        }, this.e.seeds.admin)
+
+        await waitForTx(tx.id)
+        return tx
+    }
+
+    async getNftDetails(assetId) {
+        const type = await accountDataByKey(`k_token_type_${assetId}`, address(this.e.seeds.nfts)).then(x => x.value)
+        const value = await accountDataByKey(`k_token_param_${assetId}`, address(this.e.seeds.nfts)).then(x => x.value)
+
+        return {
+            type,
+            value
+        }
     }
 }
 

@@ -73,6 +73,7 @@ let k_miner_address = "k_miner_address"           # Liquidity mining contract ad
 let k_orders_address = "k_orders_address"         # Order executor contract address
 let k_referral_address = "k_referral_address"     # Referral contract address
 let k_manager_address = "k_manager_address"       # Fund manager address
+let k_nft_manager_address = "k_nft_manager_address" # NFT manager address
 
 ##### Coordinator data ##### 
 func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
@@ -86,6 +87,12 @@ func minerAddress() = addressFromString(coordinator().getStringValue(k_miner_add
 func ordersAddress() = addressFromString(coordinator().getStringValue(k_orders_address)).valueOrErrorMessage("Orders not set")
 func referralAddress() = addressFromString(coordinator().getStringValue(k_referral_address)).valueOrErrorMessage("Referral not set")
 func managerAddress() = addressFromString(coordinator().getStringValue(k_manager_address)).valueOrErrorMessage("Manager not set")
+func nftManagerAddress() = addressFromString(coordinator().getStringValue(k_nft_manager_address)).valueOrErrorMessage("NFT Manager not set")
+
+##### NFT Artifacts #####
+let k_token_param = "k_token_param"
+let k_token_type = "k_token_type"
+let FEE_REDUCTION_TOKEN_TYPE = "fee_reduction"
 
 ##### Core constants #####
 
@@ -129,6 +136,15 @@ func pushToQueue(_list: List[String], _maxSize: Int, _value: String) = if (_list
 
 ##### Accessor functions #####
 func int(k: String) = this.getInteger(k).valueOrErrorMessage("no value for " + k)
+func strA(_address: Address, _key: String) = {
+  let val = _address.getString(_key).valueOrErrorMessage("No value for key " + _key)
+  val
+}
+
+func intA(_address: Address, _key: String) = {
+  let val = _address.getInteger(_key).valueOrErrorMessage("No value for key " + _key)
+  val
+}
 
 func cbalance() = int(k_balance)
 func fee() = int(k_fee)
@@ -700,6 +716,24 @@ func getFunding() = {
   }
 }
 
+func getAdjustedFee(i: Invocation) = {
+  let baseFee = fee()
+  let (adjustedFee, burnArtifact) = if (i.payments.size() > 1) then {
+      let artifactId = i.payments[1].assetId.valueOrErrorMessage("Invalid attached artifact").toBase58String()
+      let artifactKind = strA(nftManagerAddress(), k_token_type.toCompositeKey(artifactId))
+      if (artifactKind == FEE_REDUCTION_TOKEN_TYPE) then {
+        let reduction = intA(nftManagerAddress(), k_token_param.toCompositeKey(artifactId))
+        let adjustedFee = muld(baseFee, reduction)
+        (adjustedFee, true)
+      } else {
+        throw("Invalid attached artifact")
+      }
+    } else {
+      (baseFee, false)
+    }
+  (adjustedFee, burnArtifact)
+}
+
 func updateSettings(
   _initMarginRatio: Int,
   _mmr: Int,
@@ -867,6 +901,16 @@ func transferFee(i: Int) = {
   [
     ScriptTransfer(stakingAddress(), i, quoteAsset())
   ]
+}
+
+func doBurnArtifact(_burnArtifact: Boolean, i: Invocation) = {
+  if (_burnArtifact) then {
+    [
+      Burn(i.payments[1].assetId.valueOrErrorMessage("Invalid artifact"), 1)
+    ]
+  } else {
+    []
+  }
 }
 
 
@@ -1187,7 +1231,9 @@ func increasePosition(
     throw("Invalid increasePosition parameters")
   } else {
     let _trader = i.caller.toString()
-    let rawFeeAmount = muld(_rawAmount, fee())
+    let baseFee = fee()
+    let (adjustedFee, burnArtifact) = getAdjustedFee(i)
+    let rawFeeAmount = muld(_rawAmount, adjustedFee)
 
     strict referrerFeeAny = invoke(
       referralAddress(),
@@ -1258,7 +1304,7 @@ func increasePosition(
           (
             newPositionSize, # positionSize
             remainMargin, # remainMargin
-            oldPositionOpenNotional + openNotional, # pon
+            oldPositionOpenNotional + openNotional, # positionOpenNotional
             latestCumulativePremiumFraction(newPositionSize), # latestCPF
             baseAssetReserveAfter, # baseAssetReserveAfter
             quoteAssetReserveAfter, # quoteAssetReserveAfter
@@ -1333,6 +1379,8 @@ func increasePosition(
     transferFee(feeToStakers)
     ++
     updateBalance(cbalance() + _amount)
+    ++
+    doBurnArtifact(burnArtifact, i)
   }
 }
 
@@ -1348,7 +1396,8 @@ func addMargin() = {
     throw("Invalid addMargin parameters")
   } else {
     let _trader = i.caller.toString()
-    let rawFeeAmount = muld(_rawAmount, fee())
+    let (adjustedFee, burnArtifact) = getAdjustedFee(i)
+    let rawFeeAmount = muld(_rawAmount, adjustedFee)
 
     strict referrerFeeAny = invoke(
       referralAddress(),
@@ -1407,6 +1456,8 @@ func addMargin() = {
     transferFee(feeToStakers)
     ++
     updateBalance(cbalance() + _amount)
+    ++
+    doBurnArtifact(burnArtifact, i)
   }
 }
 

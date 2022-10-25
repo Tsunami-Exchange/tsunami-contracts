@@ -22,6 +22,7 @@ let k_miner_address = "k_miner_address"           # Liquidity mining contract ad
 let k_orders_address = "k_orders_address"         # Order executor contract address
 let k_referral_address = "k_referral_address"     # Referral contract address
 let k_manager_address = "k_manager_address"       # Fund manager address
+let k_nft_manager_address = "k_nft_manager_address" # Fund manager address
 
 ##### View functions #####
 func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
@@ -123,6 +124,16 @@ func setPrizes(
   let address = getAddressIfValid(_prizes)
   [
     StringEntry(k_prizes_address, address)
+  ]
+})
+
+@Callable(i)
+func setNftManager(
+  _nftManager: String
+) = isAdmin(i).valueOrElse({
+  let address = getAddressIfValid(_nftManager)
+  [
+    StringEntry(k_nft_manager_address, address)
   ]
 })
 

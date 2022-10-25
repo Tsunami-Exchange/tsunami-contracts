@@ -1,0 +1,18 @@
+# This is a mock swap contract
+#
+{-# STDLIB_VERSION 6 #-}
+{-# SCRIPT_TYPE ACCOUNT #-}
+{-# CONTENT_TYPE DAPP #-}
+
+##### Key constants #####
+
+# Makes new NFT
+@Callable(i)
+func createNFT(_name: String, _description: String, _nftImageLink: String, _collection: String) = {
+  let issue = Issue(_name, _description, 1, 0, false)
+  let id = calculateAssetId(issue)
+  ([issue, ScriptTransfer(i.caller, 1, id)], toBase58String(id))
+}
+
+@Verifier(tx)
+func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)
