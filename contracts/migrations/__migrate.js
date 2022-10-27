@@ -64,12 +64,22 @@ const run = async() => {
     console.log(`Migration master address=${adminAddress}`)
 
     const allFiles = await fs.readdir(__dirname);
-    const migrations = allFiles.filter(x => x.match('[0-9]+_.*')).map(x => x.replace('.js', ''))
+    const migrations = allFiles
+        .filter(x => x.match('[0-9]+_.*'))
+        .filter(x => !x.includes('exclude'))
+        .map(x => x.replace('.js', ''))
 
     let run = false
+    let rerun = process.env['RERUN']
     for (let migration of migrations) {
+        let isActualRerun = false
         const seq = migration.split('_')[0]
-        const isRun = await isMigrated(seq, chainId)
+        let isRun = await isMigrated(seq, chainId)
+        if (isRun && rerun == seq) {
+            isActualRerun = true
+            isRun = false
+            console.log(`Rerunning migration ${seq}`)
+        }
         if (!isRun) {
             run = true
             const balanceBefore = await balance(adminAddress)
@@ -92,7 +102,7 @@ const run = async() => {
                 break
             }
 
-            if (success) {
+            if (success && !isActualRerun) {
                 await commit(seq)
             }
 
