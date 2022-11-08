@@ -20,6 +20,7 @@ let k_positionMargin = "k_positionMargin"             # Trader position margin (
 let k_positionOpenNotional = "k_positionOpenNotional" # Trader position open notional - how much quote asset they have borrowed
 let k_positionLastUpdatedCumulativePremiumFraction = "k_positionFraction"        # Trader position last updated cumulative premium fraction
 let k_positionClosedDate = "k_positionClosedDate"     # When position was closed
+let k_positionAsset = "k_positionAsset"               # Asset of position
 
 # Global initialization state
 let k_initialized = "k_initialized"                       # If AMM was properly initialized
@@ -73,7 +74,15 @@ let k_miner_address = "k_miner_address"           # Liquidity mining contract ad
 let k_orders_address = "k_orders_address"         # Order executor contract address
 let k_referral_address = "k_referral_address"     # Referral contract address
 let k_manager_address = "k_manager_address"       # Fund manager address
+let k_collateral_address = "k_collateral_address" # Collateral manager address
+#let k_exchange_address = "k_exchange_address"     # Collateral manager address
+let k_exchange_address = "k_exchange_address"     # Exchange manager address
 let k_nft_manager_address = "k_nft_manager_address" # NFT manager address
+
+# Collateral keys
+let k_trader_market_asset_collateral = "k_trader_market_asset_collateral"
+
+func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
 
 ##### Coordinator data ##### 
 func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
@@ -88,6 +97,13 @@ func ordersAddress() = addressFromString(coordinator().getStringValue(k_orders_a
 func referralAddress() = addressFromString(coordinator().getStringValue(k_referral_address)).valueOrErrorMessage("Referral not set")
 func managerAddress() = addressFromString(coordinator().getStringValue(k_manager_address)).valueOrErrorMessage("Manager not set")
 func nftManagerAddress() = addressFromString(coordinator().getStringValue(k_nft_manager_address)).valueOrErrorMessage("NFT Manager not set")
+func collateralAddress() = addressFromString(coordinator().getStringValue(k_collateral_address)).valueOrErrorMessage("Collateral Manager not set")
+#func exchangeAddress() = addressFromString(coordinator().getStringValue(k_exchange_address)).valueOrErrorMessage("Exchange not set")
+func swapAddress() = addressFromString(coordinator().getString(k_exchange_address).valueOrErrorMessage("No swap address")).valueOrErrorMessage("Invalid swap address")
+
+##### Collateral data ##### 
+let k_whitelist_asset = "k_whitelist_asset"
+func isWhitelistAsset(_assetId: String) = getBoolean(collateralAddress(), k_whitelist_asset.toCompositeKey(_assetId)).valueOrElse(false)
 
 ##### NFT Artifacts #####
 let k_token_param = "k_token_param"
@@ -116,8 +132,6 @@ func divd(_x: Int, _y: Int) = fraction(_x, DECIMAL_UNIT, _y, HALFEVEN)
 func muld(_x: Int, _y: Int) = fraction(_x, _y, DECIMAL_UNIT, HALFEVEN)
 func abs(_x: Int) = if (_x > 0) then _x else -_x
 func vmax(_x: Int, _y: Int) = if (_x >= _y) then _x else _y
-
-func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
 
 func listToStr(_list: List[String]) = {
   func _join(accumulator: String, val: String) = accumulator + val + ","
@@ -209,6 +223,14 @@ func getPosition(_trader: String) = {
       )
       case _ => (0, 0, 0, 0)
     }
+}
+
+func getPositionAsset(_trader: String) = {
+  let positionAssetOpt = this.getString(k_positionAsset.toCompositeKey(_trader))
+  match (positionAssetOpt) {
+    case positionAsset: String => positionAsset
+    case _ => quoteAsset().toBase58String()
+  }
 }
 
 # Checks that a trader have an open position
@@ -774,6 +796,15 @@ func updateFunding(
   ]
 }
 
+func updatePositionAsset(
+  _address: String,
+  _assetId: String
+) = {
+  [
+    StringEntry(k_positionAsset.toCompositeKey(_address), _assetId)
+  ]
+}
+
 func updatePosition(
   _address: String,
   _size: Int,
@@ -869,6 +900,7 @@ func deletePosition(
     DeleteEntry(k_positionMargin.toCompositeKey(_address)),
     DeleteEntry(k_positionOpenNotional.toCompositeKey(_address)),
     DeleteEntry(k_positionLastUpdatedCumulativePremiumFraction.toCompositeKey(_address)),
+    DeleteEntry(k_positionAsset.toCompositeKey(_address)),
     IntegerEntry(k_positionClosedDate.toCompositeKey(_address), lastBlock.timestamp)
   ]
 }
@@ -910,6 +942,34 @@ func doBurnArtifact(_burnArtifact: Boolean, i: Invocation) = {
     ]
   } else {
     []
+  }
+}
+
+func isSameAssetOrNoPosition(_trader: String, _assetId: String) = {
+    let oldPositionSize = getPosition(_trader)._1
+    if (oldPositionSize == 0) then {
+      true
+    } else {
+      getPositionAsset(_trader) == _assetId
+    }
+}
+
+func isSameAsset(_trader: String, _assetId: String) = {
+    getPositionAsset(_trader) == _assetId
+}
+
+func getBorrowedByTraderInMarketKey(_amm: String, _assetId: String, _trader: String) = {
+  k_trader_market_asset_collateral + "_" + _amm + "_" + _assetId + "_" + _trader
+}
+
+func getBorrowedByTrader(_trader: String) = {
+  let positionAsset = getPositionAsset(_trader)
+  if (positionAsset == quoteAsset().toBase58String()) then {
+    (0, positionAsset)
+  } else {
+    let key = getBorrowedByTraderInMarketKey(this.toString(), positionAsset, _trader)
+    let borrow = collateralAddress().getInteger(key).valueOrElse(0)
+    (borrow, positionAsset)
   }
 }
 
@@ -1219,27 +1279,60 @@ func increasePosition(
   _minBaseAssetAmount: Int,
   _refLink: String
 ) = {
+  let _trader = i.caller.toString()
   let _rawAmount = i.payments[0].amount
+  let _assetId = i.payments[0].assetId
+  let _assetIdStr = _assetId.value().toBase58String()
+  let isQuoteAsset = _assetId == quoteAsset()
+  let isCollateralAsset = isWhitelistAsset(_assetIdStr)
   if (
     (_direction != DIR_LONG && _direction != DIR_SHORT)
     || _rawAmount <= 0
     || !initialized()
-    || i.payments[0].assetId != quoteAsset()
+    || (!isQuoteAsset && !isCollateralAsset)
+    || !isSameAssetOrNoPosition(_trader, _assetIdStr)
     || !requireMoreMarginRatio(divd(DECIMAL_UNIT, _leverage), initMarginRatio(), true)
     || paused()
   ) then {
     throw("Invalid increasePosition parameters")
   } else {
-    let _trader = i.caller.toString()
     let baseFee = fee()
     let (adjustedFee, burnArtifact) = getAdjustedFee(i)
     let rawFeeAmount = muld(_rawAmount, adjustedFee)
+    let _amount = _rawAmount - rawFeeAmount
+
+    # If we are operating with non-USDN collateral, borrow _amount
+    # of USDN to proceed and send rawFeeAmount of non-USDN collateral
+    # to exchange to USDN. 
+    #
+    strict distributeFeeAmount = if (isCollateralAsset) then {
+      strict doBorrow = invoke(
+        collateralAddress(),
+        "borrow",
+        [_trader],
+        [AttachedPayment(_assetId, _amount)]
+      )
+
+      strict balanceBefore = assetBalance(this, quoteAsset())
+      strict doSwap = invoke(
+        swapAddress(),
+        "swap",
+        [toBase58String(quoteAsset()), 0], # Want Quote Asset
+        [AttachedPayment(_assetId, rawFeeAmount)] # In exchange for Provided Asset
+      )
+      strict balanceAfter = assetBalance(this, quoteAsset())
+      strict exchangedAmount = balanceAfter - balanceBefore
+
+      exchangedAmount
+    } else {
+      rawFeeAmount
+    }
 
     strict referrerFeeAny = invoke(
       referralAddress(),
       "acceptPaymentWithLink",
       [_trader, _refLink],
-      [AttachedPayment(quoteAsset(), rawFeeAmount)]
+      [AttachedPayment(quoteAsset(), distributeFeeAmount)]
     )
 
     let referrerFee = match(referrerFeeAny) {
@@ -1247,8 +1340,7 @@ func increasePosition(
       case _ => throw("Invalid referrerFee")
     }
 
-    let _amount = _rawAmount - rawFeeAmount
-    let feeAmount = rawFeeAmount - referrerFee
+    let feeAmount = distributeFeeAmount - referrerFee
     let (
       oldPositionSize,
       oldPositionMargin,
@@ -1366,6 +1458,8 @@ func increasePosition(
       newPositionLatestCPF
     ) 
     ++
+    updatePositionAsset(_trader, _assetIdStr)
+    ++
     updateAmm(
       quoteAssetReserveAfter,
       baseAssetReserveAfter,
@@ -1386,24 +1480,57 @@ func increasePosition(
 
 @Callable(i)
 func addMargin() = {
+  let _trader = i.caller.toString()
   let _rawAmount = i.payments[0].amount
+  let _assetId = i.payments[0].assetId
+  let _assetIdStr = _assetId.value().toBase58String()
+  let isQuoteAsset = _assetId == quoteAsset()
+  let isCollateralAsset = isWhitelistAsset(_assetIdStr)
   if (
-    i.payments[0].assetId != quoteAsset()
+    (!isQuoteAsset && !isCollateralAsset)
     || !requireOpenPosition(i.caller.toString())
+    || !isSameAsset(_trader, _assetIdStr)
     || !initialized()
     || paused()
   ) then {
     throw("Invalid addMargin parameters")
   } else {
-    let _trader = i.caller.toString()
     let (adjustedFee, burnArtifact) = getAdjustedFee(i)
     let rawFeeAmount = muld(_rawAmount, adjustedFee)
+    let _amount = _rawAmount - rawFeeAmount
+
+    # If we are operating with non-USDN collateral, borrow _amount
+    # of USDN to proceed and send rawFeeAmount of non-USDN collateral
+    # to exchange to USDN. 
+    #
+    strict distributeFeeAmount = if (isCollateralAsset) then {
+      strict doBorrow = invoke(
+        collateralAddress(),
+        "borrow",
+        [_trader],
+        [AttachedPayment(_assetId, _amount)]
+      )
+
+      strict balanceBefore = assetBalance(this, quoteAsset())
+      strict doSwap = invoke(
+        swapAddress(),
+        "swap",
+        [toBase58String(quoteAsset()), 0], # Want Quote Asset
+        [AttachedPayment(_assetId, rawFeeAmount)] # In exchange for Provided Asset
+      )
+      strict balanceAfter = assetBalance(this, quoteAsset())
+      strict exchangedAmount = balanceAfter - balanceBefore
+
+      exchangedAmount
+    } else {
+      rawFeeAmount
+    }
 
     strict referrerFeeAny = invoke(
       referralAddress(),
       "acceptPayment",
       [_trader],
-      [AttachedPayment(quoteAsset(), rawFeeAmount)]
+      [AttachedPayment(quoteAsset(), distributeFeeAmount)]
     )
 
     let referrerFee = match(referrerFeeAny) {
@@ -1411,8 +1538,7 @@ func addMargin() = {
       case _ => throw("Invalid referrerFee")
     }
 
-    let feeAmount = rawFeeAmount - referrerFee
-    let _amount = _rawAmount - rawFeeAmount
+    let feeAmount = distributeFeeAmount - referrerFee
 
     let (
       oldPositionSize,
@@ -1465,9 +1591,10 @@ func addMargin() = {
 func removeMargin(
   _amount: Int
 ) = {
+  let _trader = i.caller.toString()
   if (
     _amount <= 0
-    || !requireOpenPosition(i.caller.toString())
+    || !requireOpenPosition(_trader)
     || !initialized()
     || paused()
   ) then {
@@ -1478,7 +1605,7 @@ func removeMargin(
       oldPositionMargin,
       oldPositionOpenNotional,
       oldPositionLstUpdCPF
-    ) = getPosition(i.caller.toString())
+    ) = getPosition(_trader)
 
     let marginDelta = -_amount
     let (remainMargin, badDebt) =
@@ -1495,24 +1622,62 @@ func removeMargin(
       if (!requireMoreMarginRatio(marginRatio, initMarginRatio(), true)) then {
         throw("Too much margin removed: " + marginRatio.toString() + " < " + initMarginRatio().toString())
       } else {
-        strict unstake = invoke(
+        let quoteAssetStr = quoteAsset().toBase58String()
+        let (borrowed, assetId) = getBorrowedByTrader(_trader)
+        let toRepay = if (_amount > borrowed) then borrowed else _amount
+        let toWithdraw = if (_amount < borrowed) then 0 else _amount - borrowed
+        let finalBorrow = borrowed - toRepay
+        let switchPositionToQuote = if (finalBorrow > 0) then {
+          []
+        } else {
+          updatePositionAsset(_trader, quoteAssetStr)
+        }
+
+        strict doSanityCheck = if (toRepay + toWithdraw != _amount) then {
+          throw("toRepay=" + toRepay.toString() + " + toWithdraw=" + toWithdraw.toString() + " != " + _amount.toString())
+        } else {
+          []
+        }
+        
+        strict doUnstake = invoke(
           managerAddress(),
           "withdraw",
-          [quoteAsset().toBase58String(), _amount],
+          [quoteAssetStr, _amount], # We need to withdraw from manager amount to repay + to withdraw
           []
         )
+
+        # strict repayDebug = throw("borrowed=" + borrowed.toString() + "toRepay=" + toRepay.toString() + "toWithdraw=" + toWithdraw.toString() + "finalBorrow=" + finalBorrow.toString() + "assetId=" + assetId)
+
+        strict returnCollateralAction = if (toRepay > 0) then {
+          strict doRepay = invoke(
+            collateralAddress(),
+            "repay",
+            [_trader, assetId],
+            [AttachedPayment(quoteAsset(), toRepay)]
+          )          
+
+          [
+            ScriptTransfer(i.caller, toRepay, fromBase58String(assetId))
+          ]
+        } else {
+          []
+        }
         
         updatePosition(
-          i.caller.toString(),
+          _trader,
           oldPositionSize,
           remainMargin,
           oldPositionOpenNotional,
           latestCumulativePremiumFraction(oldPositionSize)
         )
         ++
-        withdraw(i.caller, _amount)
+        if (toWithdraw > 0) then withdraw(i.caller, toWithdraw) else []
         ++
         updateBalance(cbalance() - _amount)
+        ++
+        switchPositionToQuote
+        ++
+        returnCollateralAction
       }
     }
   }
@@ -1520,10 +1685,10 @@ func removeMargin(
 
 @Callable(i)
 func closePosition() = {
-  let caller = getActualCaller(i)
-  let callerAddress = addressFromString(caller).valueOrErrorMessage("Invalid caller")
+  let _trader = getActualCaller(i)
+  let _traderAddress = addressFromString(_trader).valueOrErrorMessage("Invalid caller")
     if (
-      !requireOpenPosition(caller)
+      !requireOpenPosition(_trader)
       || !initialized()
       || paused()
   ) then {
@@ -1542,7 +1707,7 @@ func closePosition() = {
           x2,
           totalLongAfter,
           totalShortAfter
-    ) = internalClosePosition(caller, true)
+    ) = internalClosePosition(_trader, true)
 
     if (positionBadDebt > 0) then {
       throw("Unable to close position with bad debt")
@@ -1575,14 +1740,46 @@ func closePosition() = {
         []
       )
 
+      # As we are closing a position - we need to repay all the debt
+      #
+      let (borrowed, assetId) = getBorrowedByTrader(_trader)       
+
+      strict (sendCollateralAction, quoteWithdrawAmount) = if (borrowed > 0) then {
+        if (withdrawAmount >= borrowed) then {
+          strict doRepay = invoke(
+            collateralAddress(),
+            "repay",
+            [_trader, assetId],
+            [AttachedPayment(quoteAsset(), borrowed)]
+          )   
+          
+          ([
+            ScriptTransfer(_traderAddress, borrowed, fromBase58String(assetId))
+          ], withdrawAmount - borrowed)
+        } else {
+          strict realizeAndClose = invoke(
+            collateralAddress(),
+            "realizePartiallyAndClose",
+            [_trader, assetId],
+            [AttachedPayment(quoteAsset(), withdrawAmount)]
+          )
+          
+          ([
+            ScriptTransfer(_traderAddress, withdrawAmount, fromBase58String(assetId))
+          ], 0) # No extra USDN during settlement
+        }
+      } else {
+        ([], withdrawAmount)
+      }
+
       strict notifyNotional = invoke(
         minerAddress(),
         "notifyNotional",
-        [caller, 0],
+        [_trader, 0],
         []
       )
       
-      deletePosition(caller) 
+      deletePosition(_trader) 
       ++ 
       updateAmm(
         quoteAssetReserveAfter,
@@ -1594,9 +1791,11 @@ func closePosition() = {
         totalShortAfter
       )
       ++
-      withdraw(callerAddress, withdrawAmount)
+      if (quoteWithdrawAmount > 0) then withdraw(_traderAddress, quoteWithdrawAmount) else []
       ++
       updateBalance(ammNewBalance)
+      ++
+      sendCollateralAction
     }
   }
 }
@@ -1624,7 +1823,6 @@ func liquidate(_trader: String) = {
     if (
       # This check guarantees no bad debt, because bad debt can happen only when
       # spotMarginRatio < 0, and liquidationFeeRatio > 0
-      # TODO: Partial Liquidation Ratio
       spotMarginRatio > liquidationFeeRatio()
       && partialLiquidationRatio() > 0
       && partialLiquidationRatio() < DECIMAL_UNIT
@@ -1651,8 +1849,9 @@ func liquidate(_trader: String) = {
           cumulativeNotionalAfter
         ) = swapInput(isAdd, exchangedQuoteAssetAmount)
       
+      let liquidationRatio = divd(abs(exchangedPositionSize), abs(oldPositionSize))
       # Realize a certain percent of position loss
-      let realizedPnl = divd(muld(unrealizedPnl, abs(exchangedPositionSize)), abs(oldPositionSize))
+      let realizedPnl = muld(unrealizedPnl, liquidationRatio)
       let (remainMargin, badDebt, fundingPayment) = 
           calcRemainMarginWithFundingPayment(
               oldPositionSize, 
@@ -1687,6 +1886,22 @@ func liquidate(_trader: String) = {
         (0, abs(ammBalance))
       } else {
         (ammBalance, 0)
+      }
+
+      let (borrowed, assetId) = getBorrowedByTrader(_trader) 
+
+      strict doLiquidateCollateral = if (borrowed > 0) then {
+        let collateralToSell = muld(borrowed, liquidationRatio)
+        
+        strict realizeAndClose = invoke(
+          collateralAddress(),
+          "realizePartially",
+          [_trader, assetId, collateralToSell],
+          [] # Full liquidation of remain collateral
+        )
+        []
+      } else {
+        []
       }
 
       strict x = if (takeFromInsurance > 0) then {
@@ -1773,6 +1988,20 @@ func liquidate(_trader: String) = {
         (0, abs(ammBalance))
       } else {
         (ammBalance, 0)
+      }
+
+      let (borrowed, assetId) = getBorrowedByTrader(_trader) 
+
+      strict doLiquidateCollateral = if (borrowed > 0) then {
+        strict realizeAndClose = invoke(
+          collateralAddress(),
+          "realizePartiallyAndClose",
+          [_trader, assetId],
+          [] # Full liquidation of remain collateral
+        )
+        []
+      } else {
+        []
       }
 
       strict x = if (takeFromInsurance > 0) then {
@@ -1996,6 +2225,12 @@ func view_getFunding() = {
   let longFunding = divd(longPremiumFraction, underlyingPrice)
   let shortFunding = divd(shortPremiumFraction, underlyingPrice)
   throw(s(longFunding) + s(shortFunding) + s(getTwapSpotPrice()) + s(getOracleTwapPrice()))
+}
+
+@Callable(i)
+func view_getBorrowedByTrader(_trader: String) = {
+  let (borrowed, assetId) = getBorrowedByTrader(_trader)
+  throw(s(borrowed) + assetId)
 }
 
 @Verifier(tx)

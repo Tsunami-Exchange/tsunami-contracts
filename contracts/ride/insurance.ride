@@ -17,6 +17,7 @@ let k_admin_public_key = "k_admin_public_key"     # Pubic key of admin account
 let k_quote_asset = "k_quote_asset"               # Address of quote asset (USDN in our case)
 let k_quote_staking = "k_quote_staking"           # Address of quote asset staking contract (USDN staking in our case)
 let k_manager_address = "k_manager_address"       # Fund manager address
+let k_collateral_address = "k_collateral_address" # Collateral manager address
 
 # Global initialization state
 let k_initialized = "k_initialized"               # If Insurance was properly initialized
@@ -33,6 +34,7 @@ func adminPublicKey() = fromBase58String(coordinator().getString(k_admin_public_
 func quoteAsset() = fromBase58String(coordinator().getString(k_quote_asset).valueOrErrorMessage("Quote asset not set"))
 func quoteAssetStaking() = addressFromString(coordinator().getString(k_quote_staking).valueOrErrorMessage("Quote asset staking not set")).valueOrErrorMessage("Quote asset staking not set")
 func managerAddress() = addressFromString(coordinator().getString(k_manager_address).valueOrErrorMessage("Manager not set")).valueOrErrorMessage("Manager not set")
+func collateralAddress() = addressFromString(coordinator().getString(k_collateral_address).valueOrErrorMessage("Collateral not set")).valueOrErrorMessage("Collateral not set")
 
 ##### Internal functions #####
 func updateInsurance(i: Int) = {
@@ -58,11 +60,11 @@ func initialize(
 @Callable(i)
 func withdraw(_amount: Int) = {
   if (
-    !isWhitelist(i.caller.toString()) 
+    !(isWhitelist(i.caller.toString()) || i.caller == collateralAddress()) 
     || !initialized()
     || _amount > insurance()
   ) then {
-    throw("Invalid withdraw params " + _amount.toString() + " > " + insurance().toString())
+    throw("Invalid withdraw params (insurance) " + _amount.toString() + " > " + insurance().toString())
   } else {
     strict unstake = invoke(
       managerAddress(),
@@ -86,7 +88,11 @@ func deposit() = {
   if (
     i.payments[0].assetId != quoteAsset()
     || !initialized()
-    || (!isWhitelist(i.caller.toString()) && i.caller != adminAddress())
+    || !(
+      isWhitelist(i.caller.toString()) 
+      || i.caller == collateralAddress()
+      || i.caller == adminAddress()
+    )
   ) then {
     throw("Invalid deposit params")
   } else {

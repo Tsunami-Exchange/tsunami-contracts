@@ -95,7 +95,7 @@ func withdraw(_assetId: String, _amount: Int) = {
     || !initialized()
     || _amount > balanceOf(_assetId)
   ) then {
-    throw("Invalid withdraw params " + _amount.toString() + " > " + balanceOf(_assetId).toString())
+    throw("Invalid withdraw params (manager) " + _amount.toString() + " > " + balanceOf(_assetId).toString())
   } else {
     strict unstake = invoke(
       viresAddress(),

@@ -23,6 +23,8 @@ let k_orders_address = "k_orders_address"         # Order executor contract addr
 let k_referral_address = "k_referral_address"     # Referral contract address
 let k_manager_address = "k_manager_address"       # Fund manager address
 let k_nft_manager_address = "k_nft_manager_address" # Fund manager address
+let k_collateral_address = "k_collateral_address" # Collateral manager address
+let k_exchange_address = "k_exchange_address"     # Exchange manager address
 
 ##### View functions #####
 func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
@@ -156,6 +158,26 @@ func setStakingAddress(
   let stakingAddress = getAddressIfValid(_stakingAddress)
   [
     StringEntry(k_staking_address, _stakingAddress)
+  ]
+})
+
+@Callable(i)
+func setCollateralAddress(
+  _collateralAddress: String
+) = isAdmin(i).valueOrElse({
+  let collateralAddress = getAddressIfValid(_collateralAddress)
+  [
+    StringEntry(k_collateral_address, _collateralAddress)
+  ]
+})
+
+@Callable(i)
+func setExchangeAddress(
+  _exchangeAddress: String
+) = isAdmin(i).valueOrElse({
+  let exchangeAddress = getAddressIfValid(_exchangeAddress)
+  [
+    StringEntry(k_exchange_address, _exchangeAddress)
   ]
 })
 

@@ -1,0 +1,246 @@
+  {-# STDLIB_VERSION 6 #-}
+  {-# CONTENT_TYPE DAPP #-}
+  {-# SCRIPT_TYPE ACCOUNT #-}
+
+  ##### Key constants #####
+  let k_asset_collateral = "k_asset_collateral"
+  let k_trader_market_asset_collateral = "k_trader_market_asset_collateral"
+  let k_whitelist_asset = "k_whitelist_asset"
+
+  # Initialization status
+  let k_initialized = "k_initialized"
+
+  # Coordinator
+  let k_coordinatorAddress = "k_coordinatorAddress"
+  let k_governance_asset = "k_gov_asset"
+  let k_quote_asset = "k_quote_asset" 
+  let k_admin_public_key = "k_admin_public_key"
+  let k_manager_address = "k_manager_address" 
+  let k_amm = "k_amm"
+  let k_insurance_address = "k_insurance_address"
+  let k_exchange_address = "k_exchange_address"
+
+  func toCompositeKey(_key: String, _address: String) = _key + "_" + _address  
+
+  ##### Coordinator constants #####
+  func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
+  func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
+  func governanceAsset() = fromBase58String(coordinator().getStringValue(k_governance_asset))
+  func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
+  func managerAddress() = addressFromString(coordinator().getStringValue(k_manager_address)).valueOrErrorMessage("Manager not set")
+  func isWhitelist(_address: String) = getBoolean(coordinator(), k_amm.toCompositeKey(_address)).valueOrElse(false)
+  func isWhitelistAsset(_assetId: String) = getBoolean(this, k_whitelist_asset.toCompositeKey(_assetId)).valueOrElse(false)
+  func insuranceAddress() = addressFromString(coordinator().getStringValue(k_insurance_address)).valueOrErrorMessage("Insurance not set")
+  func swapAddress() = addressFromString(coordinator().getString(k_exchange_address).valueOrErrorMessage("No swap address")).valueOrErrorMessage("Invalid swap address")
+
+  ##### Core constants #####
+
+  let DECIMAL_UNIT = 1 * (10 * 10 * 10 * 10 * 10 * 10 * 10 * 10) # 10 ** 8
+  let DURATION = 60 * 60 * 24 # 1 day
+  let NO_ADDRESS = ""
+  let NO_STAKER = 0
+
+  ##### Helper functions #####
+  func usdnFromDecimals(_amount: Int)  = _amount / 100
+  func usdnToDecimals(_amount: Int)    = _amount * 100
+
+  func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
+
+  #### Key functions ####
+  func getBorrowedByTraderInMarketKey(_amm: String, _assetId: String, _trader: String) = {
+    k_trader_market_asset_collateral + "_" + _amm + "_" + _assetId + "_" + _trader
+  }
+
+  func getBorrowedByTraderInMarket(_amm: String, _assetId: String, _trader: String) = {
+    let key = getBorrowedByTraderInMarketKey(_amm, _assetId, _trader)
+    this.getInteger(key).valueOrElse(0)
+  }
+
+  @Callable(i)
+  func initialize(
+    _coordinator: String,
+    _whitelist: String
+  ) = {
+    if (initialized()) then {
+      throw("Already initialized")
+    } else {
+      let initialAssetIds = _whitelist.split(",")
+      
+      func doWhitelist(_acc: List[BooleanEntry], _assetId: String) = {
+        _acc :+ BooleanEntry(k_whitelist_asset.toCompositeKey(_assetId), true)
+      }
+
+      FOLD<20>(initialAssetIds, [], doWhitelist)
+      ++
+      [
+        StringEntry(k_coordinatorAddress, _coordinator),
+        BooleanEntry(k_initialized, true)
+      ]
+    }
+  }
+
+  @Callable(i)
+  func borrow(
+    _trader: String
+  ) = {
+    let amount = i.payments[0].amount
+    let assetId = toBase58String(i.payments[0].assetId.valueOrErrorMessage("Invalid asset id"))
+    let amm = i.caller.toString()
+
+    if (
+      !isWhitelist(amm)
+      || !isWhitelistAsset(assetId)
+    ) then {
+        throw("Invalid borrow parameters")
+    } else {
+        strict withdrawInsurance = invoke(
+            insuranceAddress(),
+            "withdraw",
+            [amount],
+            []
+        )
+
+        # TODO: Limits
+        # TODO: Total by AMM
+        # TODO: Total
+
+        [
+            ScriptTransfer(i.caller, amount, quoteAsset()),
+            IntegerEntry(
+                getBorrowedByTraderInMarketKey(amm, assetId, _trader), 
+                getBorrowedByTraderInMarket(amm, assetId, _trader) + amount
+            )
+        ]
+    }
+  }
+
+  @Callable(i)
+  func repay(
+    _trader: String,
+    _assetId: String
+  ) = {
+    let amount = i.payments[0].amount
+    let amm = i.caller.toString()
+
+    if (
+      !isWhitelist(amm)
+      || !isWhitelistAsset(_assetId)
+    ) then {
+        throw("Invalid repay parameters")
+    } else {
+      strict withdrawInsurance = invoke(
+          insuranceAddress(),
+          "deposit",
+          [],
+          [AttachedPayment(quoteAsset(), amount)]
+      )
+
+      let newDebt = getBorrowedByTraderInMarket(amm, _assetId, _trader) - amount
+
+      [
+          ScriptTransfer(i.caller, amount, fromBase58String(_assetId))
+      ]
+      ++
+      if (newDebt > 0) then [
+          IntegerEntry(getBorrowedByTraderInMarketKey(amm, _assetId, _trader), newDebt)
+      ] else [
+          DeleteEntry(getBorrowedByTraderInMarketKey(amm, _assetId, _trader))
+      ]
+    }
+  }
+
+  @Callable(i)
+  func realizePartiallyAndClose(
+    _trader: String,
+    _assetId: String
+  ) = {
+    let amount = if (i.payments.size() > 0) then {
+      i.payments[0].amount
+    } else {
+      0
+    }
+    let amm = i.caller.toString()
+    let debt = getBorrowedByTraderInMarket(amm, _assetId, _trader)
+    let toSell = debt - amount
+
+    strict sanityCheck = if (toSell <= 0) then throw("Use repay instead") else []
+
+    if (  
+      !isWhitelist(amm)
+      || !isWhitelistAsset(_assetId)
+    ) then {
+        throw("Invalid realizePartiallyAndClose parameters")
+    } else {
+        strict amountBefore = assetBalance(this, quoteAsset())
+        strict doSwap = invoke(
+          swapAddress(),
+          "swap",
+          [toBase58String(quoteAsset()), 0], # Want Quote Asset
+          [AttachedPayment(_assetId.fromBase58String(), toSell)] # In exchange for Provided Asset
+        )
+        strict amountAfter = assetBalance(this, quoteAsset())
+        strict soldForAmount = amountAfter - amountBefore
+
+        strict withdrawInsurance = invoke(
+            insuranceAddress(),
+            "deposit",
+            [],
+            [AttachedPayment(quoteAsset(), amount + soldForAmount)]
+        )
+
+        let toGetBack = debt - toSell
+
+        if (toGetBack > 0) then [ ScriptTransfer(i.caller, debt - toSell, fromBase58String(_assetId)) ] else []
+        ++
+        [
+            DeleteEntry(getBorrowedByTraderInMarketKey(amm, _assetId, _trader))
+        ]
+    }
+  }
+
+  @Callable(i)
+  func realizePartially(
+    _trader: String,
+    _assetId: String,
+    _toSell: Int
+  ) = {
+    let amm = i.caller.toString()
+    let debt = getBorrowedByTraderInMarket(amm, _assetId, _trader)
+    strict sanityCheck = if (_toSell <= 0 || _toSell > debt) then throw("Invalid realizePartiallyAndClose parameters") else []
+
+
+    # strict x = throw("debt=" + debt.toString() + ", _toSell=" + _toSell.toString())
+    if (  
+      !isWhitelist(amm)
+      || !isWhitelistAsset(_assetId)
+    ) then {
+        throw("Invalid realizePartiallyAndClose parameters")
+    } else {
+        strict amountBefore = assetBalance(this, quoteAsset())
+        strict doSwap = invoke(
+          swapAddress(),
+          "swap",
+          [toBase58String(quoteAsset()), 0], # Want Quote Asset
+          [AttachedPayment(_assetId.fromBase58String(), _toSell)] # In exchange for Provided Asset
+        )
+        strict amountAfter = assetBalance(this, quoteAsset())
+        strict soldForAmount = amountAfter - amountBefore
+
+        strict withdrawInsurance = invoke(
+            insuranceAddress(),
+            "deposit",
+            [],
+            [AttachedPayment(quoteAsset(), soldForAmount)]
+        )
+
+        [
+            IntegerEntry(
+                getBorrowedByTraderInMarketKey(amm, _assetId, _trader), 
+                getBorrowedByTraderInMarket(amm, _assetId, _trader) - _toSell
+            )
+        ]
+    }
+  }
+
+  @Verifier(tx)
+  func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], adminPublicKey())

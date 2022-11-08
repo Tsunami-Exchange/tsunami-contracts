@@ -1,0 +1,126 @@
+  {-# STDLIB_VERSION 6 #-}
+  {-# CONTENT_TYPE DAPP #-}
+  {-# SCRIPT_TYPE ACCOUNT #-}
+
+  ##### Key constants #####
+  let k_supported_exchanges = "puzzle,swop"
+  let k_swop_pair = "k_swop_pair"
+  let k_swop_min_amount = "k_swop_min_amount"
+  let k_puzzle_pair = "k_puzzle_pair"
+
+  # Initialization status
+  let k_initialized = "k_initialized"
+
+  # Coordinator
+  let k_coordinatorAddress = "k_coordinatorAddress"
+  let k_governance_asset = "k_gov_asset"
+  let k_quote_asset = "k_quote_asset" 
+  let k_admin_public_key = "k_admin_public_key"
+  let k_manager_address = "k_manager_address" 
+  let k_amm = "k_amm"
+  let k_insurance_address = "k_insurance_address"
+
+  func toCompositeKey(_key: String, _address: String) = _key + "_" + _address  
+
+  ##### Coordinator constants #####
+  func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
+  func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
+  func governanceAsset() = fromBase58String(coordinator().getStringValue(k_governance_asset))
+  func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
+  func managerAddress() = addressFromString(coordinator().getStringValue(k_manager_address)).valueOrErrorMessage("Manager not set")
+  func isWhitelist(_address: String) = getBoolean(coordinator(), k_amm.toCompositeKey(_address)).valueOrElse(false)
+  func insuranceAddress() = addressFromString(coordinator().getStringValue(k_insurance_address)).valueOrErrorMessage("Insurance not set")
+
+  ##### Core constants #####
+
+  let DECIMAL_UNIT = 1 * (10 * 10 * 10 * 10 * 10 * 10 * 10 * 10) # 10 ** 8
+  let DURATION = 60 * 60 * 24 # 1 day
+  let NO_ADDRESS = ""
+  let NO_POOL = ""
+
+  ##### Helper functions #####
+  func usdnFromDecimals(_amount: Int)  = _amount / 100
+  func usdnToDecimals(_amount: Int)    = _amount * 100
+
+  func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
+  
+
+  #### Key functions ####
+
+  func getSwopPool(_pairId: String) = {
+    let key = k_swop_pair.toCompositeKey(_pairId)
+    this.getString(key).valueOrElse(NO_POOL)
+  }
+
+  func getPuzzlePool(_pairId: String) = {
+    let key = k_puzzle_pair.toCompositeKey(_pairId)
+    this.getString(key).valueOrElse(NO_POOL)
+  }
+
+  func minSwopAmount(_pairId: String) = {
+    let key = k_swop_min_amount.toCompositeKey(_pairId)
+    this.getInteger(key).valueOrElse(0)
+  }
+
+  @Callable(i)
+  func initialize(
+    _coordinator: String
+  ) = {
+    if (initialized()) then {
+      throw("Already initialized")
+    } else {
+      [
+        StringEntry(k_coordinatorAddress, _coordinator),
+        BooleanEntry(k_initialized, true)
+      ]
+    }
+  }
+
+  @Callable(i)
+  func exchange(
+    _targetAsset: String,
+    _minAmountOfTargetAsset: Int
+  ) = {
+    let _amount = i.payments[0].amount
+    let _assetId = i.payments[0].assetId
+
+    strict amountBeforeExchange = assetBalance(this, fromBase58String(_targetAsset))
+
+    # Let'see if a swop exchange use is possible for an asset
+    #
+    let pairId = _targetAsset + "_" + toBase58String(_assetId.value())
+    let swopPool = getSwopPool(pairId)
+    let doExchange = if (swopPool != NO_POOL && _amount > minSwopAmount(pairId)) then {
+      let estimatedAmount = _amount # TODO: Base on actual price
+
+      strict doSwap = invoke(
+        addressFromString(swopPool).valueOrErrorMessage("Invalid swop pool address"),
+        "exchange",
+        [estimatedAmount, _minAmountOfTargetAsset], 
+        [AttachedPayment(_assetId, _amount)] # In exchange for Quote Asset
+      )
+      []
+    } else {
+      let puzzlePool = getPuzzlePool(pairId)
+      if (puzzlePool != NO_POOL) then {
+        strict doSwap = invoke(
+          addressFromString(puzzlePool).valueOrErrorMessage("Invalid puzzle pool address"),
+          "swap",
+          [_targetAsset, _minAmountOfTargetAsset],
+          [AttachedPayment(_assetId, _amount)]
+        )
+        []
+      } else {
+        throw("Can not exchange asset pair: " + pairId)
+      }
+    }
+
+    strict amountAfterExchange = assetBalance(this, fromBase58String(_targetAsset))
+
+    [
+      ScriptTransfer(i.caller, (amountAfterExchange - amountBeforeExchange), fromBase58String(_targetAsset))
+    ]
+  }
+
+  @Verifier(tx)
+  func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], adminPublicKey())

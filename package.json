@@ -10,6 +10,8 @@
     "ride-test:vAMM2:orders": "cd contracts && surfboard test vAMM2-orders.ride-test.js",
     "ride-test:vAMM2:referral": "cd contracts && surfboard test vAMM2-referral.ride-test.js",
     "ride-test:vAMM2:peg": "cd contracts && surfboard test vAMM2-peg.ride-test.js",
+    "ride-test:vAMM2:multicollateral": "cd contracts && surfboard test vAMM2-multicollateral.ride-test.js",
+    "ride-test:vAMM2:multicollateral-liquidation": "cd contracts && surfboard test vAMM2-multicollateral-liquidation.ride-test.js",
     "_ride-test:vAMM2:attack": "cd contracts && surfboard test vAMM2-attack.ride-test.js",
     "_ride-test:vAMM2:attack2": "cd contracts && surfboard test vAMM2-attack2.ride-test.js",
     "ride-test:miner:basic": "cd contracts && surfboard test miner-basic.ride-test.js",
@@ -25,7 +27,8 @@
     "migrate": "cd contracts && surfboard run --env=${npm_config_env} migrations/__migrate.js",
     "sf-exec": "cd contracts && surfboard run --env=${npm_config_env}",
     "allure-report": "cd contracts && allure generate ./allure-results -c && allure open",
-    "allure": "cd contracts && allure open"
+    "allure": "cd contracts && allure open",
+    "prepare": "husky install"
   },
   "devDependencies": {
     "@waves/surfboard": "2.3.1-beta.1",
@@ -34,10 +37,12 @@
     "allure-js-commons": "^2.0.0-beta.19",
     "allure-mocha": "^2.0.0-beta.19",
     "chai-as-promised": "^7.1.1",
+    "husky": "^8.0.0",
     "mocha": "^10.0.0",
     "mocha-multi-reporters": "^1.5.1",
     "node-fetch": "^2.6.7",
-    "npm-run-all": "^4.1.5"
+    "npm-run-all": "^4.1.5",
+    "pretty-quick": "^3.1.3"
   },
   "author": "mr. Hamster",
   "license": "MIT",

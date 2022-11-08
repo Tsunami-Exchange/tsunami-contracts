@@ -31,7 +31,7 @@ func withdraw(_assetId: String, _amount: Int) = {
   if (
     _amount > funds()
   ) then {
-    throw("Invalid withdraw params " + _amount.toString() + " > " + funds().toString())
+    throw("Invalid withdraw params (vires)" + _amount.toString() + " > " + funds().toString())
   } else {
     # Update state + transfer
     updateFunds(funds() - _amount)
