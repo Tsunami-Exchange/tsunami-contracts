@@ -1,8 +1,7 @@
-
-const migrate = async(e) => {
-    await e.referral.upgrade()
-}
+const migrate = async (e) => {
+  await e.referral.upgrade();
+};
 
 module.exports = {
-    migrate
-}
+  migrate,
+};
