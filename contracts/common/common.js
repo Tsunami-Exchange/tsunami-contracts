@@ -1016,6 +1016,80 @@ class Environment {
     }
   }
 
+  async deployCollateral(exchangeAddress, whitelist) {
+    if (!this.seeds.collateral) {
+      throw Error(`No seed for Collateral contract`);
+    }
+
+    if (!exchangeAddress) {
+      throw Error(`No exchangeAddress`);
+    }
+
+    if (!whitelist.length) {
+      throw Error(`No whitelist`);
+    }
+
+    let coordinatorAddress =
+      this.addresses.coordinator || address(this.seeds.coordinator);
+    let collateralAddress = address(this.seeds.collateral);
+    let fee = 3400000;
+
+    await this.ensureDeploymentFee(collateralAddress, fee);
+
+    await deploy(
+      "collateral.ride",
+      fee,
+      this.seeds.collateral,
+      "Collateral Manager"
+    );
+
+    let collateral = await accountDataByKey(
+      `k_collateral_address`,
+      coordinatorAddress
+    ).then((x) => x && x.value);
+    if (collateral !== collateralAddress) {
+      const setCollateralTx = await invoke(
+        {
+          dApp: coordinatorAddress,
+          functionName: "setCollateralAddress",
+          arguments: [collateralAddress],
+        },
+        this.seeds.admin
+      );
+
+      console.log(`setCollateralAddress in ${setCollateralTx.id}`);
+
+      const setExchangeTx = await invoke(
+        {
+          dApp: coordinatorAddress,
+          functionName: "setExchangeAddress",
+          arguments: [exchangeAddress],
+        },
+        this.seeds.admin
+      );
+
+      console.log(`setExchangeAddress in ${setExchangeTx.id}`);
+    }
+
+    let initialized = await accountDataByKey(
+      `k_initialized`,
+      collateralAddress
+    ).then((x) => x && x.value);
+    if (!initialized) {
+      const initCollateralTx = await invoke(
+        {
+          dApp: collateralAddress,
+          functionName: "initialize",
+          arguments: [coordinatorAddress, whitelist.join(",")],
+        },
+        this.seeds.admin
+      );
+
+      await waitForTx(initCollateralTx.id);
+      console.log("Collateral Manager initialized in " + initCollateralTx.id);
+    }
+  }
+
   async deployNfts(marketplaceAddress) {
     if (!this.seeds.nfts) {
       throw Error(`No seed for NFT Manager contract`);
@@ -1153,7 +1227,7 @@ class Environment {
 
     let p3 = deploy(
       "vAMM2.ride",
-      6000000,
+      6500000,
       ammSeed,
       "vAMM",
       this.isLocal,
@@ -1490,7 +1564,7 @@ class AMM {
 
   async upgrade() {
     console.log(`Upgrading AMM ${this.address}`);
-    return this.e.upgradeContract("vAMM2.ride", this.address, 6000000);
+    return this.e.upgradeContract("vAMM2.ride", this.address, 6500000);
   }
 
   async migrateLiquidity() {
