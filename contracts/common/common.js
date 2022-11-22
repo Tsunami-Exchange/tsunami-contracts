@@ -1946,6 +1946,13 @@ class AMM {
     return Number.parseFloat((quote / base).toFixed(4));
   }
 
+  async getBalance() {
+    let dApp = address(this.e.seeds.amms[this.address]);
+    let quote = await accountDataByKey(`k_balance`, dApp).then((x) => x.value);
+
+    return Number.parseFloat((quote / decimals).toFixed(4));
+  }
+
   async syncOraclePriceWithMarketPrice() {
     let price = await this.getMarketPrice();
 
@@ -2218,6 +2225,30 @@ class Miner {
     return tx;
   }
 
+  async setFeeDiscountTiers(_discounts) {
+    let discountsStr = _discounts.map((x) => x.join(":")).join(",");
+    let tx = await invoke(
+      {
+        dApp: this.address || address(this.e.seeds.miner),
+        functionName: "setFeeDiscountTiers",
+        arguments: [discountsStr],
+      },
+      this.e.seeds.admin
+    );
+
+    await waitForTx(tx.id);
+    return tx;
+  }
+
+  async getTraderVolume(_trader) {
+    let dApp = address(this.e.seeds.miner);
+    let value = await accountDataByKey(
+      `k_traderCumulativeVolume_${address(_trader)}`,
+      dApp
+    ).then((x) => x.value);
+    return value;
+  }
+
   async getTraderFeeInPeriod(_amm, _trader, _period) {
     let amm = address(_amm);
     let dApp = address(this.e.seeds.miner);
@@ -2347,6 +2378,36 @@ class Miner {
         rewards,
         claimed,
       };
+    }
+  }
+
+  async getComputeFeeDiscount(_trader) {
+    const invokeTx = invokeScript(
+      {
+        dApp: address(this.e.seeds.miner),
+        call: {
+          function: "view_computeFeeDiscount",
+          args: [
+            {
+              type: "string",
+              value: address(_trader),
+            },
+          ],
+        },
+      },
+      this.e.seeds.admin
+    );
+
+    try {
+      await broadcast(invokeTx);
+    } catch (e) {
+      let { message } = JSON.parse(JSON.stringify(e));
+      let parts = message
+        .replace("Error while executing account-script: ", "")
+        .split(",");
+      let discount = parseInt(parts[0]);
+
+      return discount;
     }
   }
 

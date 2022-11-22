@@ -738,8 +738,9 @@ func getFunding() = {
   }
 }
 
-func getAdjustedFee(i: Invocation) = {
-  let baseFee = fee()
+func getAdjustedFee(i: Invocation, _baseFeeDiscount: Int) = {
+  let baseFeeRaw = fee()
+  let baseFee = muld(baseFeeRaw, _baseFeeDiscount)
   let (adjustedFee, burnArtifact) = if (i.payments.size() > 1) then {
       let artifactId = i.payments[1].assetId.valueOrErrorMessage("Invalid attached artifact").toBase58String()
       let artifactKind = strA(nftManagerAddress(), k_token_type.toCompositeKey(artifactId))
@@ -1296,8 +1297,19 @@ func increasePosition(
   ) then {
     throw("Invalid increasePosition parameters")
   } else {
-    let baseFee = fee()
-    let (adjustedFee, burnArtifact) = getAdjustedFee(i)
+    strict doGetFeeDiscount = invoke(
+      minerAddress(),
+      "computeFeeDiscount",
+      [_trader],
+      []
+    )
+
+    let feeDiscount = match(doGetFeeDiscount) {
+      case x: Int => x
+      case _ => throw("Invalid computeFeeDiscount result")
+    }
+
+    let (adjustedFee, burnArtifact) = getAdjustedFee(i, feeDiscount)
     let rawFeeAmount = muld(_rawAmount, adjustedFee)
     let _amount = _rawAmount - rawFeeAmount
 
@@ -1495,7 +1507,19 @@ func addMargin() = {
   ) then {
     throw("Invalid addMargin parameters")
   } else {
-    let (adjustedFee, burnArtifact) = getAdjustedFee(i)
+    strict doGetFeeDiscount = invoke(
+      minerAddress(),
+      "computeFeeDiscount",
+      [_trader],
+      []
+    )
+
+    let feeDiscount = match(doGetFeeDiscount) {
+      case x: Int => x
+      case _ => throw("Invalid computeFeeDiscount result")
+    }
+
+    let (adjustedFee, burnArtifact) = getAdjustedFee(i, feeDiscount)
     let rawFeeAmount = muld(_rawAmount, adjustedFee)
     let _amount = _rawAmount - rawFeeAmount
 
@@ -1671,7 +1695,7 @@ func removeMargin(
           latestCumulativePremiumFraction(oldPositionSize)
         )
         ++
-        if (toWithdraw > 0) then withdraw(i.caller, toWithdraw) else []
+        (if (toWithdraw > 0) then withdraw(i.caller, toWithdraw) else [])
         ++
         updateBalance(cbalance() - _amount)
         ++
@@ -1715,11 +1739,14 @@ func closePosition() = {
       let withdrawAmount = abs(marginToVault)
 
       let ammBalance = cbalance() - withdrawAmount
+      # strict debug = throw("cbalance=" + cbalance().toString() + " withdrawAmount=" + withdrawAmount.toString())
       let (ammNewBalance, getFromInsurance) = if (ammBalance < 0) then {
         (0, abs(ammBalance))
       } else {
         (ammBalance, 0)
       }
+
+      # strict debug = throw("ammNewBalance=" + ammNewBalance.toString() + " getFromInsurance=" + getFromInsurance.toString())
 
       strict x = if (getFromInsurance > 0) then {
         strict withdrawInsurance = invoke(
@@ -1791,7 +1818,7 @@ func closePosition() = {
         totalShortAfter
       )
       ++
-      if (quoteWithdrawAmount > 0) then withdraw(_traderAddress, quoteWithdrawAmount) else []
+      (if (quoteWithdrawAmount > 0) then withdraw(_traderAddress, quoteWithdrawAmount) else [])
       ++
       updateBalance(ammNewBalance)
       ++

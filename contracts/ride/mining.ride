@@ -6,6 +6,9 @@
   let k_totalFeesInPeriod = "k_totalFeesInPeriod"
   let k_totalAssetFeesInPeriod = "k_totalAssetFeesInPeriod"
   let k_traderFeesInPeriod = "k_traderFeesInPeriod"
+  let k_traderVolume = "k_traderVolume"
+  let k_traderCumulativeVolume = "k_traderCumulativeVolume"
+  let k_feeTiers = "k_feeTiers"
   let k_lastNotional = "k_lastNotional"
   let k_totalScoreInPeriod = "k_totalScoreInPeriod"
   let k_traderScoreInPeriod = "k_traderScoreInPeriod"
@@ -38,6 +41,8 @@
   let DECIMAL_UNIT = 1 * (10 * 10 * 10 * 10 * 10 * 10 * 10 * 10) # 10 ** 8
   let A = 70000000 # 0.7 * 10**8
   let MS_IN_WEEK = 1000 * 604800
+  let MS_IN_DAY = 1000 * 86400
+  let NO_DISCOUNT = DECIMAL_UNIT / 100 # 10 ** 6
 
   ##### Helper functions #####
   func listToStr(_list: List[String]) = {
@@ -80,6 +85,14 @@
   let TIME = lastBlock.timestamp
 
   ##### Key functions #####
+  func getTraderVolumeKey(_trader: String, _dayId: Int) = {
+    k_traderVolume + "_" + _trader + "_" + _dayId.toString()
+  }
+
+  func getTraderCumulativeVolumeKey(_trader: String) = {
+    k_traderCumulativeVolume + "_" + _trader
+  }
+
   func getTraderFeesInPeriodKey(_amm: String, _trader: String, _weekId: Int) = {
     k_traderFeesInPeriod + "_" + _amm + "_" + _trader + "_" + _weekId.toString()
   }
@@ -140,6 +153,35 @@
   func getWeekEnd(_weekId: Int) = (_weekId + 1) * MS_IN_WEEK
 
   func getWeekId(_ts: Int) = _ts / MS_IN_WEEK
+
+  func getDayId(_ts: Int) = _ts / MS_IN_DAY
+
+  func getFeeTiers() = {
+    let storedTiers = this.getString(k_feeTiers).valueOrElse("")
+    if (storedTiers == "") then {
+      []
+    } else {
+      let tiers = this.getString(k_feeTiers).valueOrElse("").split(",")
+      func toFeeTier(_acc: List[(Int, Int)], _tier: String) = {
+        let tierSplit = _tier.split(":")
+        let minCumulativeVolume = tierSplit.getElement(0).parseIntValue()
+        let discount = tierSplit.getElement(1).parseIntValue()
+
+        _acc :+ (minCumulativeVolume, discount)
+      }
+      FOLD<10>(tiers, [], toFeeTier)
+    }
+  }
+
+  func getTraderVolume(_trader: String, _dayId: Int) = {
+    let key = getTraderVolumeKey(_trader, _dayId)
+    this.getInteger(key).valueOrElse(0)
+  }
+
+  func getTraderCumulativeVolume(_trader: String) = {
+    let key = getTraderCumulativeVolumeKey(_trader)
+    this.getInteger(key).valueOrElse(0)
+  }
 
   func getFeesInPeriod(_amm: String, _trader: String, _weekId: Int) = {
     let key = getTraderFeesInPeriodKey(_amm, _trader, _weekId)
@@ -325,6 +367,23 @@
   }
 
   ##### Update functions #####
+  func updateTraderVolume(_trader: String, _dayId: Int,  _generatedVolume: Int) = {
+    # First update the fee for current day
+    let actualDayVolume = getTraderVolume(_trader, _dayId) + _generatedVolume
+
+    # Next compute cumulative fees over last 30 days
+    let daysBefore = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
+    func updateCumulativeVolume(_acc: Int, _minusDay: Int) = {
+      _acc + getTraderVolume(_trader, _dayId - _minusDay)
+    }
+    let cumulativeVolume = FOLD<30>(daysBefore, 0, updateCumulativeVolume)
+
+    [
+      IntegerEntry(getTraderVolumeKey(_trader, _dayId), actualDayVolume),
+      IntegerEntry(getTraderCumulativeVolumeKey(_trader), cumulativeVolume + actualDayVolume)
+    ]
+  }
+
   func updateAmmFees(_amm: String, _trader: String, _weekId: Int, _actualFee: Int) = {
     let traderFeesKey = getTraderFeesInPeriodKey(_amm, _trader, _weekId)
     let totalFeesKey = getTotalAmmFeesInPeriodKey(_amm, _weekId)
@@ -380,6 +439,23 @@
       IntegerEntry(lastNotionalKey, _traderLastNotional),
       IntegerEntry(traderAverageNotionalInPeriodKey, _traderAverage)
     ]
+  }
+
+  func getFeeDiscount(_trader: String) = {
+    let tiers = getFeeTiers()
+    let cumulativeVolume = getTraderCumulativeVolume(_trader)
+
+    func findFee(_acc: List[Int], _tier: (Int, Int)) = {
+      let (minCumulativeVolume, discount) = _tier
+      if (cumulativeVolume >= minCumulativeVolume) then {
+        [discount]
+      } else {
+        _acc
+      }
+    }
+
+    let resultList = FOLD<5>(tiers, [NO_DISCOUNT], findFee)
+    resultList.getElement(0)
   }
 
   ##### Callable functions #####
@@ -464,7 +540,21 @@
   }
 
   @Callable(i)
-  func attachRewardAsset( _assetId: String, _maxAmountPerPeriod: Int) = {
+  func setFeeDiscountTiers(_discounts: String) = {
+    if (
+      !initialized()
+      || i.caller != adminAddress()
+    ) then {
+      throw("Invalid setFeeDiscountTiers params")
+    } else {
+      [
+        StringEntry(k_feeTiers, _discounts)
+      ]
+    }
+  }
+
+  @Callable(i)
+  func attachRewardAsset(_assetId: String, _maxAmountPerPeriod: Int) = {
     if (
       !initialized()
       || i.caller != adminAddress()
@@ -539,6 +629,7 @@
       let actualNotional = _notional.usdnToDecimals()
       let lastNotional = getLastNotional(amm, _trader)
       let weekId = getWeekId(TIME)
+      let dayId = getDayId(TIME)
       let weekStart = getWeekStart(weekId)
       let weekEnd = getWeekEnd(weekId)
       let t = weekEnd - weekStart
@@ -562,7 +653,27 @@
         newTraderAmmScore,
         newTotalAmmScoreInPeriod
       )
+      ++
+      updateTraderVolume(
+        _trader,
+        dayId,
+        abs(lastNotional - actualNotional)
+      )
     }
+  }
+
+  @Callable(i)
+  func computeFeeDiscount(_trader: String) = {
+    let result = getFeeDiscount(_trader)
+
+    ([], result)
+  }
+
+  @Callable(i)
+  func view_computeFeeDiscount(_trader: String) = {
+    let result = getFeeDiscount(_trader)
+
+    throw(result.toString())
   }
 
   @Verifier(tx)
