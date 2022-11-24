@@ -54,6 +54,8 @@ let k_shortFundingRate = "k_shortFundingRate"                     # Funding rate
 # AMM State
 let k_quoteAssetReserve = "k_qtAstR"                      # Quote Asset Reserve (AMM)
 let k_baseAssetReserve = "k_bsAstR"                       # Base Asset Reserve (AMM)
+let k_quoteAssetWeight = "k_qtAstW"                       # Quote Asset Weight
+let k_baseAssetWeight = "k_bsAstW"                        # Base Asset Weight
 let k_totalPositionSize = "k_totalPositionSize"           # Total trader position size (in Base asset)
 let k_totalLongPositionSize = "k_totalLongPositionSize"   # Total LONG trader position size (in Base asset)
 let k_totalShortPositionSize = "k_totalShortPositionSize" # Total SHORT trader position size (in Base asset)
@@ -118,6 +120,7 @@ let TWAP_INTERVAL           = 15
 let ORACLE_INTERVAL         = 15
 
 let SECONDS = 1000
+let DECIMAL_NUMBERS = 6
 let DECIMAL_UNIT = 1 * (10 * 10 * 10 * 10 * 10 * 10)
 let ONE_DAY = 86400 * DECIMAL_UNIT
 let ALL_FEES = 100
@@ -130,6 +133,14 @@ func s(_x: Int) = _x.toString() + ","
 
 func divd(_x: Int, _y: Int) = fraction(_x, DECIMAL_UNIT, _y, HALFEVEN)
 func muld(_x: Int, _y: Int) = fraction(_x, _y, DECIMAL_UNIT, HALFEVEN)
+func sqrtd(_x: Int) = sqrt(_x, DECIMAL_NUMBERS, DECIMAL_NUMBERS, HALFEVEN)
+func powd(_x: Int, _y: Int) = pow(_x, DECIMAL_NUMBERS, _y, DECIMAL_NUMBERS, DECIMAL_NUMBERS, HALFEVEN)
+
+func bdivd(_x: BigInt, _y: BigInt) = fraction(_x, DECIMAL_UNIT.toBigInt(), _y, HALFEVEN)
+func bmuld(_x: BigInt, _y: BigInt) = fraction(_x, _y, DECIMAL_UNIT.toBigInt(), HALFEVEN)
+func bsqrtd(_x: BigInt) = sqrt(_x, DECIMAL_NUMBERS, DECIMAL_NUMBERS, HALFEVEN)
+func bpowd(_x: BigInt, _y: BigInt) = pow(_x, DECIMAL_NUMBERS, _y, DECIMAL_NUMBERS, DECIMAL_NUMBERS, HALFEVEN)
+
 func abs(_x: Int) = if (_x > 0) then _x else -_x
 func vmax(_x: Int, _y: Int) = if (_x >= _y) then _x else _y
 
@@ -150,6 +161,7 @@ func pushToQueue(_list: List[String], _maxSize: Int, _value: String) = if (_list
 
 ##### Accessor functions #####
 func int(k: String) = this.getInteger(k).valueOrErrorMessage("no value for " + k)
+func intOr(k: String, def: Int) = this.getInteger(k).valueOrElse(def)
 func strA(_address: Address, _key: String) = {
   let val = _address.getString(_key).valueOrErrorMessage("No value for key " + _key)
   val
@@ -165,6 +177,8 @@ func fee() = int(k_fee)
 func initMarginRatio() = int(k_initMarginRatio)
 func qtAstR() = int(k_quoteAssetReserve)
 func bsAstR() = int(k_baseAssetReserve)
+func qtAstW() = intOr(k_quoteAssetWeight, DECIMAL_UNIT)
+func bsAstW() = intOr(k_baseAssetWeight, DECIMAL_UNIT)
 func totalPositionSize() = int(k_totalPositionSize)
 func cumulativeNotional() = int(k_cumulativeNotional)
 func openInterestNotional() = int(k_openInterestNotional)
@@ -176,7 +190,7 @@ func maintenanceMarginRatio() = int(k_maintenanceMarginRatio)
 func liquidationFeeRatio() = int(k_liquidationFeeRatio)
 func partialLiquidationRatio() = int(k_partialLiquidationRatio)
 func spreadLimit() = int(k_spreadLimit)
-func maxPriceImpact() = int(k_maxPriceImpact)
+func maxPriceImpact() = 10000000000
 func maxPriceSpread() = int(k_maxPriceSpread)
 func latestLongCumulativePremiumFraction() = int(k_latestLongCumulativePremiumFraction)
 func latestShortCumulativePremiumFraction() = int(k_latestShortCumulativePremiumFraction)
@@ -277,20 +291,27 @@ func updateReserve(_isAdd: Boolean, _quoteAssetAmount: Int, _baseAssetAmount: In
   }
 }
 
+func calcInvariant(_qtAstR: Int, _qtAstW: Int, _bsAstR: Int, _bsAstW: Int) = {
+  _qtAstR.muld(_qtAstW).muld(_bsAstR.muld(_bsAstW))
+}
+
 # Computes result of swapping a given amount of _quoteAssetAmount
 # Returns full new AMM state, as well as amount of base asset bought / sold
 # _isAdd - true when we are adding quote asset to AMM, false when removing
 func swapInput(_isAdd: Boolean, _quoteAssetAmount: Int) = {
   let _qtAstR = qtAstR()
   let _bsAstR = bsAstR()
-  let k = muld(_qtAstR, _bsAstR)
+  let _qtAstW = qtAstW()
+  let _bsAstW = bsAstW()
+
+  let k = calcInvariant(_qtAstR, _qtAstW, _bsAstR, _bsAstW)
   let quoteAssetReserveAfter = if (_isAdd) then {
     _qtAstR + _quoteAssetAmount
   } else {
     _qtAstR - _quoteAssetAmount
   }
 
-  let baseAssetReserveAfter = divd(k, quoteAssetReserveAfter)
+  let baseAssetReserveAfter = divd(k, quoteAssetReserveAfter.muld(_qtAstW).muld(_bsAstW))
   let amountBaseAssetBoughtAbs = abs(baseAssetReserveAfter - _bsAstR)
   let amountBaseAssetBought = if (_isAdd) then {
     amountBaseAssetBoughtAbs
@@ -305,7 +326,7 @@ func swapInput(_isAdd: Boolean, _quoteAssetAmount: Int) = {
     cumulativeNotionalAfter1
   ) = updateReserve(_isAdd, _quoteAssetAmount, amountBaseAssetBoughtAbs)
 
-  let priceBefore = divd(_qtAstR, _bsAstR)
+  let priceBefore = divd(_qtAstR.muld(_qtAstW), _bsAstR.muld(_bsAstW))
   let marketPrice = divd(_quoteAssetAmount, amountBaseAssetBoughtAbs)
   let priceDiff = abs(priceBefore - marketPrice)
   let priceImpact = DECIMAL_UNIT - divd(priceBefore, (priceBefore + priceDiff))
@@ -361,22 +382,24 @@ func swapOutputWithReserves(
   _baseAssetAmount: Int,
   _checkMaxPriceImpact: Boolean,
   _quoteAssetReserve: Int,
-  _baseAssetReserve: Int
+  _quoteAssetWeight: Int,
+  _baseAssetReserve: Int,
+  _baseAssetWeight: Int
 ) = {
-  let priceBefore = divd(_quoteAssetReserve, _baseAssetReserve)
+  let priceBefore = divd(_quoteAssetReserve.muld(_quoteAssetWeight), _baseAssetReserve.muld(_baseAssetWeight))
 
   if (_baseAssetAmount == 0) then {
     throw("Invalid base asset amount")
   } else {
-    let k = muld(_quoteAssetReserve, _baseAssetReserve)
+    let k = calcInvariant(_quoteAssetReserve, _quoteAssetWeight, _baseAssetReserve, _baseAssetWeight)
     let baseAssetPoolAmountAfter = if (_isAdd) then {
       _baseAssetReserve + _baseAssetAmount 
     } else {
       _baseAssetReserve - _baseAssetAmount
     }
 
-    let quoteAssetAfter = divd(k, baseAssetPoolAmountAfter)
-    let quoteAssetSold = abs(quoteAssetAfter - _quoteAssetReserve)
+    let quoteAssetAfter = divd(k, baseAssetPoolAmountAfter.muld(_baseAssetWeight))
+    let quoteAssetSold = abs(quoteAssetAfter - _quoteAssetReserve.muld(_quoteAssetWeight))
 
     let maxPriceImpactValue = maxPriceImpact()
 
@@ -424,7 +447,9 @@ func swapOutput(
     _baseAssetAmount,
     _checkMaxPriceImpact,
     qtAstR(),
-    bsAstR()
+    qtAstW(),
+    bsAstR(),
+    bsAstW()
   )
 }
 
@@ -460,7 +485,9 @@ func requireNotOverSpreadLimit(_quoteAssetReserve: Int, _baseAssetReserve: Int) 
 func getSpotPrice() = {
   let _quoteAssetReserve = qtAstR()
   let _baseAssetReserve = bsAstR()
-  divd(_quoteAssetReserve, _baseAssetReserve)
+  let _qtAstW = qtAstW()
+  let _bsAstW = bsAstW()
+  divd(_quoteAssetReserve.muld(_qtAstW), _baseAssetReserve.muld(_bsAstW))
 }
 
 # Checks if stop price and index price diverge more then spreadLimit
@@ -474,7 +501,9 @@ func getPositionAdjustedOpenNotional(
   _positionSize: Int, 
   _option: Int,
   _quoteAssetReserve: Int,
-  _baseAssetReserve: Int
+  _quoteAssetWeight: Int,
+  _baseAssetReserve: Int,
+  _baseAssetWeight: Int
 ) = {
   let positionSizeAbs = abs(_positionSize)
   let isShort = _positionSize < 0
@@ -484,7 +513,9 @@ func getPositionAdjustedOpenNotional(
       positionSizeAbs,
       false,
       _quoteAssetReserve,
-      _baseAssetReserve
+      _quoteAssetWeight,
+      _baseAssetReserve,
+      _baseAssetWeight
     )
     outPositionNotional
   } else {
@@ -501,7 +532,9 @@ func getPositionNotionalAndUnrealizedPnlByValues(
     _positionSize: Int, 
     _positionOpenNotional: Int, 
     _quoteAssetReserve: Int,
+    _quoteAssetWeight: Int,
     _baseAssetReserve: Int,
+    _baseAssetWeight: Int,
     _option: Int
   ) = {
     if (_positionSize == 0) then {
@@ -512,7 +545,9 @@ func getPositionNotionalAndUnrealizedPnlByValues(
         _positionSize,
         _option,
         _quoteAssetReserve,
-        _baseAssetReserve
+        _quoteAssetWeight,
+        _baseAssetReserve,
+        _baseAssetWeight
       )
 
       let unrealizedPnl = if (isShort) then {
@@ -542,7 +577,9 @@ func getPositionNotionalAndUnrealizedPnl(_trader: String, _option: Int) = {
       positionSize,
       positionOpenNotional,
       qtAstR(),
+      qtAstW(),
       bsAstR(),
+      bsAstW(),
       _option
     )
 }
@@ -684,30 +721,110 @@ func getTwapSpotPrice() = {
   (nowCumulativePrice - startCumulativePrice) / TWAP_INTERVAL
 }
 
-func getPegAdjustCost(_price: Int) = {
+func getUpdatedWeights(
+  _quoteAssetReserve: Int,
+  _baseAssetReserve: Int, 
+  _k: Int,
+  _terminalPrice: Int
+) = {
+  let l = sqrtd(_k)
+  # let newBsAstW = l.divd(_baseAssetReserve.muld(sqrtd(_terminalPrice)))
+  # let newQtAstW = _k.divd(newBsAstW.muld(_baseAssetReserve).muld(_quoteAssetReserve))
+  let newBsAstW = DECIMAL_UNIT
+  let newQtAstW = divd(_terminalPrice.muld(_baseAssetReserve), _quoteAssetReserve)
+  # strict x = throw("newQtAstW: " + newQtAstW.toString() + " _terminalPrice=" + _terminalPrice.toString() +  " _quoteAssetReserve=" + _quoteAssetReserve.toString() + " _baseAssetReserve=" + _baseAssetReserve.toString() + " _terminalPrice=" + _terminalPrice.toString())
+  (newQtAstW, newBsAstW)
+}
+
+func getTerminalAmmState() = {
   let _positionSize = totalPositionSize()
-  let direction = _positionSize > 0
-  let currentNetMarketValue = swapOutput(
-    direction,
-    abs(_positionSize),
-    false
-  )._1
+  if (_positionSize == 0) then {
+    (qtAstR(), bsAstR())
+  } else {
+    let direction = _positionSize > 0
+    let (
+      currentNetMarketValue,
+      terminalQuoteAssetReserve,
+      terminalBaseAssetReserve
+    ) = swapOutput(
+      direction,
+      abs(_positionSize),
+      false
+    )
 
-  let baseAssetReserve = bsAstR()
-  let newQuoteAssetReserve = muld(baseAssetReserve, _price)
+    (terminalQuoteAssetReserve, terminalBaseAssetReserve)
+  }
+}
 
-  let cost = getPositionNotionalAndUnrealizedPnlByValues(
-    _positionSize,
-    currentNetMarketValue,
-    newQuoteAssetReserve,
-    baseAssetReserve,
-    PNL_OPTION_SPOT
-  )._2
-  
-  (
-    newQuoteAssetReserve,
-    cost
-  )
+func getQuoteAssetWeight(
+  baseAssetReserve: Int,
+  totalPositionSize: Int,
+  quoteAssetReserve: Int, 
+  targetPrice: Int
+) = {
+    let b = baseAssetReserve.toBigInt()
+    let sz = totalPositionSize.toBigInt()
+    let q = quoteAssetReserve.toBigInt()
+    let p = targetPrice.toBigInt()
+    
+    let bs2 = bpowd(b + sz, (2 * DECIMAL_UNIT).toBigInt())
+    let qbs2 = bmuld(q, bs2)
+    let ps4 = 4.toBigInt() * p.bmuld(sz)
+    let sqr = bsqrtd(qbs2.bmuld(q - ps4))
+    let bq = b.bmuld(q)
+    let qs = q.bmuld(sz)
+    let top = -sqr + bq + qs
+    let bot = 2.toBigInt() * q.bmuld(sz)
+    let result = top.bdivd(bot)
+
+    result.toInt()
+}
+
+func getSyncTerminalPrice(_terminalPrice: Int) = {
+  let _positionSize = totalPositionSize()
+  if (_positionSize == 0) then {
+    let _qtAstR = qtAstR()
+    let _bsAstR = bsAstR()
+    let k = calcInvariant(_qtAstR, qtAstW(), _bsAstR, bsAstW())
+    let (newQtAstW, newBsAstW) = getUpdatedWeights(_qtAstR, _bsAstR, k, _terminalPrice)
+    
+    (
+      newQtAstW,
+      newBsAstW,
+      0
+    )
+  } else {
+    let direction = _positionSize > 0
+    let currentNetMarketValue = swapOutput(
+      direction,
+      abs(_positionSize),
+      false
+    )._1
+
+    let _qtAstR = qtAstR()
+    let _bsAstR = bsAstR()
+    # Compute new qW and bW
+    let newQtAstW = getQuoteAssetWeight(_bsAstR, _positionSize, _qtAstR, _terminalPrice)
+    let newBsAstW = DECIMAL_UNIT
+
+    # Compute margin to vault
+
+    let marginToVault = getPositionNotionalAndUnrealizedPnlByValues(
+      _positionSize,
+      currentNetMarketValue,
+      _qtAstR,
+      newQtAstW,
+      _bsAstR,
+      newBsAstW,
+      PNL_OPTION_SPOT
+    )._2
+    
+    (
+      newQtAstW,
+      newBsAstW,
+      marginToVault
+    )
+  }
 }
 
 func getFunding() = {
@@ -869,6 +986,16 @@ func updateAmmReserves(
   ]
 }
 
+func updateAmmWeights(
+  _qtAstW: Int,
+  _bsAstW: Int
+) = {
+  [
+    IntegerEntry(k_quoteAssetWeight, _qtAstW),
+    IntegerEntry(k_baseAssetWeight, _bsAstW)
+  ]
+}
+
 func updateAmm(
   _qtAstR: Int,
   _bsAstR: Int,
@@ -878,6 +1005,8 @@ func updateAmm(
   _totalLongPositionSize: Int,
   _totalShortPositionSize: Int
 ) = {
+  let _qtAstW = qtAstW()
+  let _bsAstW = bsAstW()
   if (_totalLongPositionSize - _totalShortPositionSize != _totalPositionSizeAfter) then {
     throw("Invalid AMM state data: " + _totalLongPositionSize.toString() + " +  " + _totalShortPositionSize.toString() + " != " + _totalPositionSizeAfter.toString())
   } else {
@@ -889,7 +1018,7 @@ func updateAmm(
       IntegerEntry(k_openInterestNotional, _openInterestNotional),
       IntegerEntry(k_totalLongPositionSize, _totalLongPositionSize),
       IntegerEntry(k_totalShortPositionSize, _totalShortPositionSize)
-    ] ++ appendTwap(divd(_qtAstR, _bsAstR))
+    ] ++ appendTwap(divd(_qtAstR.muld(_qtAstW), _bsAstR.muld(_bsAstW)))
   }
 }
 
@@ -1009,7 +1138,9 @@ func addLiquidity(_quoteAssetAmount: Int) = {
   } else {
     let _qtAstR = qtAstR()
     let _bsAstR = bsAstR()
-    let price = divd(_qtAstR, _bsAstR)
+    let _qtAstW = qtAstW()
+    let _bsAstW = bsAstW()
+    let price = divd(_qtAstR.muld(_qtAstW), _bsAstR.muld(_bsAstW))
     let baseAssetAmountToAdd = divd(_quoteAssetAmount, price)
 
     let qtAstRAfter = _qtAstR + _quoteAssetAmount
@@ -1029,7 +1160,9 @@ func removeLiquidity(_quoteAssetAmount: Int) = {
   } else {
     let _qtAstR = qtAstR()
     let _bsAstR = bsAstR()
-    let price = divd(_qtAstR, _bsAstR)
+    let _qtAstW = qtAstW()
+    let _bsAstW = bsAstW()
+    let price = divd(_qtAstR.muld(_qtAstW), _bsAstR.muld(_bsAstW))
     let baseAssetAmountToRemove = divd(_quoteAssetAmount, price)
 
     let qtAstRAfter = _qtAstR - _quoteAssetAmount
@@ -1164,6 +1297,8 @@ func decreasePosition(
   _leverage: Int,
   _minBaseAssetAmount: Int
 ) = {
+  strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
+
   if (
     _amount <= 0
     || !initialized()
@@ -1280,6 +1415,8 @@ func increasePosition(
   _minBaseAssetAmount: Int,
   _refLink: String
 ) = {
+  strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
+
   let _trader = i.caller.toString()
   let _rawAmount = i.payments[0].amount
   let _assetId = i.payments[0].assetId
@@ -1492,6 +1629,8 @@ func increasePosition(
 
 @Callable(i)
 func addMargin() = {
+  strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
+
   let _trader = i.caller.toString()
   let _rawAmount = i.payments[0].amount
   let _assetId = i.payments[0].assetId
@@ -1615,6 +1754,8 @@ func addMargin() = {
 func removeMargin(
   _amount: Int
 ) = {
+  strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
+
   let _trader = i.caller.toString()
   if (
     _amount <= 0
@@ -1709,6 +1850,8 @@ func removeMargin(
 
 @Callable(i)
 func closePosition() = {
+  strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
+
   let _trader = getActualCaller(i)
   let _traderAddress = addressFromString(_trader).valueOrErrorMessage("Invalid caller")
     if (
@@ -1829,6 +1972,7 @@ func closePosition() = {
 
 @Callable(i)
 func liquidate(_trader: String) = {
+  strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
   # If market (future) price and index price diverge a lot, use index price to compute
   # liquidation margin. That provides additional safety layer for traders
   #
@@ -2128,60 +2272,14 @@ func forceMoveAsset(_trader: String, _amount: Int) = {
 }
 
 @Callable(i)  
-func adjustPeg(_price: Int) = {
-  if (
-    addressFromPublicKey(adminPublicKey()) != i.caller
-    || _price < 0
-  ) then {
-    throw("Invalid adjustPeg parameters")
-  } else {
-    let (
-      newQuoteAssetReserve,
-      pegChangeCost
-    ) = getPegAdjustCost(_price)
+func syncTerminalPriceToOracle() = {
+  let (
+    newQuoteAssetWeight,
+    newBaseAssetWeight,
+    marginToVault
+  ) = getSyncTerminalPrice(getOracleTwapPrice())
 
-    if (pegChangeCost == 0) then {
-        throw("Nothing to adjust")
-    } else {
-        if (pegChangeCost > 0) then {
-          # strict withdrawInsurance = invoke(
-          #   insuranceAddress(),
-          #   "withdraw",
-          #   [pegChangeCost],
-          #   []
-          # )
-
-          # strict stake = invoke(
-          #   quoteAssetStaking(),
-          #   "lockNeutrinoSP",
-          #   [stakingAddress().toString(), ALL_FEES],
-          #   [AttachedPayment(quoteAsset(), pegChangeCost)]
-          # )
-
-          # updateBalance(cbalance() + pegChangeCost)
-          # ++
-          updateAmmReserves(newQuoteAssetReserve, bsAstR())
-        } else {
-          strict unstake = invoke(
-            managerAddress(),
-            "withdraw",
-            [quoteAsset().toBase58String(), abs(pegChangeCost)],
-            []
-          )
-
-          strict depositInsurance = invoke(
-            insuranceAddress(),
-            "deposit",
-            [],
-            [AttachedPayment(quoteAsset(), abs(pegChangeCost))]
-          )
-
-          updateBalance(cbalance() - abs(pegChangeCost))
-          ++
-          updateAmmReserves(newQuoteAssetReserve, bsAstR())
-      }
-    }
-  }
+  updateAmmWeights(newQuoteAssetWeight, newBaseAssetWeight)
 }
 
 @Callable(i)
@@ -2210,39 +2308,49 @@ func migrateLiquidity() = {
 
 @Callable(i)
 func v_get(_trader: String) = {
+  strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
   let (x1, x2, x3, x4) = internalClosePosition(_trader, false)
   throw(s(x2) + s(x3) + s(x4) + s(getMarginRatio(_trader)))
 }
 
 @Callable(i)
 func view_calcRemainMarginWithFundingPayment(_trader: String) = {
-    let (
+  strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
+  let (
+    positionSize,
+    positionMargin,
+    pon,
+    positionLstUpdCPF
+  ) = getPosition(_trader)
+  let (positionNotional, unrealizedPnl) = getPositionNotionalAndUnrealizedPnl(_trader, PNL_OPTION_SPOT)
+  let (remainMargin, badDebt, fundingPayment) = calcRemainMarginWithFundingPayment(
       positionSize,
       positionMargin,
-      pon,
-      positionLstUpdCPF
-    ) = getPosition(_trader)
-    let (positionNotional, unrealizedPnl) = getPositionNotionalAndUnrealizedPnl(_trader, PNL_OPTION_SPOT)
-    let (remainMargin, badDebt, fundingPayment) = calcRemainMarginWithFundingPayment(
-        positionSize,
-        positionMargin,
-        positionLstUpdCPF,
-        unrealizedPnl
-    )
-    throw(
-      s(remainMargin) 
-      + s(fundingPayment) 
-      + s(getMarginRatio(_trader))
-      + s(unrealizedPnl)
-      + s(badDebt)
-      + s(positionNotional)
-    )
+      positionLstUpdCPF,
+      unrealizedPnl
+  )
+  throw(
+    s(remainMargin) 
+    + s(fundingPayment) 
+    + s(getMarginRatio(_trader))
+    + s(unrealizedPnl)
+    + s(badDebt)
+    + s(positionNotional)
+  )
 }
 
 @Callable(i)
 func view_getPegAdjustCost(_price: Int) = {
-  let cost = getPegAdjustCost(_price)
-  throw(cost._2.toString())
+  let result = getSyncTerminalPrice(_price)
+  throw(result._3.toString())
+}
+
+@Callable(i)
+func view_getTerminalAmmPrice() = {
+  let (terminalQuoteAssetReserve, terminalBaseAssetReserve) = getTerminalAmmState()
+  let price = divd(terminalQuoteAssetReserve.muld(qtAstW()), terminalBaseAssetReserve.muld(bsAstW()))
+  # strict x = throw("terminalQuoteAssetReserve=" + terminalQuoteAssetReserve.toString() + " terminalBaseAssetReserve=" + terminalBaseAssetReserve.toString() + " qtAstW()=" + qtAstW().toString())
+  throw(price.toString())
 }
 
 @Callable(i)

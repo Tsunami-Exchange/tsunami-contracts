@@ -1841,13 +1841,13 @@ class AMM {
     return payFundingTx;
   }
 
-  async adjustPeg(_price) {
+  async syncTerminalPriceToOracle() {
     const payFundingTx = invokeScript(
       {
         dApp: address(this.e.seeds.amms[this.address]),
         call: {
-          function: "adjustPeg",
-          args: [{ type: "integer", value: Math.round(_price * decimals) }],
+          function: "syncTerminalPriceToOracle",
+          args: [],
         },
       },
       this.e.seeds.admin
@@ -1941,9 +1941,17 @@ class AMM {
   async getMarketPrice() {
     let dApp = address(this.e.seeds.amms[this.address]);
     let quote = await accountDataByKey(`k_qtAstR`, dApp).then((x) => x.value);
+    let quoteW = await accountDataByKey(`k_qtAstW`, dApp).then((x) =>
+      x ? x.value : decimals
+    );
     let base = await accountDataByKey(`k_bsAstR`, dApp).then((x) => x.value);
+    let baseW = await accountDataByKey(`k_bsAstW`, dApp).then((x) =>
+      x ? x.value : decimals
+    );
 
-    return Number.parseFloat((quote / base).toFixed(4));
+    let rawQ = (quote * quoteW) / decimals;
+    let rawB = (base * baseW) / decimals;
+    return Number.parseFloat((rawQ / rawB).toFixed(4));
   }
 
   async getBalance() {
@@ -2063,12 +2071,45 @@ class AMM {
     );
 
     try {
+      console.log(JSON.stringify(invokeTx));
       await broadcast(invokeTx);
     } catch (e) {
       let { message } = JSON.parse(JSON.stringify(e));
       let parts = message
         .replace("Error while executing account-script: ", "")
         .split(",");
+      let cost = Number.parseFloat((parseInt(parts[0]) / 10 ** 6).toFixed(4));
+
+      // if (!cost) {
+      //    throw new Error(message)
+      //}
+
+      console.log(message);
+
+      return cost;
+    }
+  }
+
+  async getTerminalAmmPrice() {
+    const invokeTx = invokeScript(
+      {
+        dApp: address(this.e.seeds.amms[this.address]),
+        call: {
+          function: "view_getTerminalAmmPrice",
+          args: [],
+        },
+      },
+      this.e.seeds.admin
+    );
+
+    try {
+      await broadcast(invokeTx);
+    } catch (e) {
+      let { message } = JSON.parse(JSON.stringify(e));
+      let parts = message
+        .replace("Error while executing account-script: ", "")
+        .split(",");
+      console.log(message);
       let cost = Number.parseFloat((parseInt(parts[0]) / 10 ** 6).toFixed(4));
 
       // if (!cost) {
