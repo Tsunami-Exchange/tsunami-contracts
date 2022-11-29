@@ -39,9 +39,6 @@ class Environment {
 
     console.log(`coordinatorAddress=${coordinatorAddress}`);
 
-    //const minerAddress = await accountDataByKey(coordinatorAddress, `k_miner_address`).then(x => x.value)
-    //const insuranceAddress = await accountDataByKey(coordinatorAddress, `k_insurance_address`).then(x => x.value)
-
     const govAsset = await accountDataByKey(
       `k_gov_asset`,
       coordinatorAddress
@@ -53,6 +50,10 @@ class Environment {
 
     const insuranceAddress = await accountDataByKey(
       `k_insurance_address`,
+      coordinatorAddress
+    ).then((x) => x && x.value);
+    const managerAddress = await accountDataByKey(
+      `k_manager_address`,
       coordinatorAddress
     ).then((x) => x && x.value);
     const stakingAddress = await accountDataByKey(
@@ -71,6 +72,10 @@ class Environment {
       `k_miner_address`,
       coordinatorAddress
     ).then((x) => x && x.value);
+    const vaultAddress = await accountDataByKey(
+      `k_vault_address`,
+      coordinatorAddress
+    ).then((x) => x && x.value);
 
     let allKeys = await accountData(coordinatorAddress);
     allKeys = Object.keys(allKeys).map((k) => allKeys[k]);
@@ -83,10 +88,12 @@ class Environment {
 
     this.amms = ammAddresses.map((x) => new AMM(this, x));
     this.insurance = new Insurance(this, insuranceAddress);
+    this.manager = new Manager(this, managerAddress);
     this.miner = new Miner(this, minerAddress);
     this.staking = new Staking(this, stakingAddress);
     this.farming = new Farming(this, farmingAddress);
     this.referral = new Referral(this, referralAddress);
+    this.vault = new Vault(this, vaultAddress);
 
     console.log(`Loaded environment with ${this.amms.length} AMMs`);
   }
@@ -107,6 +114,7 @@ class Environment {
       prizes: 0.05 * wvs,
       nfts: 0.05 * wvs,
       collateral: 0.05 * wvs,
+      vault: 0.05 * wvs,
     });
 
     this.seeds.coordinator = accounts.coordinator;
@@ -122,6 +130,7 @@ class Environment {
     this.seeds.prizes = accounts.prizes;
     this.seeds.nfts = accounts.nfts;
     this.seeds.collateral = accounts.collateral;
+    this.seeds.vault = accounts.vault;
 
     if (this.isLocal) {
       await setupAccounts({
@@ -294,7 +303,7 @@ class Environment {
       this.seeds.manager,
       "Manager",
       this.isLocal,
-      address(this.seeds.manager)
+      address(this.seeds.timer)
     );
     let p10 = deploy(
       "housekeeper.ride",
@@ -302,7 +311,7 @@ class Environment {
       this.seeds.housekeeper,
       "Housekeeper",
       this.isLocal,
-      address(this.seeds.housekeeper)
+      address(this.seeds.timer)
     );
     let p11 = deploy(
       "prizes.ride",
@@ -310,7 +319,7 @@ class Environment {
       this.seeds.prizes,
       "Prizes",
       this.isLocal,
-      address(this.seeds.housekeeper)
+      address(this.seeds.timer)
     );
     let p12 = deploy(
       "nfts.ride",
@@ -318,7 +327,7 @@ class Environment {
       this.seeds.nfts,
       "NFT Manager",
       this.isLocal,
-      address(this.seeds.nfts)
+      address(this.seeds.timer)
     );
     let p13 = deploy(
       "collateral.ride",
@@ -326,7 +335,15 @@ class Environment {
       this.seeds.collateral,
       "Collateral Manager",
       this.isLocal,
-      address(this.seeds.collateral)
+      address(this.seeds.timer)
+    );
+    let p14 = deploy(
+      "vault.ride",
+      3400000,
+      this.seeds.vault,
+      "Vault",
+      this.isLocal,
+      address(this.seeds.timer)
     );
 
     let period = Math.floor(new Date().getTime() / 1000 / 604800);
@@ -360,6 +377,7 @@ class Environment {
       p11,
       p12,
       p13,
+      p14,
       seedOracleTx,
     ]);
 
@@ -530,7 +548,16 @@ class Environment {
         this.seeds.admin
       );
 
-      console.log(`setExchangeAddress in ${setExchangeManagerTx.id}`);
+      const setVaultTx = await invoke(
+        {
+          dApp: address(this.seeds.coordinator),
+          functionName: "setVaultAddress",
+          arguments: [address(this.seeds.vault)],
+        },
+        this.seeds.admin
+      );
+
+      console.log(`setVaultAddress in ${setExchangeManagerTx.id}`);
 
       initTxs.push(waitForTx(setInsuranceFundTx.id));
       initTxs.push(waitForTx(setQuoteAssetTx.id));
@@ -546,6 +573,7 @@ class Environment {
       initTxs.push(waitForTx(setNftManagerTx.id));
       initTxs.push(waitForTx(setCollateralManagerTx.id));
       initTxs.push(waitForTx(setExchangeManagerTx.id));
+      initTxs.push(waitForTx(setVaultTx.id));
     }
 
     // Init insurance
@@ -741,6 +769,21 @@ class Environment {
       );
     }
 
+    // Init Vault
+    {
+      const initVaultTx = await invoke(
+        {
+          dApp: address(this.seeds.vault),
+          functionName: "initialize",
+          arguments: [address(this.seeds.coordinator)],
+        },
+        this.seeds.admin
+      );
+
+      initTxs.push(waitForTx(initVaultTx.id));
+      console.log("Vault initialized in " + initVaultTx.id);
+    }
+
     await Promise.all(initTxs);
 
     this.insurance = new Insurance(this);
@@ -752,6 +795,7 @@ class Environment {
     this.housekeeper = new Housekeeper(this);
     this.prizes = new Prizes(this);
     this.nfts = new NFTManager(this);
+    this.vault = new Vault(this);
 
     console.log(`Environment deployed`);
   }
@@ -1013,6 +1057,56 @@ class Environment {
 
       await waitForTx(initPrizesTx.id);
       console.log("Prizes initialized in " + initPrizesTx.id);
+    }
+  }
+
+  async deployVault() {
+    if (!this.seeds.vault) {
+      throw Error(`No seed for Vault contract`);
+    }
+
+    let coordinatorAddress =
+      this.addresses.coordinator || address(this.seeds.coordinator);
+    let vaultAddress = address(this.seeds.vault);
+    let fee = 3400000;
+
+    await this.ensureDeploymentFee(vaultAddress, fee);
+
+    await deploy("vault.ride", fee, this.seeds.vault, "Vault");
+
+    let vault = await accountDataByKey(
+      `k_vault_address`,
+      coordinatorAddress
+    ).then((x) => x && x.value);
+    if (vault !== vaultAddress) {
+      const setVaultTx = await invoke(
+        {
+          dApp: coordinatorAddress,
+          functionName: "setVaultAddress",
+          arguments: [vaultAddress],
+        },
+        this.seeds.admin
+      );
+
+      console.log(`setVaultAddress in ${setVaultTx.id}`);
+    }
+
+    let initialized = await accountDataByKey(
+      `k_initialized`,
+      vaultAddress
+    ).then((x) => x && x.value);
+    if (!initialized) {
+      const initVaultTx = await invoke(
+        {
+          dApp: vaultAddress,
+          functionName: "initialize",
+          arguments: [coordinatorAddress],
+        },
+        this.seeds.admin
+      );
+
+      await waitForTx(initVaultTx.id);
+      console.log("Vault initialized in " + initVaultTx.id);
     }
   }
 
@@ -2786,6 +2880,178 @@ class Farming {
   }
 }
 
+class Vault {
+  constructor(e, address, sender) {
+    this.e = e;
+    this.address = address;
+    this.sender = sender;
+  }
+
+  as(_sender) {
+    return new Vault(this.e, address, _sender);
+  }
+
+  async upgrade() {
+    console.log(`Upgrading Vault ${this.address}`);
+    return this.e.upgradeContract("vault.ride", this.address, 3700000);
+  }
+
+  async stake(_amount) {
+    let tx = await invoke(
+      {
+        dApp: address(this.e.seeds.vault),
+        functionName: "stake",
+        arguments: [],
+        payment: [
+          {
+            amount: Math.round(_amount * decimals),
+            assetId: this.e.assets.neutrino,
+          },
+        ],
+      },
+      this.sender
+    );
+
+    await waitForTx(tx.id);
+    return tx;
+  }
+
+  async unStake(_amount) {
+    let tx = await invoke(
+      {
+        dApp: address(this.e.seeds.vault),
+        functionName: "unStake",
+        arguments: [Math.round(_amount * decimals)],
+      },
+      this.sender
+    );
+
+    await waitForTx(tx.id);
+    return tx;
+  }
+
+  async addFree(_amount) {
+    await this.e.supplyUsdn(_amount, address(this.e.seeds.admin));
+
+    let tx = await invoke(
+      {
+        dApp: address(this.e.seeds.vault),
+        functionName: "addFree",
+        arguments: [],
+        payment: [
+          {
+            amount: Math.round(_amount * decimals),
+            assetId: this.e.assets.neutrino,
+          },
+        ],
+      },
+      this.e.seeds.admin
+    );
+
+    await waitForTx(tx.id);
+    return tx;
+  }
+
+  async exchangeFreeAndLocked(_amount) {
+    let tx = await invoke(
+      {
+        dApp: address(this.e.seeds.vault),
+        functionName: "exchangeFreeAndLocked",
+        arguments: [Math.round(_amount * decimals)],
+        payment: [],
+      },
+      this.e.seeds.admin
+    );
+
+    await waitForTx(tx.id);
+    return tx;
+  }
+
+  async balanceOf(_trader) {
+    let trader = address(_trader);
+
+    const balanceRaw = await accountDataByKey(
+      `k_balance_${trader}`,
+      address(this.e.seeds.vault)
+    ).then((x) => x.value);
+
+    return Number.parseFloat(Number.parseFloat(balanceRaw / wvs).toFixed(4));
+  }
+
+  async rate() {
+    const rateRaw = await accountDataByKey(
+      `k_rate`,
+      address(this.e.seeds.vault)
+    ).then((x) => (x ? x.value : 1 * wvs));
+
+    return Number.parseFloat(Number.parseFloat(rateRaw / wvs).toFixed(4));
+  }
+
+  async usdnBalanceOf(_trader) {
+    let shares = await this.balanceOf(_trader);
+    let rate = await this.rate();
+
+    return shares * rate;
+  }
+
+  async lockedBalance() {
+    const balanceRaw = await accountDataByKey(
+      `k_lockedBalance`,
+      address(this.e.seeds.vault)
+    ).then((x) => (x ? x.value : 0));
+
+    return Number.parseFloat(Number.parseFloat(balanceRaw / wvs).toFixed(4));
+  }
+
+  async freeBalance() {
+    const balanceRaw = await accountDataByKey(
+      `k_freeBalance`,
+      address(this.e.seeds.vault)
+    ).then((x) => (x ? x.value : 0));
+
+    return Number.parseFloat(Number.parseFloat(balanceRaw / wvs).toFixed(4));
+  }
+
+  async getWithdrawLimit(_trader) {
+    let trader = address(_trader);
+    let dApp = address(this.e.seeds.vault);
+
+    console.log(`getWithdrawLimit trader=${trader}`);
+
+    const invokeTx = invokeScript(
+      {
+        dApp: dApp,
+        call: {
+          function: "view_withdrawLimit",
+          args: [
+            {
+              value: trader,
+              type: "string",
+            },
+          ],
+        },
+      },
+      this.e.seeds.admin
+    );
+
+    try {
+      await broadcast(invokeTx);
+    } catch (e) {
+      let { message } = JSON.parse(JSON.stringify(e));
+      let parts = message
+        .replace("Error while executing account-script: ", "")
+        .split(",");
+      let amount = Number.parseFloat(
+        Number.parseFloat(parseInt(parts[0]) / decimals).toFixed(4)
+      );
+
+      return {
+        amount,
+      };
+    }
+  }
+}
+
 class Housekeeper {
   constructor(e, address, sender) {
     this.e = e;
@@ -2910,6 +3176,18 @@ class NFTManager {
       type,
       value,
     };
+  }
+}
+
+class Manager {
+  constructor(e, address) {
+    this.e = e;
+    this.address = address;
+  }
+
+  async upgrade() {
+    console.log(`Upgrading v ${this.address}`);
+    return this.e.upgradeContract("manager.ride", this.address, 3700000);
   }
 }
 

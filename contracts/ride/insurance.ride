@@ -94,7 +94,7 @@ func deposit() = {
       || i.caller == adminAddress()
     )
   ) then {
-    throw("Invalid deposit params")
+    throw("Invalid deposit params (insurance)")
   } else {
     strict stake = invoke(
       managerAddress(),

@@ -6,7 +6,8 @@
 {-# CONTENT_TYPE DAPP #-}
 
 ##### Key constants #####
-let k_insurance_address = "k_insurance_address"   # Address of insurance contract
+let k_insurance_address = "k_insurance_address"   # Address of insurance contract (deprecated)
+let k_vault_address = "k_vault_address"           # Address of vault contract
 let k_admin_address = "k_admin_address"           # Address of admin account           
 let k_admin_public_key = "k_admin_public_key"     # Pubic key of admin account
 let k_quote_asset = "k_quote_asset"               # Address of quote asset (USDN in our case)
@@ -178,6 +179,16 @@ func setExchangeAddress(
   let exchangeAddress = getAddressIfValid(_exchangeAddress)
   [
     StringEntry(k_exchange_address, _exchangeAddress)
+  ]
+})
+
+@Callable(i)
+func setVaultAddress(
+  _vaultAddress: String
+) = isAdmin(i).valueOrElse({
+  let exchangeAddress = getAddressIfValid(_vaultAddress)
+  [
+    StringEntry(k_vault_address, _vaultAddress)
   ]
 })
 

@@ -66,7 +66,8 @@ let k_openInterestNotional = "k_openInterestNotional"     # Open Interest Notion
 let k_coordinatorAddress = "k_coordinatorAddress"         # Address of Coordinator (base contract that keeps references to all infrastructure)
 
 # Coordinator keys
-let k_insurance_address = "k_insurance_address"   # Address of insurance contract
+# let k_insurance_address = "k_insurance_address"   # Address of insurance contract
+let k_vault_address = "k_vault_address"           # Address of vault contract
 let k_admin_address = "k_admin_address"           # Address of admin account           
 let k_admin_public_key = "k_admin_public_key"     # Pubic key of admin account
 let k_quote_asset = "k_quote_asset"               # Address of quote asset (USDN in our case)
@@ -93,11 +94,12 @@ func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_pu
 func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
 func quoteAssetStaking() = addressFromString(coordinator().getStringValue(k_quote_staking)).valueOrErrorMessage("Quote asset staking not set")
 func stakingAddress() = addressFromString(coordinator().getStringValue(k_staking_address)).valueOrErrorMessage("Staking not set")
-func insuranceAddress() = addressFromString(coordinator().getStringValue(k_insurance_address)).valueOrErrorMessage("Insurance not set")
+# func insuranceAddress() = addressFromString(coordinator().getStringValue(k_insurance_address)).valueOrErrorMessage("Insurance not set") 
+func vaultAddress() = addressFromString(coordinator().getStringValue(k_vault_address)).valueOrErrorMessage("Vault not set") 
 func minerAddress() = addressFromString(coordinator().getStringValue(k_miner_address)).valueOrErrorMessage("Miner not set")
 func ordersAddress() = addressFromString(coordinator().getStringValue(k_orders_address)).valueOrErrorMessage("Orders not set")
 func referralAddress() = addressFromString(coordinator().getStringValue(k_referral_address)).valueOrErrorMessage("Referral not set")
-func managerAddress() = addressFromString(coordinator().getStringValue(k_manager_address)).valueOrErrorMessage("Manager not set")
+# func managerAddress() = addressFromString(coordinator().getStringValue(k_manager_address)).valueOrErrorMessage("Manager not set")
 func nftManagerAddress() = addressFromString(coordinator().getStringValue(k_nft_manager_address)).valueOrErrorMessage("NFT Manager not set")
 func collateralAddress() = addressFromString(coordinator().getStringValue(k_collateral_address)).valueOrErrorMessage("Collateral Manager not set")
 #func exchangeAddress() = addressFromString(coordinator().getStringValue(k_exchange_address)).valueOrErrorMessage("Exchange not set")
@@ -190,7 +192,7 @@ func maintenanceMarginRatio() = int(k_maintenanceMarginRatio)
 func liquidationFeeRatio() = int(k_liquidationFeeRatio)
 func partialLiquidationRatio() = int(k_partialLiquidationRatio)
 func spreadLimit() = int(k_spreadLimit)
-func maxPriceImpact() = 10000000000
+func maxPriceImpact() = int(k_maxPriceImpact)
 func maxPriceSpread() = int(k_maxPriceSpread)
 func latestLongCumulativePremiumFraction() = int(k_latestLongCumulativePremiumFraction)
 func latestShortCumulativePremiumFraction() = int(k_latestShortCumulativePremiumFraction)
@@ -668,9 +670,9 @@ func internalClosePosition(_trader: String, _checkMaxPriceImpact: Boolean) = {
       totalLongAfter,
       totalShortAfter
     ) = swapOutput(
-        positionSize > 0,
-        abs(positionSize),
-        _checkMaxPriceImpact
+      positionSize > 0,
+      abs(positionSize),
+      _checkMaxPriceImpact
     )
     
     let openInterestNotionalAfter = openInterestNotional() - positionOpenNotional
@@ -719,21 +721,6 @@ func getTwapSpotPrice() = {
   let startCumulativePrice = startLastCumulativePrice + (startMinuteId - maxIndex) * startLastPrice
   
   (nowCumulativePrice - startCumulativePrice) / TWAP_INTERVAL
-}
-
-func getUpdatedWeights(
-  _quoteAssetReserve: Int,
-  _baseAssetReserve: Int, 
-  _k: Int,
-  _terminalPrice: Int
-) = {
-  let l = sqrtd(_k)
-  # let newBsAstW = l.divd(_baseAssetReserve.muld(sqrtd(_terminalPrice)))
-  # let newQtAstW = _k.divd(newBsAstW.muld(_baseAssetReserve).muld(_quoteAssetReserve))
-  let newBsAstW = DECIMAL_UNIT
-  let newQtAstW = divd(_terminalPrice.muld(_baseAssetReserve), _quoteAssetReserve)
-  # strict x = throw("newQtAstW: " + newQtAstW.toString() + " _terminalPrice=" + _terminalPrice.toString() +  " _quoteAssetReserve=" + _quoteAssetReserve.toString() + " _baseAssetReserve=" + _baseAssetReserve.toString() + " _terminalPrice=" + _terminalPrice.toString())
-  (newQtAstW, newBsAstW)
 }
 
 func getTerminalAmmState() = {
@@ -785,12 +772,10 @@ func getSyncTerminalPrice(_terminalPrice: Int) = {
   if (_positionSize == 0) then {
     let _qtAstR = qtAstR()
     let _bsAstR = bsAstR()
-    let k = calcInvariant(_qtAstR, qtAstW(), _bsAstR, bsAstW())
-    let (newQtAstW, newBsAstW) = getUpdatedWeights(_qtAstR, _bsAstR, k, _terminalPrice)
-    
+    let newQtAstW = divd(_terminalPrice.muld(_bsAstR), _qtAstR)    
     (
       newQtAstW,
-      newBsAstW,
+      DECIMAL_UNIT,
       0
     )
   } else {
@@ -1572,15 +1557,15 @@ func increasePosition(
     let feeToInsurance = feeAmount - feeToStakers
     
     strict stake = invoke(
-      managerAddress(),
-      "deposit",
+      vaultAddress(),
+      "addLocked",
       [],
       [AttachedPayment(quoteAsset(), _amount)]
     )
 
     strict depositInsurance = invoke(
-      insuranceAddress(),
-      "deposit",
+      vaultAddress(),
+      "addFree",
       [],
       [AttachedPayment(quoteAsset(), feeToInsurance)]
     )
@@ -1714,15 +1699,15 @@ func addMargin() = {
     let feeToInsurance = feeAmount - feeToStakers
   
     strict stake = invoke(
-      managerAddress(),
-      "deposit",
+      vaultAddress(),
+      "addLocked",
       [],
       [AttachedPayment(quoteAsset(), _amount)]
     )
 
     strict depositInsurance = invoke(
-      insuranceAddress(),
-      "deposit",
+      vaultAddress(),
+      "addFree",
       [],
       [AttachedPayment(quoteAsset(), feeToInsurance)]
     )
@@ -1805,9 +1790,9 @@ func removeMargin(
         }
         
         strict doUnstake = invoke(
-          managerAddress(),
-          "withdraw",
-          [quoteAssetStr, _amount], # We need to withdraw from manager amount to repay + to withdraw
+          vaultAddress(),
+          "withdrawLocked",
+          [_amount], # We need to withdraw from manager amount to repay + to withdraw
           []
         )
 
@@ -1883,7 +1868,7 @@ func closePosition() = {
 
       let ammBalance = cbalance() - withdrawAmount
       # strict debug = throw("cbalance=" + cbalance().toString() + " withdrawAmount=" + withdrawAmount.toString())
-      let (ammNewBalance, getFromInsurance) = if (ammBalance < 0) then {
+      let (ammNewBalance, x11) = if (ammBalance < 0) then {
         (0, abs(ammBalance))
       } else {
         (ammBalance, 0)
@@ -1891,22 +1876,22 @@ func closePosition() = {
 
       # strict debug = throw("ammNewBalance=" + ammNewBalance.toString() + " getFromInsurance=" + getFromInsurance.toString())
 
-      strict x = if (getFromInsurance > 0) then {
-        strict withdrawInsurance = invoke(
-          insuranceAddress(),
-          "withdraw",
-          [getFromInsurance],
-          []
-        )
-        []
-      } else {
-        []
-      }
+      # strict x = if (getFromInsurance > 0) then {
+      #  strict withdrawInsurance = invoke(
+      #    insuranceAddress(),
+      #    "withdraw",
+      #    [getFromInsurance],
+      #    []
+      #  )
+      #  []
+      # } else {
+      #  []
+      # }
 
       strict unstake = invoke(
-        managerAddress(),
-        "withdraw",
-        [quoteAsset().toBase58String(), withdrawAmount - getFromInsurance],
+        vaultAddress(),
+        "withdrawLocked",
+        [withdrawAmount],
         []
       )
 
@@ -2021,7 +2006,9 @@ func liquidate(_trader: String) = {
         ) = swapInput(isAdd, exchangedQuoteAssetAmount)
       
       let liquidationRatio = divd(abs(exchangedPositionSize), abs(oldPositionSize))
-      # Realize a certain percent of position loss
+      # Realize a certain percent of position loss 
+      # Bad debt is always 0 here, because of positive margin ratio)
+      #
       let realizedPnl = muld(unrealizedPnl, liquidationRatio)
       let (remainMargin, badDebt, fundingPayment) = 
           calcRemainMarginWithFundingPayment(
@@ -2053,7 +2040,7 @@ func liquidate(_trader: String) = {
       # Liquidating a position can incur bad debt. If AMM does not have enough funds to cover up bad debt
       # use Insurance Fund to cover it up
       let ammBalance = cbalance() - liquidationPenalty
-      let (newAmmBalance, takeFromInsurance) = if (ammBalance < 0) then {
+      let (newAmmBalance, x11) = if (ammBalance < 0) then {
         (0, abs(ammBalance))
       } else {
         (ammBalance, 0)
@@ -2075,28 +2062,28 @@ func liquidate(_trader: String) = {
         []
       }
 
-      strict x = if (takeFromInsurance > 0) then {
-        strict withdrawInsurance = invoke(
-          insuranceAddress(),
-          "withdraw",
-          [takeFromInsurance],
-          []
-        )
-        []
-      } else {
-        []
-      }
+      # strict x = if (takeFromInsurance > 0) then {
+      #  strict withdrawInsurance = invoke(
+      #    insuranceAddress(),
+      #    "withdraw",
+      #    [takeFromInsurance],
+      #    []
+      #  )
+      #  []
+      # } else {
+      #  []
+      # }
 
       strict unstake = invoke(
-        managerAddress(),
-        "withdraw",
-        [quoteAsset().toBase58String(), liquidationPenalty - takeFromInsurance],
+        vaultAddress(),
+        "withdrawLocked",
+        [liquidationPenalty],
         []
       )
 
       strict depositInsurance = invoke(
-        insuranceAddress(),
-        "deposit",
+        vaultAddress(),
+        "addFree",
         [],
         [AttachedPayment(quoteAsset(), feeToInsurance)]
       )
@@ -2155,7 +2142,7 @@ func liquidate(_trader: String) = {
       # Liquidating a position can incur bad debt. If AMM does not have enough funds to cover up bad debt
       # use Insurance Fund to cover it up
       let ammBalance = cbalance() - liquidationPenalty
-      let (newAmmBalance, takeFromInsurance) = if (ammBalance < 0) then {
+      let (newAmmBalance, x11) = if (ammBalance < 0) then {
         (0, abs(ammBalance))
       } else {
         (ammBalance, 0)
@@ -2175,11 +2162,24 @@ func liquidate(_trader: String) = {
         []
       }
 
-      strict x = if (takeFromInsurance > 0) then {
-        strict withdrawInsurance = invoke(
-          insuranceAddress(),
-          "withdraw",
-          [takeFromInsurance],
+      # strict x = if (takeFromInsurance > 0) then {
+      #  strict withdrawInsurance = invoke(
+      #    insuranceAddress(),
+      #    "withdraw",
+      #    [takeFromInsurance],
+      #    []
+      #  )
+      #  []
+      # } else {
+      #  []
+      # }
+
+      # Move bad debt to locked TODO
+      strict x = if (badDebt > 0) then {
+        strict lockBadDebt = invoke(
+          vaultAddress(),
+          "exchangeFreeAndLocked",
+          [badDebt],
           []
         )
         []
@@ -2188,15 +2188,15 @@ func liquidate(_trader: String) = {
       }
 
       strict unstake = invoke(
-        managerAddress(),
-        "withdraw",
-        [quoteAsset().toBase58String(), liquidationPenalty - takeFromInsurance],
+        vaultAddress(),
+        "withdrawLocked",
+        [liquidationPenalty],
         []
       )
 
       strict depositInsurance = invoke(
-        insuranceAddress(),
-        "deposit",
+        vaultAddress(),
+        "addFree",
         [],
         [AttachedPayment(quoteAsset(), feeToInsurance)]
       )
@@ -2251,27 +2251,6 @@ func payFunding() = {
 }
 
 @Callable(i)  
-func forceMoveAsset(_trader: String, _amount: Int) = {
-  if (
-    addressFromPublicKey(adminPublicKey()) != i.caller
-    || _amount < 0
-  ) then {
-    throw("Invalid forceMoveAsset parameters")
-  } else {
-    strict unstake = invoke(
-      managerAddress(),
-      "withdraw",
-      [quoteAsset().toBase58String(), _amount],
-      []
-    )
-    
-    withdraw(addressFromStringValue(_trader), _amount)
-    ++
-    updateBalance(cbalance() - _amount)
-  }
-}
-
-@Callable(i)  
 func syncTerminalPriceToOracle() = {
   let (
     newQuoteAssetWeight,
@@ -2280,30 +2259,6 @@ func syncTerminalPriceToOracle() = {
   ) = getSyncTerminalPrice(getOracleTwapPrice())
 
   updateAmmWeights(newQuoteAssetWeight, newBaseAssetWeight)
-}
-
-@Callable(i)
-func migrateLiquidity() = {
-  let amount = cbalance()
-
-  if (amount > 0) then {
-    strict unstake = invoke(
-      quoteAssetStaking(),
-      "unlockNeutrino",
-      [amount, quoteAsset().toBase58String()],
-      []
-    )
-
-    strict stake = invoke(
-      managerAddress(),
-      "deposit",
-      [],
-      [AttachedPayment(quoteAsset(),amount)]
-    )
-    []
-  } else {
-    []
-  }
 }
 
 @Callable(i)
@@ -2349,7 +2304,6 @@ func view_getPegAdjustCost(_price: Int) = {
 func view_getTerminalAmmPrice() = {
   let (terminalQuoteAssetReserve, terminalBaseAssetReserve) = getTerminalAmmState()
   let price = divd(terminalQuoteAssetReserve.muld(qtAstW()), terminalBaseAssetReserve.muld(bsAstW()))
-  # strict x = throw("terminalQuoteAssetReserve=" + terminalQuoteAssetReserve.toString() + " terminalBaseAssetReserve=" + terminalBaseAssetReserve.toString() + " qtAstW()=" + qtAstW().toString())
   throw(price.toString())
 }
 

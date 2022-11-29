@@ -14,6 +14,7 @@ let k_asset_claimed_profit = "k_asset_claimed_profit" # Amount of profit claimed
 # Coordinator
 let k_coordinatorAddress = "k_coordinatorAddress" # Address of Coordinator (base contract that keeps references to all infrastructure)
 let k_insurance_address = "k_insurance_address"   # Address of insurance contract
+let k_vault_address = "k_vault_address"           # Address of vault contract
 let k_amm = "k_amm"                               # Marks valid AMM addresses (for insurance)
 let k_admin_address = "k_admin_address"           # Address of admin account           
 let k_admin_public_key = "k_admin_public_key"     # Pubic key of admin account
@@ -30,6 +31,7 @@ func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
 func balanceOf(_assetId: String) = this.getInteger(toCompositeKey(k_funds, _assetId)).valueOrElse(0)
 func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
 func insuranceAddress() = addressFromString(coordinator().getStringValue(k_insurance_address)).valueOrErrorMessage("Insurance not set")
+func vaultAddress() = addressFromString(coordinator().getStringValue(k_vault_address)).valueOrErrorMessage("Vault not set") 
 func isAmm(_address: String) = getBoolean(coordinator(), k_amm.toCompositeKey(_address)).valueOrElse(false)
 func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
 func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
@@ -44,6 +46,7 @@ func isWhitelist(_address: String) = {
   isAmm(_address)
   || _address == insuranceAddress().toString()
   || _address == stakingAddress().toString()
+  || _address == vaultAddress().toString()
 }
 
 func updateFunds(_assetId: String, _value: Int) = {
@@ -124,7 +127,7 @@ func deposit() = {
     || !initialized()
     || (!isWhitelist(i.caller.toString()) && i.caller != adminAddress())
   ) then {
-    throw("Invalid deposit params")
+    throw("Invalid deposit params (manager)")
   } else {
     let vault = viresVault(_assetId)
     strict stake = invoke(
