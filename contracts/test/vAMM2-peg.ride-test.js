@@ -36,7 +36,9 @@ describe("vAMM should be able to adjust peg (for long)", async function () {
       [shorter]: 100,
     });
 
-    amm = await e.deployAmm(100000, 55);
+    amm = await e.deployAmm(100000, 55, {
+      maxPriceImpact: 0.15, // 15%
+    });
   });
 
   it("Can add insurance funds", async function () {
@@ -156,7 +158,9 @@ describe("vAMM should be able to adjust peg (for short)", async function () {
       [shorter]: 5000,
     });
 
-    amm = await e.deployAmm(100000, 55);
+    amm = await e.deployAmm(100000, 55, {
+      maxPriceImpact: 0.15, // 15%
+    });
   });
 
   it("Can add insurance funds", async function () {

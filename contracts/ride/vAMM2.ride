@@ -7,9 +7,9 @@
 ##### Key constants #####
 
 # Oracle keys
-let k_ora_key = "k_ora_key" # Key in Index Price Oracle account to read price from
+let k_ora_key = "k_ora_key"             # Key in Index Price Oracle account to read price from
 let k_ora_block_key = "k_ora_block_key" # Key for last updated block in oracle
-let k_ora = "k_ora"         # Address of Index Price oracle account
+let k_ora = "k_ora"                     # Address of Index Price oracle account
 
 # AMM Balance
 let k_balance = "k_balance" # How much of a trader's funds is controlled by this AMM
@@ -36,6 +36,7 @@ let k_partialLiquidationRatio = "k_partLiquidationRatio"  # % of position notion
 let k_spreadLimit = "k_spreadLimit"                       # abs((marketPrice - oraclePrice) / oraclePrice). If over spread limit, liquidations consult oracle price
 let k_maxPriceImpact = "k_maxPriceImpact"                 # maximum price impact per order
 let k_maxPriceSpread = "k_maxPriceSpread"                 # max spread between Index and Market Price
+let k_maxOpenNotional = "k_maxOpenNotional"               # max open notional in market
 
 # TWAP data
 let k_lastDataStr = "k_lastDataStr"                       # List of last 15 TWAP computations (best case - we have a value for each of last 15 mins)
@@ -61,6 +62,8 @@ let k_totalLongPositionSize = "k_totalLongPositionSize"   # Total LONG trader po
 let k_totalShortPositionSize = "k_totalShortPositionSize" # Total SHORT trader position size (in Base asset)
 let k_cumulativeNotional = "k_cumulativeNotional"         # Cumulative Notional (all positions)
 let k_openInterestNotional = "k_openInterestNotional"     # Open Interest Notional (all positions)
+let k_openInterestShort = "k_openInterestShort"           # Open Interest Notional (short)
+let k_openInterestLong = "k_openInterestLong"             # Open Interest Notional (long)
 
 # Coordinator
 let k_coordinatorAddress = "k_coordinatorAddress"         # Address of Coordinator (base contract that keeps references to all infrastructure)
@@ -94,15 +97,12 @@ func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_pu
 func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
 func quoteAssetStaking() = addressFromString(coordinator().getStringValue(k_quote_staking)).valueOrErrorMessage("Quote asset staking not set")
 func stakingAddress() = addressFromString(coordinator().getStringValue(k_staking_address)).valueOrErrorMessage("Staking not set")
-# func insuranceAddress() = addressFromString(coordinator().getStringValue(k_insurance_address)).valueOrErrorMessage("Insurance not set") 
 func vaultAddress() = addressFromString(coordinator().getStringValue(k_vault_address)).valueOrErrorMessage("Vault not set") 
 func minerAddress() = addressFromString(coordinator().getStringValue(k_miner_address)).valueOrErrorMessage("Miner not set")
 func ordersAddress() = addressFromString(coordinator().getStringValue(k_orders_address)).valueOrErrorMessage("Orders not set")
 func referralAddress() = addressFromString(coordinator().getStringValue(k_referral_address)).valueOrErrorMessage("Referral not set")
-# func managerAddress() = addressFromString(coordinator().getStringValue(k_manager_address)).valueOrErrorMessage("Manager not set")
 func nftManagerAddress() = addressFromString(coordinator().getStringValue(k_nft_manager_address)).valueOrErrorMessage("NFT Manager not set")
 func collateralAddress() = addressFromString(coordinator().getStringValue(k_collateral_address)).valueOrErrorMessage("Collateral Manager not set")
-#func exchangeAddress() = addressFromString(coordinator().getStringValue(k_exchange_address)).valueOrErrorMessage("Exchange not set")
 func swapAddress() = addressFromString(coordinator().getString(k_exchange_address).valueOrErrorMessage("No swap address")).valueOrErrorMessage("Invalid swap address")
 
 ##### Collateral data ##### 
@@ -184,6 +184,8 @@ func bsAstW() = intOr(k_baseAssetWeight, DECIMAL_UNIT)
 func totalPositionSize() = int(k_totalPositionSize)
 func cumulativeNotional() = int(k_cumulativeNotional)
 func openInterestNotional() = int(k_openInterestNotional)
+func openInterestShort() = int(k_openInterestShort)
+func openInterestLong() = int(k_openInterestLong)
 func nextFundingBlockTimestamp() = int(k_nextFundingBlock)
 func fundingPeriodRaw() = int(k_fundingPeriod)
 func fundingPeriodDecimal() = fundingPeriodRaw() * DECIMAL_UNIT
@@ -194,6 +196,7 @@ func partialLiquidationRatio() = int(k_partialLiquidationRatio)
 func spreadLimit() = int(k_spreadLimit)
 func maxPriceImpact() = int(k_maxPriceImpact)
 func maxPriceSpread() = int(k_maxPriceSpread)
+func maxOpenNotional() = int(k_maxOpenNotional)
 func latestLongCumulativePremiumFraction() = int(k_latestLongCumulativePremiumFraction)
 func latestShortCumulativePremiumFraction() = int(k_latestShortCumulativePremiumFraction)
 func totalShortPositionSize() = int(k_totalShortPositionSize)
@@ -313,8 +316,8 @@ func swapInput(_isAdd: Boolean, _quoteAssetAmount: Int) = {
     _qtAstR - _quoteAssetAmount
   }
 
-  let baseAssetReserveAfter = divd(k, quoteAssetReserveAfter.muld(_qtAstW).muld(_bsAstW))
-  let amountBaseAssetBoughtAbs = abs(baseAssetReserveAfter - _bsAstR)
+  let baseAssetReserveAfter = divd(k, quoteAssetReserveAfter.muld(_qtAstW))
+  let amountBaseAssetBoughtAbs = abs(baseAssetReserveAfter - _bsAstR).divd(_qtAstW)
   let amountBaseAssetBought = if (_isAdd) then {
     amountBaseAssetBoughtAbs
   } else {
@@ -480,6 +483,20 @@ func requireNotOverSpreadLimit(_quoteAssetReserve: Int, _baseAssetReserve: Int) 
       throw("Price spread " + absPriceDiff.toString() + " > max price spread " + maxPriceSpread().toString())
   } else {
     true
+  }
+}
+
+func requireNotOverMaxOpenNotional(_longOpenNotional: Int, _shortOpenNotional: Int) = {
+  let _maxOpenNotional = maxOpenNotional()
+  
+  if (_longOpenNotional > _maxOpenNotional) then {
+      throw("Long open notional " + _longOpenNotional.toString() + " > max open notional " + _maxOpenNotional.toString())
+  } else {
+    if (_shortOpenNotional > _maxOpenNotional) then {
+      throw("Short open notional " + _shortOpenNotional.toString() + " > max open notional " + _maxOpenNotional.toString())
+    } else {
+      true
+    }
   }
 }
 
@@ -688,7 +705,9 @@ func internalClosePosition(_trader: String, _checkMaxPriceImpact: Boolean) = {
       openInterestNotionalAfter,
       exchangedQuoteAssetAmount,
       totalLongAfter,
-      totalShortAfter
+      totalShortAfter,
+      openInterestLong() - if (positionSize > 0) then positionOpenNotional else 0,
+      openInterestShort() - if (positionSize < 0) then positionOpenNotional else 0
     )
 }
 
@@ -868,7 +887,8 @@ func updateSettings(
   _spreadLimit: Int,
   _maxPriceImpact: Int,
   _partialLiquidationRatio: Int,
-  _maxPriceSpread: Int
+  _maxPriceSpread: Int,
+  _maxOpenNotional: Int
 ) = {
   [
     IntegerEntry(k_initMarginRatio, _initMarginRatio),
@@ -879,7 +899,8 @@ func updateSettings(
     IntegerEntry(k_spreadLimit, _spreadLimit),
     IntegerEntry(k_maxPriceImpact, _maxPriceImpact),
     IntegerEntry(k_partialLiquidationRatio, _partialLiquidationRatio),
-    IntegerEntry(k_maxPriceSpread, _maxPriceSpread)
+    IntegerEntry(k_maxPriceSpread, _maxPriceSpread),
+    IntegerEntry(k_maxOpenNotional, _maxOpenNotional)
   ]
 }
 
@@ -988,7 +1009,9 @@ func updateAmm(
   _cumulativeNotionalAfter: Int,
   _openInterestNotional: Int,
   _totalLongPositionSize: Int,
-  _totalShortPositionSize: Int
+  _totalShortPositionSize: Int,
+  _totalLongOpenNotional: Int,
+  _totalShortOpenNotional: Int
 ) = {
   let _qtAstW = qtAstW()
   let _bsAstW = bsAstW()
@@ -1002,7 +1025,9 @@ func updateAmm(
       IntegerEntry(k_cumulativeNotional, _cumulativeNotionalAfter),
       IntegerEntry(k_openInterestNotional, _openInterestNotional),
       IntegerEntry(k_totalLongPositionSize, _totalLongPositionSize),
-      IntegerEntry(k_totalShortPositionSize, _totalShortPositionSize)
+      IntegerEntry(k_totalShortPositionSize, _totalShortPositionSize),
+      IntegerEntry(k_openInterestLong, _totalLongOpenNotional),
+      IntegerEntry(k_openInterestShort, _totalShortOpenNotional)
     ] ++ appendTwap(divd(_qtAstR.muld(_qtAstW), _bsAstR.muld(_bsAstW)))
   }
 }
@@ -1167,7 +1192,8 @@ func changeSettings(
   _spreadLimit: Int,
   _maxPriceImpact: Int,
   _partialLiquidationRatio: Int,
-  _maxPriceSpread: Int
+  _maxPriceSpread: Int,
+  _maxOpenNotional: Int
 ) = {
   if (i.caller != adminAddress()) then {
     throw("Invalid changeSettings params")
@@ -1181,7 +1207,8 @@ func changeSettings(
       _spreadLimit, 
       _maxPriceImpact,
       _partialLiquidationRatio,
-      _maxPriceSpread
+      _maxPriceSpread,
+      _maxOpenNotional
     )
   }
 }
@@ -1201,7 +1228,8 @@ func initialize(
   _spreadLimit: Int,
   _maxPriceImpact: Int,
   _partialLiquidationRatio: Int,
-  _maxPriceSpread: Int
+  _maxPriceSpread: Int,
+  _maxOpenNotional: Int
 ) = {
   if (
     _qtAstR <= 0
@@ -1215,11 +1243,12 @@ func initialize(
     || _maxPriceImpact <= 0
     || _partialLiquidationRatio <= 0
     || _maxPriceSpread <= 0
+    || _maxOpenNotional <= 0
     || initialized()
   ) then {
     throw("Invalid initialize parameters")
   } else {
-    updateAmm(_qtAstR, _bsAstR, 0, 0, 0, 0, 0)
+    updateAmm(_qtAstR, _bsAstR, 0, 0, 0, 0, 0, 0, 0)
     ++
     updateSettings(
       _initMarginRatio, 
@@ -1230,7 +1259,8 @@ func initialize(
       _spreadLimit, 
       _maxPriceImpact,
       _partialLiquidationRatio,
-      _maxPriceSpread
+      _maxPriceSpread,
+      _maxOpenNotional
     )
     ++
     updateFunding(
@@ -1249,30 +1279,6 @@ func initialize(
       StringEntry(k_ora_key, _oracleKey),
       StringEntry(k_coordinatorAddress, _coordinator)
     ]
-  }
-}
-
-@Callable(i)
-func setInitMarginRatio(
-  _initMarginRatio: Int
-) = {
-  if (
-    _initMarginRatio <= 0
-    || !initialized()
-  ) then {
-    throw("Invalid setInitMarginRatio parameters")
-  } else {
-    updateSettings(
-      _initMarginRatio, 
-      maintenanceMarginRatio(), 
-      liquidationFeeRatio(), 
-      fundingPeriodRaw(), 
-      fee(), 
-      spreadLimit(), 
-      maxPriceImpact(),
-      partialLiquidationRatio(),
-      maxPriceSpread()
-    )
   }
 }
 
@@ -1317,7 +1323,9 @@ func decreasePosition(
       cumulativeNotionalAfter,
       openInterestNotionalAfter,
       totalLongAfter,
-      totalShortAfter
+      totalShortAfter,
+      totalLongOpenInterestAfter,
+      totalShortOpenInterestAfter
     ) = if (oldPositionNotional > openNotional) then {
       let ( 
           exchangedPositionSize, 
@@ -1359,7 +1367,9 @@ func decreasePosition(
             cumulativeNotionalAfter, # cumulativeNotionalAfter
             openInterestNotional() - openNotional, # openInterestNotionalAfter
             totalLongPositionSize() - if (newPositionSize > 0) then abs(exchangedPositionSize) else 0,
-            totalShortPositionSize() - if (newPositionSize < 0) then abs(exchangedPositionSize) else 0
+            totalShortPositionSize() - if (newPositionSize < 0) then abs(exchangedPositionSize) else 0,
+            openInterestLong() - if (newPositionSize > 0) then openNotional else 0,
+            openInterestShort() - if (newPositionSize < 0) then openNotional else 0
           )
         }
     } else {
@@ -1388,7 +1398,9 @@ func decreasePosition(
       cumulativeNotionalAfter,
       openInterestNotionalAfter,
       totalLongAfter,
-      totalShortAfter
+      totalShortAfter,
+      totalLongOpenInterestAfter,
+      totalShortOpenInterestAfter
     )
   }
 }
@@ -1501,7 +1513,9 @@ func increasePosition(
       cumulativeNotionalAfter,
       openInterestNotionalAfter,
       totalLongAfter,
-      totalShortAfter
+      totalShortAfter,
+      totalLongOpenInterestAfter,
+      totalShortOpenInterestAfter
     ) = if (isNewPosition || expandExisting) then {
       let openNotional = muld(_amount, _leverage)
       let ( 
@@ -1516,6 +1530,9 @@ func increasePosition(
          throw("Limit error: " + abs(amountBaseAssetBought).toString() + " < " + _minBaseAssetAmount.toString())
        } else {
         let newPositionSize = oldPositionSize + amountBaseAssetBought
+        let totalLongOpenInterestAfter = openInterestLong() + if (newPositionSize > 0) then openNotional else 0
+        let totalShortOpenInterestAfter = openInterestShort() + if (newPositionSize < 0) then openNotional else 0
+
         let increaseMarginRequirement = divd(openNotional, _leverage)
         let (remainMargin, x1, x2) =
           calcRemainMarginWithFundingPayment(
@@ -1527,19 +1544,25 @@ func increasePosition(
         if (!requireNotOverSpreadLimit(quoteAssetReserveAfter, baseAssetReserveAfter)) then {
           throw("Over max spread limit")
         } else {
-          (
-            newPositionSize, # positionSize
-            remainMargin, # remainMargin
-            oldPositionOpenNotional + openNotional, # positionOpenNotional
-            latestCumulativePremiumFraction(newPositionSize), # latestCPF
-            baseAssetReserveAfter, # baseAssetReserveAfter
-            quoteAssetReserveAfter, # quoteAssetReserveAfter
-            totalPositionSizeAfter, # totalPositionSizeAfter
-            cumulativeNotionalAfter, # cumulativeNotionalAfter
-            openInterestNotional() + openNotional, # openInterestNotionalAfter
-            totalLongPositionSize() + if (newPositionSize > 0) then abs(amountBaseAssetBought) else 0,
-            totalShortPositionSize() + if (newPositionSize < 0) then abs(amountBaseAssetBought) else 0
-          )
+          if (!requireNotOverMaxOpenNotional(totalLongOpenInterestAfter, totalShortOpenInterestAfter)) then {
+            throw("Over max open notional")
+          } else {
+            (
+              newPositionSize, # positionSize
+              remainMargin, # remainMargin
+              oldPositionOpenNotional + openNotional, # positionOpenNotional
+              latestCumulativePremiumFraction(newPositionSize), # latestCPF
+              baseAssetReserveAfter, # baseAssetReserveAfter
+              quoteAssetReserveAfter, # quoteAssetReserveAfter
+              totalPositionSizeAfter, # totalPositionSizeAfter
+              cumulativeNotionalAfter, # cumulativeNotionalAfter
+              openInterestNotional() + openNotional, # openInterestNotionalAfter
+              totalLongPositionSize() + if (newPositionSize > 0) then abs(amountBaseAssetBought) else 0,
+              totalShortPositionSize() + if (newPositionSize < 0) then abs(amountBaseAssetBought) else 0,
+              totalLongOpenInterestAfter,
+              totalShortOpenInterestAfter
+            )
+          }
         }
        }
     } else {
@@ -1550,7 +1573,6 @@ func increasePosition(
       } else {
         throw("Close position first")
       }
-      
     }
 
     let feeToStakers = feeAmount / 2
@@ -1601,7 +1623,9 @@ func increasePosition(
       cumulativeNotionalAfter,
       openInterestNotionalAfter,
       totalLongAfter,
-      totalShortAfter
+      totalShortAfter,
+      totalLongOpenInterestAfter,
+      totalShortOpenInterestAfter
     )
     ++
     transferFee(feeToStakers)
@@ -1858,7 +1882,9 @@ func closePosition() = {
           openInterestNotionalAfter,
           x2,
           totalLongAfter,
-          totalShortAfter
+          totalShortAfter,
+          totalLongOpenInterestAfter,
+          totalShortOpenInterestAfter
     ) = internalClosePosition(_trader, true)
 
     if (positionBadDebt > 0) then {
@@ -1873,20 +1899,6 @@ func closePosition() = {
       } else {
         (ammBalance, 0)
       }
-
-      # strict debug = throw("ammNewBalance=" + ammNewBalance.toString() + " getFromInsurance=" + getFromInsurance.toString())
-
-      # strict x = if (getFromInsurance > 0) then {
-      #  strict withdrawInsurance = invoke(
-      #    insuranceAddress(),
-      #    "withdraw",
-      #    [getFromInsurance],
-      #    []
-      #  )
-      #  []
-      # } else {
-      #  []
-      # }
 
       strict unstake = invoke(
         vaultAddress(),
@@ -1943,7 +1955,9 @@ func closePosition() = {
         cumulativeNotionalAfter,
         openInterestNotionalAfter,
         totalLongAfter,
-        totalShortAfter
+        totalShortAfter,
+        totalLongOpenInterestAfter,
+        totalShortOpenInterestAfter
       )
       ++
       (if (quoteWithdrawAmount > 0) then withdraw(_traderAddress, quoteWithdrawAmount) else [])
@@ -2062,18 +2076,6 @@ func liquidate(_trader: String) = {
         []
       }
 
-      # strict x = if (takeFromInsurance > 0) then {
-      #  strict withdrawInsurance = invoke(
-      #    insuranceAddress(),
-      #    "withdraw",
-      #    [takeFromInsurance],
-      #    []
-      #  )
-      #  []
-      # } else {
-      #  []
-      # }
-
       strict unstake = invoke(
         vaultAddress(),
         "withdrawLocked",
@@ -2110,7 +2112,9 @@ func liquidate(_trader: String) = {
         cumulativeNotionalAfter,
         openInterestNotionalAfter,
         totalLongPositionSize() - if (newPositionSize > 0) then abs(exchangedPositionSize) else 0,
-        totalShortPositionSize() - if (newPositionSize < 0) then abs(exchangedPositionSize) else 0
+        totalShortPositionSize() - if (newPositionSize < 0) then abs(exchangedPositionSize) else 0,
+        openInterestLong() - if (newPositionSize > 0) then exchangedQuoteAssetAmount else 0,
+        openInterestShort() - if (newPositionSize < 0) then exchangedQuoteAssetAmount else 0
       )
       ++
       withdraw(i.caller, feeToLiquidator)
@@ -2130,7 +2134,9 @@ func liquidate(_trader: String) = {
         openInterestNotionalAfter,
         exchangedQuoteAssetAmount,
         totalLongAfter,
-        totalShortAfter
+        totalShortAfter,
+        totalLongOpenInterestAfter,
+        totalShortOpenInterestAfter
       ) = internalClosePosition(_trader, false)
       
       # Liquidator get a certain (liquidationFeeRatio) percentage from a total position
@@ -2161,18 +2167,6 @@ func liquidate(_trader: String) = {
       } else {
         []
       }
-
-      # strict x = if (takeFromInsurance > 0) then {
-      #  strict withdrawInsurance = invoke(
-      #    insuranceAddress(),
-      #    "withdraw",
-      #    [takeFromInsurance],
-      #    []
-      #  )
-      #  []
-      # } else {
-      #  []
-      # }
 
       # Move bad debt to locked TODO
       strict x = if (badDebt > 0) then {
@@ -2217,7 +2211,9 @@ func liquidate(_trader: String) = {
         cumulativeNotionalAfter,
         openInterestNotionalAfter,
         totalLongAfter,
-        totalShortAfter
+        totalShortAfter,
+        totalLongOpenInterestAfter,
+        totalShortOpenInterestAfter
       )
       ++
       withdraw(i.caller, feeToLiquidator)
@@ -2257,6 +2253,13 @@ func syncTerminalPriceToOracle() = {
     newBaseAssetWeight,
     marginToVault
   ) = getSyncTerminalPrice(getOracleTwapPrice())
+
+  strict lockBadDebt = invoke(
+    vaultAddress(),
+    "exchangeFreeAndLocked",
+    [marginToVault],
+    []
+  )
 
   updateAmmWeights(newQuoteAssetWeight, newBaseAssetWeight)
 }

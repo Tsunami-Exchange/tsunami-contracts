@@ -1395,6 +1395,12 @@ class Environment {
                 type: "integer",
                 value: Math.round((options.maxPriceSpread || 0.4) * decimals),
               }, // _maxPriceSpread 40%
+              {
+                type: "integer",
+                value: Math.round(
+                  (options.maxOpenNotional || 100_000_000) * decimals
+                ),
+              }, // _maxOpenNotional 100,000,000
             ],
           },
         },
