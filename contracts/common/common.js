@@ -1759,8 +1759,8 @@ class AMM {
     _amount,
     _direction,
     _leverage,
-    _minBaseAssetAmount,
-    _link,
+    _minBaseAssetAmount = 0,
+    _link = "",
     _artifact
   ) {
     let payment = [

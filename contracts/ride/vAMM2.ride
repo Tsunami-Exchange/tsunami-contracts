@@ -297,7 +297,12 @@ func updateReserve(_isAdd: Boolean, _quoteAssetAmount: Int, _baseAssetAmount: In
 }
 
 func calcInvariant(_qtAstR: Int, _qtAstW: Int, _bsAstR: Int, _bsAstW: Int) = {
-  _qtAstR.muld(_qtAstW).muld(_bsAstR.muld(_bsAstW))
+  let bqtAstR = _qtAstR.toBigInt()
+  let bqtAstW = _qtAstW.toBigInt()
+  let bbsAstR = _bsAstR.toBigInt()
+  let bbsAstW = _bsAstW.toBigInt()
+
+  bqtAstR.bmuld(bqtAstW).bmuld(bbsAstR.bmuld(bbsAstW))
 }
 
 # Computes result of swapping a given amount of _quoteAssetAmount
@@ -316,7 +321,7 @@ func swapInput(_isAdd: Boolean, _quoteAssetAmount: Int) = {
     _qtAstR - _quoteAssetAmount
   }
 
-  let baseAssetReserveAfter = divd(k, quoteAssetReserveAfter.muld(_qtAstW))
+  let baseAssetReserveAfter = bdivd(k, quoteAssetReserveAfter.muld(_qtAstW).toBigInt()).toInt()
   let amountBaseAssetBoughtAbs = abs(baseAssetReserveAfter - _bsAstR).divd(_qtAstW)
   let amountBaseAssetBought = if (_isAdd) then {
     amountBaseAssetBoughtAbs
@@ -403,7 +408,7 @@ func swapOutputWithReserves(
       _baseAssetReserve - _baseAssetAmount
     }
 
-    let quoteAssetAfter = divd(k, baseAssetPoolAmountAfter.muld(_baseAssetWeight))
+    let quoteAssetAfter = bdivd(k, baseAssetPoolAmountAfter.muld(_baseAssetWeight).toBigInt()).toInt()
     let quoteAssetSold = abs(quoteAssetAfter - _quoteAssetReserve.muld(_quoteAssetWeight))
 
     let maxPriceImpactValue = maxPriceImpact()
