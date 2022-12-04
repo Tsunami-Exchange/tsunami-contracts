@@ -24,7 +24,8 @@ let k_positionAsset = "k_positionAsset"               # Asset of position
 
 # Global initialization state
 let k_initialized = "k_initialized"                       # If AMM was properly initialized
-let k_paused = "k_paused"
+let k_paused = "k_paused"                                 # If all AMM operations are paused
+let k_closeOnly = "k_closeOnly"                           # If all AMM operations are close - only
 
 # Exchange settings
 let k_fee = "k_fee"                                       # Exchange fee. Default is 1%. 1/2 goes to stakers, 1/2 goes to insurance fund
@@ -264,8 +265,10 @@ func requireOpenPosition(_trader: String) = {
 # Checks if AMM was properly initialized
 func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
 
-# Checks of AMM was paused
+# Checks if AMM was paused
 func paused() = this.getBoolean(k_paused).valueOrElse(false)
+# Checks if AMM is in close - only mode
+func closeOnly() = this.getBoolean(k_closeOnly).valueOrElse(false)
 
 # Computes new AMM state (quoteAssetReserve, baseAssetReserve, totalPositionSize, cumulativeNotional)
 func updateReserve(_isAdd: Boolean, _quoteAssetAmount: Int, _baseAssetAmount: Int) = {
@@ -1124,7 +1127,7 @@ func getBorrowedByTrader(_trader: String) = {
 @Callable(i)
 func pause() = {
   if (i.caller != adminAddress()) then {
-    throw("Invalid togglePause params")
+    throw("Invalid pause params")
   } else {
     [
       BooleanEntry(k_paused, true)
@@ -1135,10 +1138,32 @@ func pause() = {
 @Callable(i)
 func unpause() = {
   if (i.caller != adminAddress()) then {
-    throw("Invalid togglePause params")
+    throw("Invalid unpause params")
   } else {
     [
       BooleanEntry(k_paused, false)
+    ]
+  }
+}
+
+@Callable(i)
+func setCloseOnly() = {
+  if (i.caller != adminAddress()) then {
+    throw("Invalid setCloseOnly params")
+  } else {
+    [
+      BooleanEntry(k_closeOnly, true)
+    ]
+  }
+}
+
+@Callable(i)
+func unsetCloseOnly() = {
+  if (i.caller != adminAddress()) then {
+    throw("Invalid unsetCloseOnly params")
+  } else {
+    [
+      BooleanEntry(k_closeOnly, false)
     ]
   }
 }
@@ -1433,6 +1458,7 @@ func increasePosition(
     || !isSameAssetOrNoPosition(_trader, _assetIdStr)
     || !requireMoreMarginRatio(divd(DECIMAL_UNIT, _leverage), initMarginRatio(), true)
     || paused()
+    || closeOnly()
   ) then {
     throw("Invalid increasePosition parameters")
   } else {
@@ -1657,6 +1683,7 @@ func addMargin() = {
     || !isSameAsset(_trader, _assetIdStr)
     || !initialized()
     || paused()
+    || closeOnly()
   ) then {
     throw("Invalid addMargin parameters")
   } else {
