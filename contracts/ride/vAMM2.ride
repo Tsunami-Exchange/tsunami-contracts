@@ -862,14 +862,13 @@ func getFunding() = {
   }
 }
 
-func getAdjustedFee(i: Invocation, _baseFeeDiscount: Int) = {
+func getAdjustedFee(_artifactId: String, _baseFeeDiscount: Int) = {
   let baseFeeRaw = fee()
   let baseFee = muld(baseFeeRaw, _baseFeeDiscount)
-  let (adjustedFee, burnArtifact) = if (i.payments.size() > 1) then {
-      let artifactId = i.payments[1].assetId.valueOrErrorMessage("Invalid attached artifact").toBase58String()
-      let artifactKind = strA(nftManagerAddress(), k_token_type.toCompositeKey(artifactId))
+  let (adjustedFee, burnArtifact) = if (_artifactId != "") then {
+      let artifactKind = strA(nftManagerAddress(), k_token_type.toCompositeKey(_artifactId))
       if (artifactKind == FEE_REDUCTION_TOKEN_TYPE) then {
-        let reduction = intA(nftManagerAddress(), k_token_param.toCompositeKey(artifactId))
+        let reduction = intA(nftManagerAddress(), k_token_param.toCompositeKey(_artifactId))
         let adjustedFee = muld(baseFee, reduction)
         (adjustedFee, true)
       } else {
@@ -1128,6 +1127,33 @@ func getBorrowedByTrader(_trader: String) = {
   }
 }
 
+func getForTraderWithArtifact(_trader: String, _artifactId: String) = {
+  strict doGetFeeDiscount = invoke(
+    minerAddress(),
+    "computeFeeDiscount",
+    [_trader],
+    []
+  )
+
+  let feeDiscount = match(doGetFeeDiscount) {
+    case x: Int => x
+    case _ => throw("Invalid computeFeeDiscount result")
+  }
+
+  let (adjustedFee, burnArtifact) = getAdjustedFee(_artifactId, feeDiscount)
+
+  (adjustedFee, burnArtifact)
+}
+
+func getArtifactId(i: Invocation) = {
+  let artifactId = if (i.payments.size() > 1) then {
+    i.payments[1].assetId.valueOrErrorMessage("Invalid artifactId").toBase58String()
+  } else {
+    ""
+  }
+
+  artifactId
+}
 
 ##### Callable functions #####
 
@@ -1468,19 +1494,7 @@ func increasePosition(
   ) then {
     throw("Invalid increasePosition parameters")
   } else {
-    strict doGetFeeDiscount = invoke(
-      minerAddress(),
-      "computeFeeDiscount",
-      [_trader],
-      []
-    )
-
-    let feeDiscount = match(doGetFeeDiscount) {
-      case x: Int => x
-      case _ => throw("Invalid computeFeeDiscount result")
-    }
-
-    let (adjustedFee, burnArtifact) = getAdjustedFee(i, feeDiscount)
+    let (adjustedFee, burnArtifact) = getForTraderWithArtifact(_trader, getArtifactId(i))
     let rawFeeAmount = muld(_rawAmount, adjustedFee)
     let _amount = _rawAmount - rawFeeAmount
 
@@ -1691,19 +1705,7 @@ func addMargin() = {
   ) then {
     throw("Invalid addMargin parameters")
   } else {
-    strict doGetFeeDiscount = invoke(
-      minerAddress(),
-      "computeFeeDiscount",
-      [_trader],
-      []
-    )
-
-    let feeDiscount = match(doGetFeeDiscount) {
-      case x: Int => x
-      case _ => throw("Invalid computeFeeDiscount result")
-    }
-
-    let (adjustedFee, burnArtifact) = getAdjustedFee(i, feeDiscount)
+    let (adjustedFee, burnArtifact) = getForTraderWithArtifact(_trader, getArtifactId(i))
     let rawFeeAmount = muld(_rawAmount, adjustedFee)
     let _amount = _rawAmount - rawFeeAmount
 
@@ -2421,12 +2423,7 @@ func syncTerminalPriceToOracle() = {
   updateAmmWeights(newQuoteAssetWeight, newBaseAssetWeight)
 }
 
-@Callable(i)
-func v_get(_trader: String) = {
-  strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
-  let (x1, x2, x3, x4) = internalClosePosition(_trader, false)
-  throw(s(x2) + s(x3) + s(x4) + s(getMarginRatio(_trader)))
-}
+# View callable functions exposed for UI and debug
 
 @Callable(i)
 func view_calcRemainMarginWithFundingPayment(_trader: String) = {
@@ -2482,9 +2479,19 @@ func view_getBorrowedByTrader(_trader: String) = {
   throw(s(borrowed) + assetId)
 }
 
+# View callable functions exposed for another d-Apps
+
 @Callable(i)
 func computeSpotPrice() = {
   let result = getSpotPrice()
+
+  ([], result)
+}
+
+@Callable(i)
+func computeFeeForTraderWithArtifact(_trader: String, _artifactId: String) = {
+  let result = getForTraderWithArtifact(_trader, _artifactId)
+
   ([], result)
 }
 

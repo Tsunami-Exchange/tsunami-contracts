@@ -117,28 +117,38 @@
     let leverage        = orderPartList[3 ].parseInt().valueOrErrorMessage("Invalid leverage")
     let type            = orderPartList[4 ].parseInt().valueOrErrorMessage("Invalid type")
     let triggerPrice    = orderPartList[5 ].parseInt().valueOrErrorMessage("Invalid triggerPrice")
-    let side            = orderPartList[6 ].parseInt().valueOrErrorMessage("Invalid side")
-    let direction       = orderPartList[7 ].parseInt().valueOrErrorMessage("Invalid direction")
+    let paymentUsdn     = orderPartList[6 ].parseInt().valueOrErrorMessage("Invalid paymentUsdn")
+    let side            = orderPartList[7 ].parseInt().valueOrErrorMessage("Invalid side")
     let refLink         = orderPartList[8 ]
-    let positionId      = orderPartList[9 ].parseInt().valueOrErrorMessage("Invalid positionId")
+    let positionId      = orderPartList[9].parseInt().valueOrErrorMessage("Invalid positionId")
     let limitPrice      = orderPartList[10].parseInt().valueOrErrorMessage("Invalid limitPrice")
     
-    (amm, trader, amountIn, leverage, type, triggerPrice, side, direction, refLink, positionId, limitPrice)
+    (amm, trader, amountIn, leverage, type, triggerPrice, paymentUsdn, side, refLink, positionId, limitPrice)
   }
 
   func getMarketPrice(_amm: String) = {
     strict s = invoke(addressFromStringValue(_amm), "computeSpotPrice", [], [])
     let res = match (s) {
       case t: Int => t
-      case _ => throw("Invalid computeSpotPrice")
+      case _ => throw("Invalid computeSpotPrice result")
     }
 
     res.value()
   }
 
-  func getFee(_amm: String) = {
-    let amm = addressFromStringValue(_amm)
-    amm.getInteger(k_fee).valueOrElse(0)
+  func getFee(_amm: String, _trader: String) = {
+    strict s = invoke(
+      addressFromStringValue(_amm), 
+      "computeFeeForTraderWithArtifact", 
+      [_trader, ""], []
+    )
+
+    let res = match (s) {
+      case t: (Int, Boolean) => t._1
+      case _ => throw("Invalid computeFeeForTraderWithArtifact result")
+    }
+
+    res.value()
   }
 
   func getPositionSize(_amm: String, _trader: String) = {
@@ -256,7 +266,6 @@
       [i.caller.toString(), _amm, _type, _triggerPrice, _limitPrice, _amountIn, _leverage, _side, _refLink],
       []
     )
-
     []
   }
 
@@ -333,7 +342,7 @@
           throw("Invalid createLimitOrder parameters: order count")
         } else {
           saveOrder(
-            orderId, _amm, _trader, _amountIn, _leverage, _type, _triggerPrice, _side, usdnPayment, _refLink, positionId, _limitPrice
+            orderId, _amm, _trader, _amountIn, _leverage, _type, _triggerPrice, usdnPayment, _side, _refLink, positionId, _limitPrice
           )
           ++
           updateTraderOrderCount(_amm, _trader, newTraderOrderCount)
@@ -346,7 +355,20 @@
 
   @Callable(i)
   func cancelOrder(_orderId: Int) = {
-    let (_amm, _trader, _amountIn, _leverage, _type) = getOrder(_orderId)
+    let (
+      _amm, 
+      _trader, 
+      _amountIn, 
+      _leverage, 
+      _type, 
+      _triggerPrice,
+      _amountUsdn,
+      _side, 
+      _refLink, 
+      _positionId,
+      _limitPrice
+    ) = getOrder(_orderId)
+
     if (
       !initialized()
       || !isValid(_orderId)
@@ -356,9 +378,27 @@
     } else {
       let newTraderOrderCount = getTraderOrderCount(_amm, _trader) - 1
 
+      strict withdraw = if (_amountUsdn > 0) then {
+        strict unstake = invoke(
+          managerAddress(),
+          "withdraw",
+          [quoteAsset().toBase58String(), _amountUsdn],
+          []
+        )
+        []
+      } else {
+        []
+      }
+      
       markCancelOrder(_orderId)
       ++
       updateTraderOrderCount(_amm, _trader, newTraderOrderCount)
+      ++
+      (if (_amountUsdn > 0) then {
+        [
+          ScriptTransfer(i.caller, _amountUsdn, quoteAsset())
+        ]
+      } else {[]})
     }
   }
 
@@ -370,9 +410,9 @@
       _amountIn, 
       _leverage, 
       _type, 
-      _triggerPrice, 
+      _triggerPrice,
+      _amountUsdn,
       _side, 
-      _direction, 
       _refLink, 
       _positionId,
       _limitPrice
@@ -440,14 +480,24 @@
         let spread = getSpread(_triggerPrice)
         let isExecutable = marketPrice >= _triggerPrice - spread && marketPrice <= _triggerPrice + spread
         if (isExecutable) then {
-          if (_direction == INCREASE) then {
-            let amountInWithFee = _amountIn - muld(_amountIn, getFee(_amm))
+          let _positionDirection = if (positionSize > 0) 
+            then LONG
+            else if (positionSize < 0) then SHORT
+            else -1
+          
+          let direction = if (positionSize == 0)
+            then INCREASE
+            else if (_positionDirection == _side) then INCREASE
+            else DECREASE
+
+          if (direction == INCREASE) then {
+            let amountInWithFee = _amountUsdn - muld(_amountUsdn, getFee(_amm, _trader))
             ("increasePosition", [
               _side, 
               _leverage, 
               divd(amountInWithFee, _limitPrice), 
               _refLink
-            ], [AttachedPayment(quoteAsset(), _amountIn)])
+            ], [AttachedPayment(quoteAsset(), _amountUsdn)])
           } else {
             ("closePosition", [_amountIn, muld(_amountIn, _limitPrice)], [])
           }
