@@ -11,6 +11,7 @@ const DIR_SHORT = 2;
 
 const STOP_LOSS = 1;
 const TAKE_PROFIT = 2;
+const LIMIT = 3;
 
 const minute = 1000 * 60;
 const hour = minute * 60;
@@ -629,5 +630,76 @@ describe("Should execute STOP loss orders on SHORT position", async function () 
 
     return expect(e.orders.as(executor).executeOrder(orderId)).to.be.eventually
       .rejected;
+  });
+});
+
+describe.only("LIMIT order should be able to", async function () {
+  this.timeout(600000);
+
+  let e, amm, longer, user, shorter, executor, lp;
+  let _oderId;
+
+  before(async function () {
+    await setupAccounts({
+      admin: 1 * wvs,
+      longer: 0.1 * wvs,
+      user: 0.1 * wvs,
+      lp: 0.1 * wvs,
+      shorter: 0.1 * wvs,
+      executor: 0.2 * wvs,
+    });
+
+    longer = accounts.longer;
+    shorter = accounts.shorter;
+    executor = accounts.executor;
+    user = accounts.user;
+    lp = accounts.lp;
+
+    e = new Environment(accounts.admin);
+    await e.deploy();
+    await e.fundAccounts({
+      [longer]: 50000,
+      [shorter]: 50000,
+      [user]: 50000,
+      [lp]: 100000,
+    });
+
+    amm = await e.deployAmm(1000000, 55);
+
+    await e.vault.as(lp).stake(100000);
+  });
+
+  it("Open a new LONG position", async function () {
+    let [orderId] = await e.orders
+      .as(longer)
+      .createOrder(amm.address, LIMIT, 57.0, 0, 1000, 3, DIR_LONG, 1000);
+
+    await expect(e.orders.as(executor).executeOrder(orderId)).to.be.eventually
+      .rejected;
+
+    await amm.setOraclePrice(57.15);
+    await amm.syncTerminalPriceToOracle();
+
+    let [can] = await e.orders.canExecute(orderId);
+    expect(can).to.be.true;
+
+    await e.orders.as(executor).executeOrder(orderId);
+  });
+
+  it("Open a new LONG position", async function () {
+    let [orderId] = await e.orders
+      .as(longer)
+      .createOrder(amm.address, LIMIT, 57.0, 0, 1000, 3, DIR_LONG, 1000);
+
+    await expect(e.orders.as(executor).executeOrder(orderId)).to.be.eventually
+      .rejected;
+
+    await amm.setOraclePrice(57.15);
+    await amm.syncTerminalPriceToOracle();
+
+    let [can] = await e.orders.canExecute(orderId);
+    expect(can).to.be.true;
+
+    await e.orders.as(executor).executeOrder(orderId);
   });
 });

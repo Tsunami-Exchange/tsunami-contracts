@@ -260,13 +260,38 @@
     _side: Int,
     _refLink: String
   ) = {
-    strict doCall = invoke(
-      this,
-      "internalCreateOrder",
-      [i.caller.toString(), _amm, _type, _triggerPrice, _limitPrice, _amountIn, _leverage, _side, _refLink],
+    if (i.payments.size() > 1) then {
+      throw("Invalid createOrder parameters: invalid payment count")
+    } else {
+      let (paymentAssetId, paymentAmount) = if (i.payments.size() == 1) then {
+        (
+          i.payments[0].assetId.valueOrErrorMessage("Invalid asset id").toBase58String(),
+          i.payments[0].amount
+        )
+      } else {
+        ("", 0)
+      }
+
+      strict doCall = invoke(
+        this,
+        "internalCreateOrder",
+        [
+          i.caller.toString(), 
+          _amm, 
+          _type, 
+          _triggerPrice, 
+          _limitPrice, 
+          _amountIn, 
+          _leverage, 
+          _side, 
+          _refLink,
+          paymentAssetId,
+          paymentAmount
+        ],
+        []
+      )
       []
-    )
-    []
+    }
   }
 
   @Callable(i)
@@ -279,7 +304,9 @@
     _amountIn: Int,
     _leverage: Int,
     _side: Int,
-    _refLink: String
+    _refLink: String,
+    _paymentAssetId: String,
+    _paymentAmount: Int
   ) = {
     if (
       !initialized()
@@ -314,19 +341,17 @@
         strict usdnPayment = if (_direction == INCREASE) then {
           # If it's an increase position order - then validate that payment 
           # is equal to _amountIn and deposit it to manager
-          let _assetId = i.payments[0].assetId
-          let _amount = i.payments[0].amount
-
-          if (_assetId != quoteAsset() || _amount != _amountIn) then {
+          
+          if (_paymentAssetId != quoteAsset().toBase58String() || _paymentAmount != _amountIn) then {
             throw("Invalid createLimitOrder parameters: invalid payment")
           } else {
             strict stake = invoke(
               managerAddress(),
               "deposit",
               [],
-              [AttachedPayment(quoteAsset(), _amount)]
+              [AttachedPayment(quoteAsset(), _paymentAmount)]
             )
-            _amount
+            _paymentAmount
           }
         } else {
           0
@@ -477,7 +502,11 @@
         # A limit order will be executed when the price is ~ at trigger price
         #
         let marketPrice = getMarketPrice(_amm)
-        let spread = getSpread(_triggerPrice)
+        let spread = if (_limitPrice == 0) then { 
+          getSpread(_triggerPrice)
+        } else {
+          abs(_triggerPrice - _limitPrice)
+        }
         let isExecutable = marketPrice >= _triggerPrice - spread && marketPrice <= _triggerPrice + spread
         if (isExecutable) then {
           let _positionDirection = if (positionSize > 0) 
@@ -495,7 +524,7 @@
             ("increasePosition", [
               _side, 
               _leverage, 
-              divd(amountInWithFee, _limitPrice), 
+              if (_limitPrice == 0) then 0 else divd(amountInWithFee, _limitPrice), 
               _refLink
             ], [AttachedPayment(quoteAsset(), _amountUsdn)])
           } else {
@@ -527,6 +556,16 @@
       markExecuteOrder(_orderId)
     }
   }
+
+  # View functions for UI/Bots
+
+  @Callable(i)
+  func view_canExecuteOrder(_orderId: Int) = {
+    strict s = invoke(this, "executeOrder", [_orderId], [])
+    throw("Success")
+  }
+
+  
 
   @Verifier(tx)
   func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], adminPublicKey())

@@ -2634,7 +2634,7 @@ class Orders {
     _amountIn,
     _leverage,
     _side,
-    _usdnPayment = 0,
+    _usdnPayment,
     _refLink = ""
   ) {
     let triggerPrice = Math.round(_triggerPrice * decimals);
@@ -2651,7 +2651,7 @@ class Orders {
       amountIn = Math.round(_amountIn * decimals);
     }
     let leverage = Math.round(_leverage * decimals);
-    let usdnPayment = Math.round(_usdnPayment * decimals);
+    let usdnPayment = Math.round((_usdnPayment || 0) * decimals);
 
     console.log(
       `createOrder = ${JSON.stringify([
@@ -2696,6 +2696,8 @@ class Orders {
     let id = ttx.stateChanges.invokes[0].stateChanges.data
       .filter((x) => x.key === "k_lastOrderId")
       .map((x) => x.value)[0];
+
+    console.log(JSON.stringify(ttx));
     return [id, ttx];
   }
 
@@ -2711,6 +2713,37 @@ class Orders {
 
     await waitForTx(tx.id);
     return tx;
+  }
+
+  async canExecute(_order) {
+    const invokeTx = invokeScript(
+      {
+        dApp: address(this.e.seeds.orders),
+        call: {
+          function: "view_canExecuteOrder",
+          args: [
+            {
+              value: _order,
+              type: "integer",
+            },
+          ],
+        },
+      },
+      this.e.seeds.admin
+    );
+
+    try {
+      await broadcast(invokeTx);
+    } catch (e) {
+      let { message } = JSON.parse(JSON.stringify(e));
+      let msg = message.replace("Error while executing account-script: ", "");
+
+      if (msg === "Success") {
+        return [true];
+      } else {
+        return [false, msg];
+      }
+    }
   }
 
   async cancelOrder(_order) {
