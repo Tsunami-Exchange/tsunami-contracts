@@ -266,7 +266,7 @@ class Environment {
       address(this.seeds.timer)
     );
     let p5 = deploy(
-      "orders.ride",
+      "orders2.ride",
       3400000,
       this.seeds.orders,
       "Orders",
@@ -811,7 +811,7 @@ class Environment {
 
     await this.ensureDeploymentFee(ordersAddress, fee);
 
-    await deploy("orders.ride", fee, this.seeds.orders, "Orders");
+    await deploy("orders2.ride", fee, this.seeds.orders, "Orders");
 
     let orders = await accountDataByKey(
       `k_orders_address`,
@@ -1321,7 +1321,7 @@ class Environment {
 
     let p3 = deploy(
       "vAMM2.ride",
-      6500000,
+      7000000,
       ammSeed,
       "vAMM",
       this.isLocal,
@@ -1664,7 +1664,7 @@ class AMM {
 
   async upgrade() {
     console.log(`Upgrading AMM ${this.address}`);
-    return this.e.upgradeContract("vAMM2.ride", this.address, 6500000);
+    return this.e.upgradeContract("vAMM2.ride", this.address, 7000000);
   }
 
   async migrateLiquidity() {
@@ -1865,12 +1865,30 @@ class AMM {
     return removeMarginTx;
   }
 
-  async closePosition(_amount) {
+  async closePosition(_amount, _minQuoteAssetAmount = 0) {
+    if (!_amount) {
+      let trader = address(this.sender);
+      let dApp = address(this.e.seeds.amms[this.address]);
+
+      _amount = await accountDataByKey(`k_positionSize_${trader}`, dApp).then(
+        (x) => x.value
+      );
+      _amount = Math.abs(_amount);
+    } else {
+      _amount = Math.round(_amount * decimals);
+    }
     const closePositionTx = invokeScript(
       {
         dApp: address(this.e.seeds.amms[this.address]),
         call: {
           function: "closePosition",
+          args: [
+            { type: "integer", value: _amount },
+            {
+              type: "integer",
+              value: Math.round(_minQuoteAssetAmount * decimals),
+            },
+          ],
         },
       },
       this.sender
@@ -2592,6 +2610,8 @@ class Miner {
 }
 
 class Orders {
+  FULL_POSITION = -1;
+
   constructor(e, sender) {
     this.e = e;
     this.sender = sender;
@@ -2601,12 +2621,104 @@ class Orders {
     return new Orders(this.e, _sender);
   }
 
-  async executeOrder(_prefix, _order, _signature) {
+  async upgrade() {
+    console.log(`Upgrading Orders ${this.address}`);
+    return this.e.upgradeContract("orders2.ride", this.address, 3700000);
+  }
+
+  async createOrder(
+    _amm,
+    _type,
+    _triggerPrice,
+    _limitPrice,
+    _amountIn,
+    _leverage,
+    _side,
+    _usdnPayment = 0,
+    _refLink = ""
+  ) {
+    let triggerPrice = Math.round(_triggerPrice * decimals);
+    let limitPrice = Math.round(_limitPrice * decimals);
+    let amountIn = 0;
+    if (_amountIn == this.FULL_POSITION) {
+      let size = await accountDataByKey(
+        `k_positionSize_${address(this.sender)}`,
+        _amm
+      ).then((x) => x.value);
+
+      amountIn = Math.abs(size);
+    } else {
+      amountIn = Math.round(_amountIn * decimals);
+    }
+    let leverage = Math.round(_leverage * decimals);
+    let usdnPayment = Math.round(_usdnPayment * decimals);
+
+    console.log(
+      `createOrder = ${JSON.stringify([
+        _amm,
+        _type,
+        triggerPrice,
+        limitPrice,
+        amountIn,
+        leverage,
+        _side,
+        _refLink,
+      ])}`
+    );
+    let tx = await invoke(
+      {
+        dApp: address(this.e.seeds.orders),
+        functionName: "createOrder",
+        arguments: [
+          _amm,
+          _type,
+          triggerPrice,
+          limitPrice,
+          amountIn,
+          leverage,
+          _side,
+          _refLink,
+        ],
+        payment:
+          usdnPayment == 0
+            ? []
+            : [
+                {
+                  assetId: this.e.assets.neutrino,
+                  amount: usdnPayment,
+                },
+              ],
+      },
+      this.sender
+    );
+
+    let ttx = await waitForTx(tx.id);
+    let id = ttx.stateChanges.invokes[0].stateChanges.data
+      .filter((x) => x.key === "k_lastOrderId")
+      .map((x) => x.value)[0];
+    return [id, ttx];
+  }
+
+  async executeOrder(_order) {
     let tx = await invoke(
       {
         dApp: address(this.e.seeds.orders),
         functionName: "executeOrder",
-        arguments: [_prefix, _order, _signature],
+        arguments: [_order],
+      },
+      this.sender
+    );
+
+    await waitForTx(tx.id);
+    return tx;
+  }
+
+  async cancelOrder(_order) {
+    let tx = await invoke(
+      {
+        dApp: address(this.e.seeds.orders),
+        functionName: "cancelOrder",
+        arguments: [_order],
       },
       this.sender
     );

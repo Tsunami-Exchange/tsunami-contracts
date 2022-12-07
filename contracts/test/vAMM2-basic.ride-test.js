@@ -32,7 +32,7 @@ describe("vAMM should work with positive funding", async function () {
     e = new Environment(accounts.admin);
     await e.deploy();
     await e.fundAccounts({
-      [longer]: 100,
+      [longer]: 170,
       [shorter]: 100,
     });
 
@@ -140,5 +140,17 @@ describe("vAMM should work with positive funding", async function () {
 
   it("Can close short position", async function () {
     await amm.as(shorter).closePosition();
+  });
+
+  it("Can partially close long position", async function () {
+    await amm.as(longer).increasePosition(150, DIR_LONG, 3, 0); // 150 * 3 / 55 ~ = 8.18 base asset
+    const p1 = await amm.getPositionInfo(longer);
+    console.log(`P1=${JSON.stringify(p1)}`);
+
+    await amm.as(longer).closePosition(4, 200);
+    const p2 = await amm.getPositionInfo(longer);
+    console.log(`P2=${JSON.stringify(p2)}`);
+
+    await amm.as(longer).closePosition();
   });
 });

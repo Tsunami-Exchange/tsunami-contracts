@@ -1,0 +1,482 @@
+  {-# STDLIB_VERSION 6 #-}
+  {-# CONTENT_TYPE DAPP #-}
+  {-# SCRIPT_TYPE ACCOUNT #-}
+
+  # Coordinator
+  let k_coordinatorAddress  = "k_coordinatorAddress"
+  let k_admin_public_key    = "k_admin_public_key" 
+  let k_quote_asset         = "k_quote_asset"
+  let k_amm                 = "k_amm" 
+  let k_manager_address     = "k_manager_address"
+
+  # AMM
+  let k_positionSequence    = "k_positionSequence"
+  let k_positionSize        = "k_positionSize"
+  let k_fee                 = "k_fee"
+
+  # Orders
+  let k_executedOrders      = "k_executedOrders"
+  let k_canceledOrders      = "k_canceledOrders"
+  let k_order               = "k_order"
+  let k_lastOrderId         = "k_lastOrderId"
+  let k_traderOrderCnt      = "k_traderOrderCnt"
+
+  # Sender
+  let k_sender              = "k_sender"
+
+  # Initialization status
+  let k_initialized         = "k_initialized"
+
+  # Order types
+  let STOP   = 1 # Executes when price is at trigger point or worse (closesPosition)
+  let TAKE   = 2 # Executes when price is at trigger point or better (closesPosition)
+  let LIMIT  = 3 # Executes when price is at triggerPrice +- 0.02% and baseAssetAmount >= minBaseAssetAmount (can increase / decrease positions)
+
+  # Sides
+  let LONG   = 1
+  let SHORT  = 2
+
+  # Direction
+  let INCREASE = 1
+  let DECREASE = 2
+
+  # Limit of orders per trader per AMM
+  let MAX_TRADER_ORDERS_PER_AMM = 5
+
+  # TIME
+  let TIME = lastBlock.timestamp
+
+  # Math
+  let DECIMAL_UNIT = 1 * (10 * 10 * 10 * 10 * 10 * 10) # 10^6
+  let SPREAD_LIMIT = DECIMAL_UNIT / 200 # 0.005, 0.5% spread
+
+  func abs(_x: Int) = if (_x > 0) then _x else -_x
+  func divd(_x: Int, _y: Int) = fraction(_x, DECIMAL_UNIT, _y, HALFEVEN)
+  func muld(_x: Int, _y: Int) = fraction(_x, _y, DECIMAL_UNIT, HALFEVEN)  
+  func minv(_x: Int, _y: Int) = if (_x > _y) then _y else _x
+
+  # Keys
+  func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
+
+  func executedOrderKey(_orderId: Int) = {
+    k_executedOrders + "_" + _orderId.toString()
+  }
+
+  func canceledOrderKey(_orderId: Int) = {
+    k_canceledOrders + "_" + _orderId.toString()
+  }
+
+  func orderKey(_orderId: Int) = {
+    k_order.toCompositeKey(_orderId.toString())
+  }
+
+  func traderOrderCountKey(_amm: String, _trader: String) = {
+    k_traderOrderCnt + "_" + _amm + "_" + _trader
+  }
+
+  # Coordinator constants #
+  func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
+  func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
+  func managerAddress() = addressFromString(coordinator().getStringValue(k_manager_address)).valueOrErrorMessage("Manager not set")
+  func isWhitelist(_address: String) = getBoolean(coordinator(), k_amm.toCompositeKey(_address)).valueOrElse(false)
+  func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
+  func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
+
+  # Validators
+  func isValid(_orderId: Int) = {
+    if (this.getBoolean(executedOrderKey(_orderId)).valueOrElse(false)) then {
+      throw("Order already executed: " + _orderId.toString())
+    } else {
+      if (this.getBoolean(canceledOrderKey(_orderId)).valueOrElse(false)) then {
+        throw("Order already cancelled: " + _orderId.toString())
+      } else {
+        true
+      }
+    }
+  }
+
+  # View functions
+  func currentOrderId() = {
+    this.getInteger(k_lastOrderId).valueOrElse(0)
+  }
+
+  func getTraderOrderCount(_amm: String, _trader: String) = {
+    let key = traderOrderCountKey(_amm, _trader)
+    this.getInteger(key).valueOrElse(0)
+  }
+
+  func getOrder(_orderId: Int) = {
+    let orderStr = this.getString(orderKey(_orderId))
+      .valueOrErrorMessage("Invalid order id: "+ _orderId.toString())
+
+    let orderPartList   = orderStr.split(",")
+
+    let amm             = orderPartList[0 ]
+    let trader          = orderPartList[1 ]
+    let amountIn        = orderPartList[2 ].parseInt().valueOrErrorMessage("Invalid amountIn")
+    let leverage        = orderPartList[3 ].parseInt().valueOrErrorMessage("Invalid leverage")
+    let type            = orderPartList[4 ].parseInt().valueOrErrorMessage("Invalid type")
+    let triggerPrice    = orderPartList[5 ].parseInt().valueOrErrorMessage("Invalid triggerPrice")
+    let side            = orderPartList[6 ].parseInt().valueOrErrorMessage("Invalid side")
+    let direction       = orderPartList[7 ].parseInt().valueOrErrorMessage("Invalid direction")
+    let refLink         = orderPartList[8 ]
+    let positionId      = orderPartList[9 ].parseInt().valueOrErrorMessage("Invalid positionId")
+    let limitPrice      = orderPartList[10].parseInt().valueOrErrorMessage("Invalid limitPrice")
+    
+    (amm, trader, amountIn, leverage, type, triggerPrice, side, direction, refLink, positionId, limitPrice)
+  }
+
+  func getMarketPrice(_amm: String) = {
+    strict s = invoke(addressFromStringValue(_amm), "computeSpotPrice", [], [])
+    let res = match (s) {
+      case t: Int => t
+      case _ => throw("Invalid computeSpotPrice")
+    }
+
+    res.value()
+  }
+
+  func getFee(_amm: String) = {
+    let amm = addressFromStringValue(_amm)
+    amm.getInteger(k_fee).valueOrElse(0)
+  }
+
+  func getPositionSize(_amm: String, _trader: String) = {
+    let amm = addressFromStringValue(_amm)
+    let sizeKey = k_positionSize.toCompositeKey(_trader)
+    amm.getInteger(sizeKey).valueOrElse(0)
+  }
+
+  func getPositionId(_amm: String, _trader: String) = {
+    let amm = addressFromStringValue(_amm)
+    let seqKey = k_positionSequence.toCompositeKey(_trader)
+    amm.getInteger(seqKey).valueOrElse(0)
+  }
+
+  func getSpread(_price: Int) = {
+    muld(_price, SPREAD_LIMIT)
+  }
+
+  # Update functions
+  func saveOrder(
+    _orderId: Int,
+    _amm: String, 
+    _trader: String, 
+    _amountIn: Int, 
+    _leverage: Int, 
+    _type: Int, 
+    _triggerPrice: Int, 
+    _paymentUsdn: Int,
+    _side: Int, 
+    _refLink: String,
+    _positionId: Int,
+    _limitPrice: Int
+  ) = {
+    let orderStr = makeString([
+      _amm, _trader, _amountIn.toString(), _leverage.toString(), _type.toString(),
+      _triggerPrice.toString(), _paymentUsdn.toString(), _side.toString(), _refLink, 
+      _positionId.toString(), _limitPrice.toString()
+    ], ",")
+
+    [
+      StringEntry(orderKey(_orderId), orderStr)
+    ]
+  }
+
+  func updateTraderOrderCount(_amm: String, _trader: String, _count: Int) = {
+    [
+      IntegerEntry(traderOrderCountKey(_amm, _trader), _count)
+    ]
+  }
+
+  func updateLastOrderId(_lastOrderId: Int) = {
+    [
+      IntegerEntry(k_lastOrderId, _lastOrderId)
+    ]
+  }
+
+  func markExecuteOrder(_orderId: Int) = {
+    [
+      BooleanEntry(k_executedOrders.toCompositeKey(_orderId.toString()), true)
+    ]
+  }
+
+  func markCancelOrder(_orderId: Int) = {
+    [
+      BooleanEntry(k_canceledOrders.toCompositeKey(_orderId.toString()), true)
+    ]
+  }
+
+  @Callable(i)
+  func setContext(_sender: String) = {
+    if (i.caller != this) then {
+        throw("Only self-call")
+    } else {
+        [ StringEntry(k_sender, _sender) ]
+    }
+  }
+
+  @Callable(i)
+  func resetContext() = {
+    if (i.caller != this) then {
+        throw("Only self-call")
+    } else {
+        [ DeleteEntry(k_sender) ]
+    }
+  }
+
+  @Callable(i)
+  func initialize(
+    _coordinator: String
+  ) = {
+    if (initialized()) then {
+      throw("Already initialized")
+    } else {
+      [
+        StringEntry(k_coordinatorAddress, _coordinator),
+        BooleanEntry(k_initialized, true)
+      ]
+    }
+  }
+
+  @Callable(i)
+  func createOrder(
+    _amm: String,
+    _type: Int,
+    _triggerPrice: Int,
+    _limitPrice: Int,
+    _amountIn: Int,
+    _leverage: Int,
+    _side: Int,
+    _refLink: String
+  ) = {
+    strict doCall = invoke(
+      this,
+      "internalCreateOrder",
+      [i.caller.toString(), _amm, _type, _triggerPrice, _limitPrice, _amountIn, _leverage, _side, _refLink],
+      []
+    )
+
+    []
+  }
+
+  @Callable(i)
+  func internalCreateOrder(
+    _trader: String,
+    _amm: String,
+    _type: Int,
+    _triggerPrice: Int,
+    _limitPrice: Int,
+    _amountIn: Int,
+    _leverage: Int,
+    _side: Int,
+    _refLink: String
+  ) = {
+    if (
+      !initialized()
+      || !isWhitelist(_amm)
+      || _triggerPrice <= 0
+      || _limitPrice < 0
+      || _amountIn <= 0
+      || _leverage < 0
+      || !(_side == LONG || _side == SHORT)
+      || !(_type == STOP || _type == TAKE || _type == LIMIT)
+      || !(i.caller == this)
+    ) then {
+      throw("Invalid createOrder parameters")
+    } else {
+      let orderId = currentOrderId() + 1
+      
+      let newTraderOrderCount = getTraderOrderCount(_amm, _trader) + 1
+      let positionSize = getPositionSize(_amm, _trader)
+      let _direction = if (
+        positionSize == 0
+        || (positionSize > 0 && _side == LONG)
+        || (positionSize < 0 && _side == SHORT)
+      ) then {
+        INCREASE
+      } else {
+        DECREASE
+      }
+
+      if (positionSize == 0 && (_type == STOP || _type == TAKE)) then {
+        throw("Can not create STOP/TAKE order: no position")
+      } else {
+        strict usdnPayment = if (_direction == INCREASE) then {
+          # If it's an increase position order - then validate that payment 
+          # is equal to _amountIn and deposit it to manager
+          let _assetId = i.payments[0].assetId
+          let _amount = i.payments[0].amount
+
+          if (_assetId != quoteAsset() || _amount != _amountIn) then {
+            throw("Invalid createLimitOrder parameters: invalid payment")
+          } else {
+            strict stake = invoke(
+              managerAddress(),
+              "deposit",
+              [],
+              [AttachedPayment(quoteAsset(), _amount)]
+            )
+            _amount
+          }
+        } else {
+          0
+        }
+
+        let positionId = if (positionSize != 0) then {
+          getPositionId(_amm, _trader)
+        } else {
+          0
+        }        
+
+        if (newTraderOrderCount > MAX_TRADER_ORDERS_PER_AMM) then {
+          throw("Invalid createLimitOrder parameters: order count")
+        } else {
+          saveOrder(
+            orderId, _amm, _trader, _amountIn, _leverage, _type, _triggerPrice, _side, usdnPayment, _refLink, positionId, _limitPrice
+          )
+          ++
+          updateTraderOrderCount(_amm, _trader, newTraderOrderCount)
+          ++
+          updateLastOrderId(orderId)
+        }
+      }
+    }
+  }
+
+  @Callable(i)
+  func cancelOrder(_orderId: Int) = {
+    let (_amm, _trader, _amountIn, _leverage, _type) = getOrder(_orderId)
+    if (
+      !initialized()
+      || !isValid(_orderId)
+      || !(i.caller.toString() == _trader)
+    ) then {
+      throw("Invalid cancelOrder parameters")
+    } else {
+      let newTraderOrderCount = getTraderOrderCount(_amm, _trader) - 1
+
+      markCancelOrder(_orderId)
+      ++
+      updateTraderOrderCount(_amm, _trader, newTraderOrderCount)
+    }
+  }
+
+  @Callable(i)
+  func executeOrder(_orderId: Int) = {
+    let (
+      _amm, 
+      _trader, 
+      _amountIn, 
+      _leverage, 
+      _type, 
+      _triggerPrice, 
+      _side, 
+      _direction, 
+      _refLink, 
+      _positionId,
+      _limitPrice
+    ) = getOrder(_orderId)
+
+    if (
+      !initialized()
+      || !isValid(_orderId)
+    ) then {
+      throw("Invalid executeOrder parameters")
+    } else {
+      let positionSize = getPositionSize(_amm, _trader)
+      let currentPositionId = if (positionSize != 0) then {
+        getPositionId(_amm, _trader)
+      } else {
+        0
+      }
+
+      let (method, args, payments) = if (_type == STOP) then {
+        let _positionDirection = if (positionSize > 0) 
+          then LONG
+          else if (positionSize < 0) then SHORT
+          else throw("Can not execute STOP order: no open position")
+        # A stop order will be executed when the price is at trigger price or worse
+        # For LONG it's when price <= trigger price
+        # For SHORT it's when price >= trigger price
+        # This order always closes position at market price
+        let marketPrice = getMarketPrice(_amm)
+        let isExecutable = if (_side == _positionDirection) 
+          then throw("Can not execute STOP order: reduce only")
+          else if (currentPositionId != _positionId) then throw("Can not execute STOP order: position closed")
+          else if (_positionDirection == LONG) then marketPrice <= _triggerPrice 
+          else marketPrice >= _triggerPrice
+        
+        if (isExecutable) then {
+          ("closePosition", [minv(_amountIn, abs(positionSize)), muld(_limitPrice, abs(positionSize))], [])
+        } else {
+          throw("Can not execute STOP order: triggerPrice mismatch")
+        }
+      } else if (_type == TAKE) then {
+        let _positionDirection = if (positionSize > 0) 
+          then LONG
+          else if (positionSize < 0) then SHORT
+          else throw("Can not execute STOP order: no open position")
+        # A take order will be executed when the price is at trigger price or better
+        # For LONG it's when price >= trigger price
+        # For SHORT it's when price <= trigger price
+        # This order always closes position at market price
+        let marketPrice = getMarketPrice(_amm)
+        let isExecutable = if (_side == _positionDirection) 
+          then throw("Can not execute TAKE order: reduce only")
+          else if (currentPositionId != _positionId) then throw("Can not execute TAKE order: position closed " + currentPositionId.toString() + "!=" + _positionId.toString())
+          else if (_positionDirection == LONG) then marketPrice >= _triggerPrice 
+          else marketPrice <= _triggerPrice
+        
+        if (isExecutable) then {
+          ("closePosition", [minv(_amountIn, abs(positionSize)), muld(_limitPrice, abs(positionSize))], [])
+        } else {
+          throw("Can not execute TAKE order: triggerPrice mismatch")
+        }
+      } else if (_type == LIMIT) then {
+        # A limit order will be executed when the price is ~ at trigger price
+        #
+        let marketPrice = getMarketPrice(_amm)
+        let spread = getSpread(_triggerPrice)
+        let isExecutable = marketPrice >= _triggerPrice - spread && marketPrice <= _triggerPrice + spread
+        if (isExecutable) then {
+          if (_direction == INCREASE) then {
+            let amountInWithFee = _amountIn - muld(_amountIn, getFee(_amm))
+            ("increasePosition", [
+              _side, 
+              _leverage, 
+              divd(amountInWithFee, _limitPrice), 
+              _refLink
+            ], [AttachedPayment(quoteAsset(), _amountIn)])
+          } else {
+            ("closePosition", [_amountIn, muld(_amountIn, _limitPrice)], [])
+          }
+        } else {
+          throw("Can not execute LIMIT order: triggerPrice mismatch")
+        }
+      } else {
+        throw("Invalid order type: " + _type.toString())
+      }
+
+      strict withdraw = if (payments.size() == 1) then {
+        strict unstake = invoke(
+          managerAddress(),
+          "withdraw",
+          [quoteAsset().toBase58String(), payments[0].amount],
+          []
+        )
+        []
+      } else {
+        []
+      }
+
+      strict doSetContext = invoke(this, "setContext", [_trader], [])
+      strict doClosePosition = invoke(addressFromStringValue(_amm), method, args, payments)
+      strict doResetContext = invoke(this, "resetContext", [], [])
+
+      markExecuteOrder(_orderId)
+    }
+  }
+
+  @Verifier(tx)
+  func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], adminPublicKey())
