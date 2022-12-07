@@ -20,7 +20,7 @@ const { expect } = require("chai");
 const { Environment } = require("../common/common");
 const { decimals } = require("../common/utils");
 
-describe.only("Should execute TAKE profit orders on LONG position", async function () {
+describe("Should execute TAKE profit orders on LONG position", async function () {
   this.timeout(600000);
 
   let e, amm, longer, user, shorter, executor, lp;
@@ -173,7 +173,6 @@ describe.only("Should execute TAKE profit orders on LONG position", async functi
   });
 });
 
-/*
 describe("Should execute TAKE profit orders on SHORT position", async function () {
   this.timeout(600000);
 
@@ -632,5 +631,3 @@ describe("Should execute STOP loss orders on SHORT position", async function () 
       .rejected;
   });
 });
-
-*/
