@@ -76,6 +76,10 @@ class Environment {
       `k_vault_address`,
       coordinatorAddress
     ).then((x) => x && x.value);
+    const ordersAddress = await accountDataByKey(
+      `k_orders_address`,
+      coordinatorAddress
+    ).then((x) => x && x.value);
 
     let allKeys = await accountData(coordinatorAddress);
     allKeys = Object.keys(allKeys).map((k) => allKeys[k]);
@@ -94,6 +98,7 @@ class Environment {
     this.farming = new Farming(this, farmingAddress);
     this.referral = new Referral(this, referralAddress);
     this.vault = new Vault(this, vaultAddress);
+    this.orders = new Orders(this, ordersAddress);
 
     console.log(`Loaded environment with ${this.amms.length} AMMs`);
   }
@@ -2612,13 +2617,14 @@ class Miner {
 class Orders {
   FULL_POSITION = -1;
 
-  constructor(e, sender) {
+  constructor(e, address, sender) {
     this.e = e;
     this.sender = sender;
+    this.address = address;
   }
 
   as(_sender) {
-    return new Orders(this.e, _sender);
+    return new Orders(this.e, this.address, _sender);
   }
 
   async upgrade() {
