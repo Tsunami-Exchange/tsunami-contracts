@@ -15,7 +15,7 @@ let k_ora = "k_ora"                     # Address of Index Price oracle account
 let k_balance = "k_balance" # How much of a trader's funds is controlled by this AMM
 let k_sequence = "k_sequence" # Sequence number of position identifiers
 
-# Trader Position   
+# Trader Position
 let k_positionSize = "k_positionSize"                 # Trader position size (base asset)
 let k_positionMargin = "k_positionMargin"             # Trader position margin (quote asset) - how much quote asset is supporting the position
 let k_positionOpenNotional = "k_positionOpenNotional" # Trader position open notional - how much quote asset they have borrowed
@@ -39,6 +39,8 @@ let k_spreadLimit = "k_spreadLimit"                       # abs((marketPrice - o
 let k_maxPriceImpact = "k_maxPriceImpact"                 # maximum price impact per order
 let k_maxPriceSpread = "k_maxPriceSpread"                 # max spread between Index and Market Price
 let k_maxOpenNotional = "k_maxOpenNotional"               # max open notional in market
+let k_feeToStakersPercent = "k_feeToStakersPercent"       # percent of fee to stakers (rest goes to vault)
+let k_maxOracleDelay = "k_maxOracleDelay"                 # max delay in oracle data
 
 # TWAP data
 let k_lastDataStr = "k_lastDataStr"                       # List of last 15 TWAP computations (best case - we have a value for each of last 15 mins)
@@ -202,6 +204,8 @@ func latestShortCumulativePremiumFraction() = int(k_latestShortCumulativePremium
 func totalShortPositionSize() = int(k_totalShortPositionSize)
 func totalLongPositionSize() = int(k_totalLongPositionSize)
 func lastSequence() = intOr(k_sequence, 0)
+func feeToStakersPercent() = int(k_feeToStakersPercent)
+func maxOracleDelay() = int(k_maxOracleDelay)
 
 ##### Order support #####
 func getActualCaller(i: Invocation) = {
@@ -464,16 +468,20 @@ func swapOutput(
 func getOracleTwapPrice() = {
   let oracle = addressFromString(this.getStringValue(k_ora)).valueOrErrorMessage("")
   let priceKey = this.getStringValue(k_ora_key)
-  let blockKey = this.getStringValue(k_ora_block_key)
   let lastValue = oracle.getInteger(priceKey).valueOrErrorMessage("Can not get oracle price. Oracle: " + oracle.toString() + " key: " + priceKey)
-  # let lastOracleBlock = oracle.getIntegerValue(k_ora_block_key)
 
-  # Check that oracle data is not too old
-  #if (lastBlock.height <= lastOracleBlock || lastBlock.height - lastOracleBlock > ORACLE_INTERVAL) then {
-  #  throw("Invalid oracle data interval")
-  #} else {
-  lastValue
-  #}
+  let blockKey = this.getString(k_ora_block_key).valueOrElse("")
+  if (blockKey != "") then {
+    let currentBlock = lastBlock.height
+    let lastOracleBlock = oracle.getInteger(k_ora_block_key).valueOrErrorMessage("Can not get oracle block. Oracle: " + oracle.toString() + " key: " + blockKey)
+    if (currentBlock - lastOracleBlock > maxOracleDelay()) then {
+      throw("Oracle stale data. Last oracle block: " + lastOracleBlock.toString() + " current block: " + currentBlock.toString())
+    } else {
+      lastValue
+    }
+  } else {
+    lastValue
+  }
 }
 
 func requireNotOverSpreadLimit(_quoteAssetReserve: Int, _baseAssetReserve: Int) = {
@@ -880,6 +888,70 @@ func getAdjustedFee(_artifactId: String, _baseFeeDiscount: Int) = {
   (adjustedFee, burnArtifact)
 }
 
+
+func isSameAssetOrNoPosition(_trader: String, _assetId: String) = {
+    let oldPositionSize = getPosition(_trader)._1
+    if (oldPositionSize == 0) then {
+      true
+    } else {
+      getPositionAsset(_trader) == _assetId
+    }
+}
+
+func isSameAsset(_trader: String, _assetId: String) = {
+    getPositionAsset(_trader) == _assetId
+}
+
+func getBorrowedByTraderInMarketKey(_amm: String, _assetId: String, _trader: String) = {
+  k_trader_market_asset_collateral + "_" + _amm + "_" + _assetId + "_" + _trader
+}
+
+func getBorrowedByTrader(_trader: String) = {
+  let positionAsset = getPositionAsset(_trader)
+  if (positionAsset == quoteAsset().toBase58String()) then {
+    (0, positionAsset)
+  } else {
+    let key = getBorrowedByTraderInMarketKey(this.toString(), positionAsset, _trader)
+    let borrow = collateralAddress().getInteger(key).valueOrElse(0)
+    (borrow, positionAsset)
+  }
+}
+
+func getForTraderWithArtifact(_trader: String, _artifactId: String) = {
+  strict doGetFeeDiscount = invoke(
+    minerAddress(),
+    "computeFeeDiscount",
+    [_trader],
+    []
+  )
+
+  let feeDiscount = match(doGetFeeDiscount) {
+    case x: Int => x
+    case _ => throw("Invalid computeFeeDiscount result")
+  }
+
+  let (adjustedFee, burnArtifact) = getAdjustedFee(_artifactId, feeDiscount)
+
+  (adjustedFee, burnArtifact)
+}
+
+func getArtifactId(i: Invocation) = {
+  let artifactId = if (i.payments.size() > 1) then {
+    i.payments[1].assetId.valueOrErrorMessage("Invalid artifactId").toBase58String()
+  } else {
+    ""
+  }
+
+  artifactId
+}
+
+func distributeFee(_feeAmount: Int) = {
+  let feeToStakers = muld(_feeAmount, feeToStakersPercent())
+  let feeToInsurance = _feeAmount - feeToStakers
+
+  (feeToStakers, feeToInsurance)
+}
+
 func updateSettings(
   _initMarginRatio: Int,
   _mmr: Int,
@@ -890,7 +962,9 @@ func updateSettings(
   _maxPriceImpact: Int,
   _partialLiquidationRatio: Int,
   _maxPriceSpread: Int,
-  _maxOpenNotional: Int
+  _maxOpenNotional: Int,
+  _feeToStakersPercent: Int,
+  _maxOracleDelay: Int
 ) = {
   [
     IntegerEntry(k_initMarginRatio, _initMarginRatio),
@@ -902,7 +976,9 @@ func updateSettings(
     IntegerEntry(k_maxPriceImpact, _maxPriceImpact),
     IntegerEntry(k_partialLiquidationRatio, _partialLiquidationRatio),
     IntegerEntry(k_maxPriceSpread, _maxPriceSpread),
-    IntegerEntry(k_maxOpenNotional, _maxOpenNotional)
+    IntegerEntry(k_maxOpenNotional, _maxOpenNotional),
+    IntegerEntry(k_feeToStakersPercent, _feeToStakersPercent),
+    IntegerEntry(k_maxOracleDelay, _feeToStakersPercent)
   ]
 }
 
@@ -961,7 +1037,7 @@ func updatePosition(
   ]
 }
 
-func appendTwap(price: Int) = {
+func appendTwap(_price: Int) = {
   let minuteId = lastBlock.timestamp / 1000 / 60
   let previousMinuteId = this.getInteger(k_lastMinuteId).valueOrElse(0)
   if (minuteId < previousMinuteId) then {
@@ -970,7 +1046,7 @@ func appendTwap(price: Int) = {
     let lastMinuteId = if (previousMinuteId == 0) then minuteId else previousMinuteId
     if (minuteId > previousMinuteId) then {
       let prevCumulativePrice = this.getInteger(k_twapDataLastCumulativePrice + "_" + previousMinuteId.toString()).valueOrElse(0)
-      let prevPrice = this.getInteger(k_twapDataLastPrice + "_" + previousMinuteId.toString()).valueOrElse(price)
+      let prevPrice = this.getInteger(k_twapDataLastPrice + "_" + previousMinuteId.toString()).valueOrElse(_price)
       let lastCumulativePrice = prevCumulativePrice + (minuteId - lastMinuteId) * prevPrice
 
       # Push new minute to list of last minutes with recorded TWAP info
@@ -979,7 +1055,7 @@ func appendTwap(price: Int) = {
       # Append new measurement to list of TWAP's
       [
         IntegerEntry(k_twapDataLastCumulativePrice.toCompositeKey(minuteId.toString()), lastCumulativePrice),
-        IntegerEntry(k_twapDataLastPrice.toCompositeKey(minuteId.toString()), price),
+        IntegerEntry(k_twapDataLastPrice.toCompositeKey(minuteId.toString()), _price),
         IntegerEntry(k_twapDataPreviousMinuteId.toCompositeKey(minuteId.toString()), previousMinuteId),
         IntegerEntry(k_lastMinuteId, minuteId),
         StringEntry(k_lastDataStr, listToStr(list))
@@ -987,13 +1063,13 @@ func appendTwap(price: Int) = {
     } else {
       let twapDataPreviousMinuteId = this.getInteger(k_twapDataPreviousMinuteId.toCompositeKey(minuteId.toString())).valueOrElse(0)
       let prevCumulativePrice = this.getInteger(k_twapDataLastCumulativePrice.toCompositeKey(twapDataPreviousMinuteId.toString())).valueOrElse(0)
-      let prevPrice = this.getInteger(k_twapDataLastPrice.toCompositeKey(twapDataPreviousMinuteId.toString())).valueOrElse(price)
+      let prevPrice = this.getInteger(k_twapDataLastPrice.toCompositeKey(twapDataPreviousMinuteId.toString())).valueOrElse(_price)
       let lastCumulativePrice = prevCumulativePrice + (minuteId - twapDataPreviousMinuteId) * prevPrice
       
       # Override LastCumulativePrice and LastPrice to keep latest measurement
       [
         IntegerEntry(k_twapDataLastCumulativePrice.toCompositeKey(minuteId.toString()), lastCumulativePrice),
-        IntegerEntry(k_twapDataLastPrice.toCompositeKey(minuteId.toString()), price)
+        IntegerEntry(k_twapDataLastPrice.toCompositeKey(minuteId.toString()), _price)
       ]
     }
   }
@@ -1099,62 +1175,6 @@ func doBurnArtifact(_burnArtifact: Boolean, i: Invocation) = {
   }
 }
 
-func isSameAssetOrNoPosition(_trader: String, _assetId: String) = {
-    let oldPositionSize = getPosition(_trader)._1
-    if (oldPositionSize == 0) then {
-      true
-    } else {
-      getPositionAsset(_trader) == _assetId
-    }
-}
-
-func isSameAsset(_trader: String, _assetId: String) = {
-    getPositionAsset(_trader) == _assetId
-}
-
-func getBorrowedByTraderInMarketKey(_amm: String, _assetId: String, _trader: String) = {
-  k_trader_market_asset_collateral + "_" + _amm + "_" + _assetId + "_" + _trader
-}
-
-func getBorrowedByTrader(_trader: String) = {
-  let positionAsset = getPositionAsset(_trader)
-  if (positionAsset == quoteAsset().toBase58String()) then {
-    (0, positionAsset)
-  } else {
-    let key = getBorrowedByTraderInMarketKey(this.toString(), positionAsset, _trader)
-    let borrow = collateralAddress().getInteger(key).valueOrElse(0)
-    (borrow, positionAsset)
-  }
-}
-
-func getForTraderWithArtifact(_trader: String, _artifactId: String) = {
-  strict doGetFeeDiscount = invoke(
-    minerAddress(),
-    "computeFeeDiscount",
-    [_trader],
-    []
-  )
-
-  let feeDiscount = match(doGetFeeDiscount) {
-    case x: Int => x
-    case _ => throw("Invalid computeFeeDiscount result")
-  }
-
-  let (adjustedFee, burnArtifact) = getAdjustedFee(_artifactId, feeDiscount)
-
-  (adjustedFee, burnArtifact)
-}
-
-func getArtifactId(i: Invocation) = {
-  let artifactId = if (i.payments.size() > 1) then {
-    i.payments[1].assetId.valueOrErrorMessage("Invalid artifactId").toBase58String()
-  } else {
-    ""
-  }
-
-  artifactId
-}
-
 ##### Callable functions #####
 
 @Callable(i)
@@ -1256,7 +1276,9 @@ func changeSettings(
   _maxPriceImpact: Int,
   _partialLiquidationRatio: Int,
   _maxPriceSpread: Int,
-  _maxOpenNotional: Int
+  _maxOpenNotional: Int,
+  _feeToStakersPercent: Int,
+  _maxOracleDelay: Int
 ) = {
   if (i.caller != adminAddress()) then {
     throw("Invalid changeSettings params")
@@ -1271,7 +1293,9 @@ func changeSettings(
       _maxPriceImpact,
       _partialLiquidationRatio,
       _maxPriceSpread,
-      _maxOpenNotional
+      _maxOpenNotional,
+      _feeToStakersPercent,
+      _maxOracleDelay
     )
   }
 }
@@ -1287,12 +1311,15 @@ func initialize(
   _fee: Int,
   _oracle: String,
   _oracleKey: String,
+  _oracleBlockKey: String,
   _coordinator: String,
   _spreadLimit: Int,
   _maxPriceImpact: Int,
   _partialLiquidationRatio: Int,
   _maxPriceSpread: Int,
-  _maxOpenNotional: Int
+  _maxOpenNotional: Int,
+  _feeToStakersPercent: Int,
+  _maxOracleDelay: Int
 ) = {
   if (
     _qtAstR <= 0
@@ -1307,6 +1334,8 @@ func initialize(
     || _partialLiquidationRatio <= 0
     || _maxPriceSpread <= 0
     || _maxOpenNotional <= 0
+    || _feeToStakersPercent <= 0 || _feeToStakersPercent > DECIMAL_UNIT
+    || _maxOracleDelay <= 0
     || initialized()
   ) then {
     throw("Invalid initialize parameters")
@@ -1323,7 +1352,9 @@ func initialize(
       _maxPriceImpact,
       _partialLiquidationRatio,
       _maxPriceSpread,
-      _maxOpenNotional
+      _maxOpenNotional,
+      _feeToStakersPercent,
+      _maxOracleDelay
     )
     ++
     updateFunding(
@@ -1340,6 +1371,7 @@ func initialize(
       BooleanEntry(k_initialized, true),
       StringEntry(k_ora, _oracle),
       StringEntry(k_ora_key, _oracleKey),
+      StringEntry(k_ora_block_key, _oracleBlockKey),
       StringEntry(k_coordinatorAddress, _coordinator)
     ]
   }
@@ -1623,8 +1655,7 @@ func increasePosition(
       }
     }
 
-    let feeToStakers = feeAmount / 2
-    let feeToInsurance = feeAmount - feeToStakers
+    let (feeToStakers, feeToInsurance) = distributeFee(feeAmount)
     
     strict stake = invoke(
       vaultAddress(),
@@ -1757,8 +1788,7 @@ func addMargin() = {
       oldPositionLstUpdCPF
     ) = getPosition(_trader)
 
-    let feeToStakers = feeAmount / 2
-    let feeToInsurance = feeAmount - feeToStakers
+    let (feeToStakers, feeToInsurance) = distributeFee(feeAmount)
   
     strict stake = invoke(
       vaultAddress(),
@@ -1955,6 +1985,8 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
         _trader, 
         PNL_OPTION_SPOT
       )
+
+      let mr = getMarginRatioByOption(_trader, PNL_OPTION_SPOT)
       
       let realizedRatio = divd(abs(exchangedPositionSize), abs(oldPositionSize))
       # Realize a certain percent of position PnL 
@@ -1975,9 +2007,9 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
         unrealizedPnlAfter + oldPositionNotional - exchangedQuoteAssetAmount
       }
 
-      let newPositionMargin = muld(remainMargin, realizedRatio)
-      let newPositionSize = oldPositionSize + exchangedPositionSize
       let newPositionOpenNotional = abs(remainOpenNotional)
+      let newPositionMargin = muld(newPositionOpenNotional, mr)
+      let newPositionSize = oldPositionSize + exchangedPositionSize
       let newPositionLstUpdCPF = latestCumulativePremiumFraction(newPositionSize)
 
       let openInterestNotionalAfter = openInterestNotional() - exchangedQuoteAssetAmount
@@ -2070,7 +2102,7 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
           strict doRepay = invoke(
             collateralAddress(),
             "repay",
-            [_trader, assetId],
+            [_trader, assetId ],
             [AttachedPayment(quoteAsset(), borrowed)]
           )   
           

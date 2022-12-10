@@ -1381,6 +1381,7 @@ class Environment {
               }, // _fee 1%
               { type: "string", value: address(this.seeds.oracle) }, // Oracle address
               { type: "string", value: "price" }, // Oracle key
+              { type: "string", value: "" }, // Oracle block key
               { type: "string", value: address(this.seeds.coordinator) }, // Coordinator address,
               {
                 type: "integer",
@@ -1406,6 +1407,16 @@ class Environment {
                   (options.maxOpenNotional || 100_000_000) * decimals
                 ),
               }, // _maxOpenNotional 100,000,000
+              {
+                type: "integer",
+                value: Math.round(
+                  (options.feeToStakersPercent || 0.5) * decimals
+                ),
+              }, // _feeToStakersPercent 50%
+              {
+                type: "integer",
+                value: options.maxOracleDelay || 1,
+              }, // _maxOracleDelay 1 block
             ],
           },
         },
