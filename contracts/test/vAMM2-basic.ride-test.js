@@ -114,7 +114,7 @@ describe("vAMM should work with positive funding", async function () {
   });
 
   it("Can not remove too much margin", async function () {
-    expect(amm.as(longer).addMargin(110)).to.eventually.be.rejected;
+    return expect(amm.as(longer).removeMargin(110)).to.eventually.be.rejected;
   });
 
   it("Can open short position", async function () {

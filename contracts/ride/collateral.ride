@@ -17,8 +17,9 @@
   let k_admin_public_key = "k_admin_public_key"
   let k_manager_address = "k_manager_address" 
   let k_amm = "k_amm"
-  let k_insurance_address = "k_insurance_address"
+  # let k_insurance_address = "k_insurance_address"
   let k_exchange_address = "k_exchange_address"
+  let k_vault_address = "k_vault_address"
 
   func toCompositeKey(_key: String, _address: String) = _key + "_" + _address  
 
@@ -30,7 +31,8 @@
   func managerAddress() = addressFromString(coordinator().getStringValue(k_manager_address)).valueOrErrorMessage("Manager not set")
   func isWhitelist(_address: String) = getBoolean(coordinator(), k_amm.toCompositeKey(_address)).valueOrElse(false)
   func isWhitelistAsset(_assetId: String) = getBoolean(this, k_whitelist_asset.toCompositeKey(_assetId)).valueOrElse(false)
-  func insuranceAddress() = addressFromString(coordinator().getStringValue(k_insurance_address)).valueOrErrorMessage("Insurance not set")
+  #func insuranceAddress() = addressFromString(coordinator().getStringValue(k_insurance_address)).valueOrErrorMessage("Insurance not set")
+  func vaultAddress() = addressFromString(coordinator().getStringValue(k_vault_address)).valueOrErrorMessage("Vault not set") 
   func swapAddress() = addressFromString(coordinator().getString(k_exchange_address).valueOrErrorMessage("No swap address")).valueOrErrorMessage("Invalid swap address")
 
   ##### Core constants #####
@@ -94,8 +96,8 @@
         throw("Invalid borrow parameters")
     } else {
         strict withdrawInsurance = invoke(
-            insuranceAddress(),
-            "withdraw",
+            vaultAddress(),
+            "addLockedV",
             [amount],
             []
         )
@@ -105,7 +107,7 @@
         # TODO: Total
 
         [
-            ScriptTransfer(i.caller, amount, quoteAsset()),
+            #ScriptTransfer(i.caller, amount, quoteAsset()),
             IntegerEntry(
                 getBorrowedByTraderInMarketKey(amm, assetId, _trader), 
                 getBorrowedByTraderInMarket(amm, assetId, _trader) + amount
@@ -117,9 +119,10 @@
   @Callable(i)
   func repay(
     _trader: String,
+    _amount: Int,
     _assetId: String
   ) = {
-    let amount = i.payments[0].amount
+    #let amount = i.payments[0].amount
     let amm = i.caller.toString()
 
     if (
@@ -129,39 +132,35 @@
         throw("Invalid repay parameters")
     } else {
       strict withdrawInsurance = invoke(
-          insuranceAddress(),
-          "deposit",
-          [],
-          [AttachedPayment(quoteAsset(), amount)]
+          vaultAddress(),
+          "withdrawLockedV",
+          [_amount],
+          []
       )
 
-      let newDebt = getBorrowedByTraderInMarket(amm, _assetId, _trader) - amount
+      let newDebt = getBorrowedByTraderInMarket(amm, _assetId, _trader) - _amount
 
       [
-          ScriptTransfer(i.caller, amount, fromBase58String(_assetId))
+        ScriptTransfer(i.caller, _amount, fromBase58String(_assetId))
       ]
       ++
-      if (newDebt > 0) then [
+      (if (newDebt > 0) then [
           IntegerEntry(getBorrowedByTraderInMarketKey(amm, _assetId, _trader), newDebt)
       ] else [
           DeleteEntry(getBorrowedByTraderInMarketKey(amm, _assetId, _trader))
-      ]
+      ])
     }
   }
 
   @Callable(i)
   func realizePartiallyAndClose(
     _trader: String,
+    _amount: Int,
     _assetId: String
   ) = {
-    let amount = if (i.payments.size() > 0) then {
-      i.payments[0].amount
-    } else {
-      0
-    }
     let amm = i.caller.toString()
     let debt = getBorrowedByTraderInMarket(amm, _assetId, _trader)
-    let toSell = debt - amount
+    let toSell = debt - _amount
 
     strict sanityCheck = if (toSell <= 0) then throw("Use repay instead") else []
 
@@ -181,11 +180,18 @@
         strict amountAfter = assetBalance(this, quoteAsset())
         strict soldForAmount = amountAfter - amountBefore
 
-        strict withdrawInsurance = invoke(
-            insuranceAddress(),
-            "deposit",
-            [],
-            [AttachedPayment(quoteAsset(), amount + soldForAmount)]
+        strict depositSoldCollateral = invoke(
+          vaultAddress(),
+          "addLocked",
+          [true],
+          [AttachedPayment(quoteAsset(), soldForAmount)]
+        )
+
+        strict withdrawLockedV = invoke(
+          vaultAddress(),
+          "withdrawLockedV",
+          [debt],
+          []
         )
 
         let toGetBack = debt - toSell
@@ -206,10 +212,8 @@
   ) = {
     let amm = i.caller.toString()
     let debt = getBorrowedByTraderInMarket(amm, _assetId, _trader)
-    strict sanityCheck = if (_toSell <= 0 || _toSell > debt) then throw("Invalid realizePartiallyAndClose parameters") else []
+    strict sanityCheck = if (_toSell <= 0 || _toSell > debt) then throw("Invalid realizePartially parameters") else []
 
-
-    # strict x = throw("debt=" + debt.toString() + ", _toSell=" + _toSell.toString())
     if (  
       !isWhitelist(amm)
       || !isWhitelistAsset(_assetId)
@@ -226,11 +230,18 @@
         strict amountAfter = assetBalance(this, quoteAsset())
         strict soldForAmount = amountAfter - amountBefore
 
-        strict withdrawInsurance = invoke(
-            insuranceAddress(),
-            "deposit",
-            [],
-            [AttachedPayment(quoteAsset(), soldForAmount)]
+        strict addLocked = invoke(
+          vaultAddress(),
+          "addLocked",
+          [true],
+          [AttachedPayment(quoteAsset(), soldForAmount)]
+        )
+
+        strict withdrawLockedV = invoke(
+          vaultAddress(),
+          "withdrawLockedV",
+          [soldForAmount],
+          []
         )
 
         [

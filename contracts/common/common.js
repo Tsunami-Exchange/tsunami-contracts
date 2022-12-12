@@ -801,6 +801,7 @@ class Environment {
     this.prizes = new Prizes(this);
     this.nfts = new NFTManager(this);
     this.vault = new Vault(this);
+    this.manager = new Manager(this);
 
     console.log(`Environment deployed`);
   }
@@ -3180,6 +3181,15 @@ class Vault {
     return Number.parseFloat(Number.parseFloat(balanceRaw / wvs).toFixed(4));
   }
 
+  async freeBorrowedBalance() {
+    const balanceRaw = await accountDataByKey(
+      `k_freeBalanceBorrowed`,
+      address(this.e.seeds.vault)
+    ).then((x) => (x ? x.value : 0));
+
+    return Number.parseFloat(Number.parseFloat(balanceRaw / wvs).toFixed(4));
+  }
+
   async getWithdrawLimit(_trader) {
     let trader = address(_trader);
     let dApp = address(this.e.seeds.vault);
@@ -3356,6 +3366,14 @@ class Manager {
   async upgrade() {
     console.log(`Upgrading v ${this.address}`);
     return this.e.upgradeContract("manager.ride", this.address, 3700000);
+  }
+
+  async usdnBalance() {
+    let key = `k_funds_${this.e.assets.neutrino}`;
+    let data = await accountDataByKey(key, address(this.e.seeds.manager)).then(
+      (e) => e.value
+    );
+    return Number.parseFloat((data / decimals).toFixed(4));
   }
 }
 

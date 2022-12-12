@@ -486,7 +486,9 @@ func getOracleTwapPrice() = {
 
 func requireNotOverSpreadLimit(_quoteAssetReserve: Int, _baseAssetReserve: Int) = {
   let oraclePrice = getOracleTwapPrice()
-  let priceAfter = divd(_quoteAssetReserve, _baseAssetReserve)
+  let _qtAstW = qtAstW()
+  let _bsAstW = bsAstW()
+  let priceAfter = divd(_quoteAssetReserve.muld(_qtAstW), _baseAssetReserve.muld(_bsAstW))
   let averagePrice = divd(oraclePrice + priceAfter, 2 * DECIMAL_UNIT)
   let absPriceDiff = divd(abs(oraclePrice - priceAfter), averagePrice)
   if (absPriceDiff > maxPriceSpread()) then {
@@ -947,9 +949,9 @@ func getArtifactId(i: Invocation) = {
 
 func distributeFee(_feeAmount: Int) = {
   let feeToStakers = muld(_feeAmount, feeToStakersPercent())
-  let feeToInsurance = _feeAmount - feeToStakers
+  let feeToVault = _feeAmount - feeToStakers
 
-  (feeToStakers, feeToInsurance)
+  (feeToStakers, feeToVault)
 }
 
 func updateSettings(
@@ -1655,20 +1657,25 @@ func increasePosition(
       }
     }
 
-    let (feeToStakers, feeToInsurance) = distributeFee(feeAmount)
+    let (feeToStakers, feeToVault) = distributeFee(feeAmount)
     
-    strict stake = invoke(
-      vaultAddress(),
-      "addLocked",
-      [],
-      [AttachedPayment(quoteAsset(), _amount)]
-    )
+    strict stake = if (isQuoteAsset) then {
+      strict stake = invoke(
+        vaultAddress(),
+        "addLocked",
+        [false],
+        [AttachedPayment(quoteAsset(), _amount)]
+      )
+      []
+    } else {
+      []
+    }
 
     strict depositInsurance = invoke(
       vaultAddress(),
       "addFree",
       [],
-      [AttachedPayment(quoteAsset(), feeToInsurance)]
+      [AttachedPayment(quoteAsset(), feeToVault)]
     )
 
     strict notifyFee = invoke(
@@ -1788,20 +1795,25 @@ func addMargin() = {
       oldPositionLstUpdCPF
     ) = getPosition(_trader)
 
-    let (feeToStakers, feeToInsurance) = distributeFee(feeAmount)
+    let (feeToStakers, feeToVault) = distributeFee(feeAmount)
   
-    strict stake = invoke(
-      vaultAddress(),
-      "addLocked",
-      [],
-      [AttachedPayment(quoteAsset(), _amount)]
-    )
+    strict stake = if (isQuoteAsset) then {
+      strict stake = invoke(
+        vaultAddress(),
+        "addLocked",
+        [false],
+        [AttachedPayment(quoteAsset(), _amount)]
+      )
+      []
+    } else {
+      []
+    }
 
     strict depositInsurance = invoke(
       vaultAddress(),
       "addFree",
       [],
-      [AttachedPayment(quoteAsset(), feeToInsurance)]
+      [AttachedPayment(quoteAsset(), feeToVault)]
     )
 
     strict notifyFee = invoke(
@@ -1881,19 +1893,24 @@ func removeMargin(
           []
         }
         
-        strict doUnstake = invoke(
-          vaultAddress(),
-          "withdrawLocked",
-          [_amount], # We need to withdraw from manager amount to repay + to withdraw
+        strict doUnstake = if (toWithdraw > 0) then {
+          strict doUnstake = invoke(
+            vaultAddress(),
+            "withdrawLocked",
+            [toWithdraw],
+            []
+          )
           []
-        )
+        } else {
+          []
+        }
 
         strict returnCollateralAction = if (toRepay > 0) then {
           strict doRepay = invoke(
             collateralAddress(),
             "repay",
-            [_trader, assetId],
-            [AttachedPayment(quoteAsset(), toRepay)]
+            [_trader, toRepay, assetId],
+            []
           )          
 
           [
@@ -2086,13 +2103,6 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
         (ammBalance, 0)
       }
 
-      strict unstake = invoke(
-        vaultAddress(),
-        "withdrawLocked",
-        [withdrawAmount],
-        []
-      )
-
       # As we are closing a position - we need to repay all the debt
       #
       let (borrowed, assetId) = getBorrowedByTrader(_trader)       
@@ -2102,8 +2112,8 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
           strict doRepay = invoke(
             collateralAddress(),
             "repay",
-            [_trader, assetId ],
-            [AttachedPayment(quoteAsset(), borrowed)]
+            [_trader, borrowed, assetId],
+            []
           )   
           
           ([
@@ -2113,8 +2123,8 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
           strict realizeAndClose = invoke(
             collateralAddress(),
             "realizePartiallyAndClose",
-            [_trader, assetId],
-            [AttachedPayment(quoteAsset(), withdrawAmount)]
+            [_trader, withdrawAmount, assetId],
+            []
           )
           
           ([
@@ -2123,6 +2133,18 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
         }
       } else {
         ([], withdrawAmount)
+      }
+
+      strict unstake = if (quoteWithdrawAmount > 0) then {
+        strict unstake = invoke(
+          vaultAddress(),
+          "withdrawLocked",
+          [quoteWithdrawAmount],
+          []
+        )
+        []
+      } else {
+        []
       }
 
       strict notifyNotional = invoke(
@@ -2236,7 +2258,7 @@ func liquidate(_trader: String) = {
       #
       let liquidationPenalty = muld(exchangedQuoteAssetAmount, liquidationFeeRatio())
       let feeToLiquidator = liquidationPenalty / 2
-      let feeToInsurance = liquidationPenalty - feeToLiquidator
+      let feeToVault = liquidationPenalty - feeToLiquidator
 
       let newPositionMargin = remainMargin - liquidationPenalty
       let newPositionSize = oldPositionSize + exchangedPositionSize
@@ -2281,7 +2303,7 @@ func liquidate(_trader: String) = {
         vaultAddress(),
         "addFree",
         [],
-        [AttachedPayment(quoteAsset(), feeToInsurance)]
+        [AttachedPayment(quoteAsset(), feeToVault)]
       )
 
       strict notifyNotional = invoke(
@@ -2335,7 +2357,7 @@ func liquidate(_trader: String) = {
       #
       let liquidationPenalty = muld(exchangedQuoteAssetAmount, liquidationFeeRatio())
       let feeToLiquidator = liquidationPenalty / 2
-      let feeToInsurance = liquidationPenalty - feeToLiquidator
+      let feeToVault = liquidationPenalty - feeToLiquidator
 
       # Liquidating a position can incur bad debt. If AMM does not have enough funds to cover up bad debt
       # use Insurance Fund to cover it up
@@ -2352,8 +2374,8 @@ func liquidate(_trader: String) = {
         strict realizeAndClose = invoke(
           collateralAddress(),
           "realizePartiallyAndClose",
-          [_trader, assetId],
-          [] # Full liquidation of remain collateral
+          [_trader, 0, assetId], # Full liquidation of remain collateral
+          [] 
         )
         []
       } else {
@@ -2384,7 +2406,7 @@ func liquidate(_trader: String) = {
         vaultAddress(),
         "addFree",
         [],
-        [AttachedPayment(quoteAsset(), feeToInsurance)]
+        [AttachedPayment(quoteAsset(), feeToVault)]
       )
 
       strict notifyNotional = invoke(
@@ -2445,12 +2467,17 @@ func syncTerminalPriceToOracle() = {
     marginToVault
   ) = getSyncTerminalPrice(getOracleTwapPrice())
 
-  strict lockBadDebt = invoke(
-    vaultAddress(),
-    "exchangeFreeAndLocked",
-    [marginToVault],
+  strict doExchangePnL = if (marginToVault != 0) then {
+    strict doExchangePnL = invoke(
+      vaultAddress(),
+      "exchangeFreeAndLocked",
+      [marginToVault],
+      []
+    )
     []
-  )
+  } else {
+    []
+  }
 
   updateAmmWeights(newQuoteAssetWeight, newBaseAssetWeight)
 }
