@@ -80,6 +80,10 @@ class Environment {
       `k_orders_address`,
       coordinatorAddress
     ).then((x) => x && x.value);
+    const collateralAddress = await accountDataByKey(
+      `k_collateral_address`,
+      coordinatorAddress
+    ).then((x) => x && x.value);
 
     let allKeys = await accountData(coordinatorAddress);
     allKeys = Object.keys(allKeys).map((k) => allKeys[k]);
@@ -99,6 +103,7 @@ class Environment {
     this.referral = new Referral(this, referralAddress);
     this.vault = new Vault(this, vaultAddress);
     this.orders = new Orders(this, ordersAddress);
+    this.collateral = new Collateral(this, collateralAddress);
 
     console.log(`Loaded environment with ${this.amms.length} AMMs`);
   }
@@ -1327,7 +1332,7 @@ class Environment {
 
     let p3 = deploy(
       "vAMM2.ride",
-      7000000,
+      7500000,
       ammSeed,
       "vAMM",
       this.isLocal,
@@ -1681,7 +1686,7 @@ class AMM {
 
   async upgrade() {
     console.log(`Upgrading AMM ${this.address}`);
-    return this.e.upgradeContract("vAMM2.ride", this.address, 7000000);
+    return this.e.upgradeContract("vAMM2.ride", this.address, 7500000);
   }
 
   async migrateLiquidity() {
@@ -3374,6 +3379,18 @@ class Manager {
       (e) => e.value
     );
     return Number.parseFloat((data / decimals).toFixed(4));
+  }
+}
+
+class Collateral {
+  constructor(e, address) {
+    this.e = e;
+    this.address = address;
+  }
+
+  async upgrade() {
+    console.log(`Upgrading Collateral ${this.address}`);
+    return this.e.upgradeContract("collateral.ride", this.address, 3700000);
   }
 }
 

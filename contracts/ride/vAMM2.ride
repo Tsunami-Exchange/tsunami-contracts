@@ -473,7 +473,7 @@ func getOracleTwapPrice() = {
   let blockKey = this.getString(k_ora_block_key).valueOrElse("")
   if (blockKey != "") then {
     let currentBlock = lastBlock.height
-    let lastOracleBlock = oracle.getInteger(k_ora_block_key).valueOrErrorMessage("Can not get oracle block. Oracle: " + oracle.toString() + " key: " + blockKey)
+    let lastOracleBlock = oracle.getInteger(blockKey).valueOrErrorMessage("Can not get oracle block. Oracle: " + oracle.toString() + " key: " + blockKey)
     if (currentBlock - lastOracleBlock > maxOracleDelay()) then {
       throw("Oracle stale data. Last oracle block: " + lastOracleBlock.toString() + " current block: " + currentBlock.toString())
     } else {
@@ -2438,6 +2438,8 @@ func liquidate(_trader: String) = {
 
 @Callable(i)
 func payFunding() = {
+  strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
+  
   let fundingBlockTimestamp = nextFundingBlockTimestamp()
   if (
     lastBlock.timestamp < fundingBlockTimestamp
@@ -2479,7 +2481,12 @@ func syncTerminalPriceToOracle() = {
     []
   }
 
+  let _qtAstR = qtAstR()
+  let _bsAstR = bsAstR()
+
   updateAmmWeights(newQuoteAssetWeight, newBaseAssetWeight)
+  ++
+  appendTwap(divd(_qtAstR.muld(newQuoteAssetWeight), _bsAstR.muld(newBaseAssetWeight)))
 }
 
 # View callable functions exposed for UI and debug
