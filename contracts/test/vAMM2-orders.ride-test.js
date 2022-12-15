@@ -633,7 +633,7 @@ describe("Should execute STOP loss orders on SHORT position", async function () 
   });
 });
 
-describe.only("LIMIT order should be able to", async function () {
+describe("LIMIT order should be able to", async function () {
   this.timeout(600000);
 
   let e, amm, longer, user, shorter, executor, lp;
@@ -701,5 +701,61 @@ describe.only("LIMIT order should be able to", async function () {
     expect(can).to.be.true;
 
     await e.orders.as(executor).executeOrder(orderId);
+  });
+});
+
+describe.only("Should be able to use a helper", async function () {
+  this.timeout(600000);
+
+  let e, amm, longer, user, shorter, executor, lp;
+  let _oderId;
+
+  before(async function () {
+    await setupAccounts({
+      admin: 1 * wvs,
+      longer: 0.1 * wvs,
+      user: 0.1 * wvs,
+      lp: 0.1 * wvs,
+      shorter: 0.1 * wvs,
+      executor: 0.2 * wvs,
+    });
+
+    longer = accounts.longer;
+    shorter = accounts.shorter;
+    executor = accounts.executor;
+    user = accounts.user;
+    lp = accounts.lp;
+
+    e = new Environment(accounts.admin);
+    await e.deploy();
+    await e.fundAccounts({
+      [longer]: 50000,
+      [shorter]: 50000,
+      [user]: 50000,
+      [lp]: 100000,
+    });
+
+    amm = await e.deployAmm(1000000, 55);
+
+    await e.vault.as(lp).stake(100000);
+  });
+
+  it("Can create order with helper", async function () {
+    let x = await e.orders
+      .as(shorter)
+      .increasePositionWithStopLoss(
+        amm.address,
+        1000,
+        DIR_SHORT,
+        3,
+        50,
+        "",
+        55,
+        0,
+        50,
+        0
+      );
+
+    console.log(x.id);
   });
 });

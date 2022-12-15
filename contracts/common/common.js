@@ -2782,6 +2782,47 @@ class Orders {
     await waitForTx(tx.id);
     return tx;
   }
+
+  async increasePositionWithStopLoss(
+    _amm,
+    _amount,
+    _direction,
+    _leverage,
+    _minBaseAssetAmount = 0,
+    _link = "",
+    _stopTriggerPrice,
+    _stopLimitPrice,
+    _takeTriggerPrice,
+    _takeLimitPrice
+  ) {
+    let tx = await invoke(
+      {
+        dApp: address(this.e.seeds.orders),
+        functionName: "increasePositionWithStopLoss",
+        arguments: [
+          _amm,
+          _direction,
+          Math.round(_leverage * decimals),
+          Math.round(_minBaseAssetAmount * decimals),
+          _link || "",
+          Math.round(_stopTriggerPrice * decimals),
+          Math.round(_stopLimitPrice * decimals),
+          Math.round(_takeTriggerPrice * decimals),
+          Math.round(_takeLimitPrice * decimals),
+        ],
+        payment: [
+          {
+            assetId: this.e.assets.neutrino,
+            amount: Math.round(_amount * decimals),
+          },
+        ],
+      },
+      this.sender
+    );
+
+    let ttx = await waitForTx(tx.id);
+    return ttx;
+  }
 }
 
 class Referral {

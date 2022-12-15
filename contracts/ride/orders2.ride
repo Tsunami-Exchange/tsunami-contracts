@@ -295,6 +295,94 @@
   }
 
   @Callable(i)
+  func increasePositionWithStopLoss(
+    _amm: String,
+    _direction: Int,
+    _leverage: Int,
+    _minBaseAssetAmount: Int,
+    _refLink: String,
+    _stopTriggerPrice: Int,
+    _stopLimitPrice: Int,
+    _takeTriggerPrice: Int,
+    _takeLimitPrice: Int
+  ) = {
+    let _trader = i.caller.toString()
+    if (
+      !initialized()
+      || !isWhitelist(_amm)
+    ) then {
+      throw("Invalid increasePositionWithStopLoss parameters")
+    } else {
+      let positionSize = getPositionSize(_amm, _trader)
+      if (positionSize != 0) then {
+        throw("Invalid increasePositionWithStopLoss parameters: only new position")
+      } else {
+        strict doSetContext = invoke(this, "setContext", [_trader], [])
+        strict doClosePosition = invoke(
+          addressFromStringValue(_amm), 
+          "increasePosition",
+          [_direction, _leverage, _minBaseAssetAmount, _refLink],
+          i.payments
+        )
+        strict doResetContext = invoke(this, "resetContext", [], [])
+        strict openedPositionSize = getPositionSize(_amm, _trader)
+        let amountIn = abs(openedPositionSize)
+        let stopLossSide = if (openedPositionSize < 0) then LONG else SHORT
+
+        strict doCreateStopOrder = if (_stopTriggerPrice > 0) then {
+          strict doCreateStopOrder = invoke(
+            this,
+            "internalCreateOrder",
+            [
+              _trader, 
+              _amm, 
+              STOP, 
+              _stopTriggerPrice, 
+              _stopLimitPrice, 
+              amountIn, 
+              0, 
+              stopLossSide, 
+              _refLink,
+              "",
+              0
+            ],
+            []
+          )
+          []
+        } else {
+          []
+        }
+
+        strict doCreateTakeOrder = if (_takeTriggerPrice > 0) then {
+          strict doCreateTakeOrder = invoke(
+            this,
+            "internalCreateOrder",
+            [
+              _trader, 
+              _amm, 
+              TAKE, 
+              _takeTriggerPrice, 
+              _takeLimitPrice, 
+              amountIn, 
+              0, 
+              stopLossSide, 
+              _refLink,
+              "",
+              0
+            ],
+            []
+          )
+          []
+        } else {
+          []
+        }
+
+        []
+      }
+    }
+  }
+
+  @Callable(i)
   func internalCreateOrder(
     _trader: String,
     _amm: String,
