@@ -122,7 +122,6 @@
     _amount: Int,
     _assetId: String
   ) = {
-    #let amount = i.payments[0].amount
     let amm = i.caller.toString()
 
     if (

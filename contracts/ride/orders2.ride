@@ -20,6 +20,7 @@
   let k_order               = "k_order"
   let k_lastOrderId         = "k_lastOrderId"
   let k_traderOrderCnt      = "k_traderOrderCnt"
+  let k_traderOrderIds      = "k_traderOrderIds"
 
   # Sender
   let k_sender              = "k_sender"
@@ -74,6 +75,10 @@
     k_traderOrderCnt + "_" + _amm + "_" + _trader
   }
 
+  func traderOrderIdsKey(_amm: String, _trader: String) = {
+    k_traderOrderIds + "_" + _amm + "_" + _trader
+  }
+
   # Coordinator constants #
   func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
   func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
@@ -103,6 +108,16 @@
   func getTraderOrderCount(_amm: String, _trader: String) = {
     let key = traderOrderCountKey(_amm, _trader)
     this.getInteger(key).valueOrElse(0)
+  }
+
+  func traderAmmOrdersIds(_amm: String, _trader: String) = {
+    let key = traderOrderIdsKey(_amm, _trader)
+    let val = this.getString(key).valueOrElse("")
+    if (val == "") then {
+      []
+    } else {
+      val.split(",")
+    }
   }
 
   func getOrder(_orderId: Int) = {
@@ -187,9 +202,26 @@
       _triggerPrice.toString(), _paymentUsdn.toString(), _side.toString(), _refLink, 
       _positionId.toString(), _limitPrice.toString()
     ], ",")
-
+    
     [
       StringEntry(orderKey(_orderId), orderStr)
+    ]
+  }
+
+  func addRemoveOrderId(_orderId: Int, _amm: String, _trader: String, _add: Boolean) = {
+    let orderIds = traderAmmOrdersIds(_amm, _trader)
+    let orderIdsNew = if (_add) then {
+      orderIds :+ _orderId.toString()
+    } else {
+      orderIds.removeByIndex(
+        orderIds.indexOf(_orderId.toString())
+          .valueOrErrorMessage("No order with id: " + _orderId.toString())
+      )
+    }
+    let orderIdsNewStr = makeString(orderIdsNew, ",")
+
+    [
+      StringEntry(traderOrderIdsKey(_amm, _trader), orderIdsNewStr)
     ]
   }
 
@@ -215,6 +247,48 @@
     [
       BooleanEntry(k_canceledOrders.toCompositeKey(_orderId.toString()), true)
     ]
+  }
+
+  @Callable(i)
+  func cleanUpStaleOrders(_amm: String, _trader: String) = {
+    let orders = traderAmmOrdersIds(_amm, _trader)
+    
+    func cleanUpOne(_acc: List[BooleanEntry|StringEntry], _orderId: String) = {
+      let orderIdInt = _orderId.parseInt().valueOrErrorMessage("Invalid order id")
+      let (
+        _x1, 
+        _x2, 
+        _x3, 
+        _x4, 
+        _type, 
+        _x5,
+        _x6,
+        _x7, 
+        _x8, 
+        _positionId,
+        _x9
+      ) = getOrder(orderIdInt)
+
+      let positionSize = getPositionSize(_amm, _trader)
+      let currentPositionId = if (positionSize != 0) then {
+        getPositionId(_amm, _trader)
+      } else {
+        0
+      }
+
+      if ((_type == STOP || _type == TAKE) && currentPositionId != _positionId) then {
+        let change = 
+          markCancelOrder(orderIdInt)
+          ++
+          addRemoveOrderId(orderIdInt, _amm, _trader, false)
+
+        _acc ++ change
+      } else {
+        _acc
+      }
+    }
+    
+    FOLD<5>(orders, [], cleanUpOne)
   }
 
   @Callable(i)
@@ -260,6 +334,9 @@
     _side: Int,
     _refLink: String
   ) = {
+    let _trader = i.caller.toString()
+    strict cleanUp = invoke(this, "cleanUpStaleOrders", [_amm, _trader], [])
+
     if (i.payments.size() > 1) then {
       throw("Invalid createOrder parameters: invalid payment count")
     } else {
@@ -276,7 +353,7 @@
         this,
         "internalCreateOrder",
         [
-          i.caller.toString(), 
+          _trader, 
           _amm, 
           _type, 
           _triggerPrice, 
@@ -307,6 +384,8 @@
     _takeLimitPrice: Int
   ) = {
     let _trader = i.caller.toString()
+    strict cleanUp = invoke(this, "cleanUpStaleOrders", [_amm, _trader], [])
+
     if (
       !initialized()
       || !isWhitelist(_amm)
@@ -458,6 +537,8 @@
             orderId, _amm, _trader, _amountIn, _leverage, _type, _triggerPrice, usdnPayment, _side, _refLink, positionId, _limitPrice
           )
           ++
+          addRemoveOrderId(orderId, _amm, _trader, true)
+          ++
           updateTraderOrderCount(_amm, _trader, newTraderOrderCount)
           ++
           updateLastOrderId(orderId)
@@ -489,6 +570,8 @@
     ) then {
       throw("Invalid cancelOrder parameters")
     } else {
+      strict cleanUp = invoke(this, "cleanUpStaleOrders", [_amm, _trader], [])
+
       let newTraderOrderCount = getTraderOrderCount(_amm, _trader) - 1
 
       strict withdraw = if (_amountUsdn > 0) then {
@@ -502,8 +585,10 @@
       } else {
         []
       }
-      
+
       markCancelOrder(_orderId)
+      ++
+      addRemoveOrderId(_orderId, _amm, _trader, false)
       ++
       updateTraderOrderCount(_amm, _trader, newTraderOrderCount)
       ++
@@ -531,6 +616,8 @@
       _limitPrice
     ) = getOrder(_orderId)
 
+    strict cleanUp = invoke(this, "cleanUpStaleOrders", [_amm, _trader], [])
+    
     if (
       !initialized()
       || !isValid(_orderId)
@@ -641,6 +728,12 @@
       strict doClosePosition = invoke(addressFromStringValue(_amm), method, args, payments)
       strict doResetContext = invoke(this, "resetContext", [], [])
 
+      let newTraderOrderCount = getTraderOrderCount(_amm, _trader) - 1
+      
+      updateTraderOrderCount(_amm, _trader, newTraderOrderCount)
+      ++
+      addRemoveOrderId(_orderId, _amm, _trader, false)
+      ++
       markExecuteOrder(_orderId)
     }
   }

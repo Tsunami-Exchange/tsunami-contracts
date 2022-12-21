@@ -13,6 +13,8 @@ let k_ora = "k_ora"                     # Address of Index Price oracle account
 
 # AMM Balance
 let k_balance = "k_balance" # How much of a trader's funds is controlled by this AMM
+
+# Global counter
 let k_sequence = "k_sequence" # Sequence number of position identifiers
 
 # Trader Position
@@ -72,7 +74,6 @@ let k_openInterestLong = "k_openInterestLong"             # Open Interest Notion
 let k_coordinatorAddress = "k_coordinatorAddress"         # Address of Coordinator (base contract that keeps references to all infrastructure)
 
 # Coordinator keys
-# let k_insurance_address = "k_insurance_address"   # Address of insurance contract
 let k_vault_address = "k_vault_address"           # Address of vault contract
 let k_admin_address = "k_admin_address"           # Address of admin account           
 let k_admin_public_key = "k_admin_public_key"     # Pubic key of admin account
@@ -82,9 +83,7 @@ let k_staking_address = "k_staking_address"       # Address that should receive 
 let k_miner_address = "k_miner_address"           # Liquidity mining contract address
 let k_orders_address = "k_orders_address"         # Order executor contract address
 let k_referral_address = "k_referral_address"     # Referral contract address
-# let k_manager_address = "k_manager_address"       # Fund manager address
 let k_collateral_address = "k_collateral_address" # Collateral manager address
-#let k_exchange_address = "k_exchange_address"     # Collateral manager address
 let k_exchange_address = "k_exchange_address"     # Exchange manager address
 let k_nft_manager_address = "k_nft_manager_address" # NFT manager address
 
@@ -465,7 +464,7 @@ func swapOutput(
 }
 
 # Returns oracle price (Index Price)
-func getOracleTwapPrice() = {
+func getOraclePrice() = {
   let oracle = addressFromString(this.getStringValue(k_ora)).valueOrErrorMessage("")
   let priceKey = this.getStringValue(k_ora_key)
   let lastValue = oracle.getInteger(priceKey).valueOrErrorMessage("Can not get oracle price. Oracle: " + oracle.toString() + " key: " + priceKey)
@@ -485,7 +484,7 @@ func getOracleTwapPrice() = {
 }
 
 func requireNotOverSpreadLimit(_quoteAssetReserve: Int, _baseAssetReserve: Int) = {
-  let oraclePrice = getOracleTwapPrice()
+  let oraclePrice = getOraclePrice()
   let _qtAstW = qtAstW()
   let _bsAstW = bsAstW()
   let priceAfter = divd(_quoteAssetReserve.muld(_qtAstW), _baseAssetReserve.muld(_bsAstW))
@@ -523,7 +522,7 @@ func getSpotPrice() = {
 
 # Checks if stop price and index price diverge more then spreadLimit
 func isOverFluctuationLimit() = {
-  let oraclePrice = getOracleTwapPrice()
+  let oraclePrice = getOraclePrice()
   let currentPrice = getSpotPrice()
   divd(abs(oraclePrice - currentPrice), oraclePrice) > spreadLimit()
 }
@@ -550,7 +549,7 @@ func getPositionAdjustedOpenNotional(
     )
     outPositionNotional
   } else {
-    muld(positionSizeAbs, getOracleTwapPrice())
+    muld(positionSizeAbs, getOraclePrice())
   }
 
   positionNotional
@@ -845,7 +844,7 @@ func getSyncTerminalPrice(_terminalPrice: Int) = {
 }
 
 func getFunding() = {
-  let underlyingPrice = getOracleTwapPrice()
+  let underlyingPrice = getOraclePrice()
   let spotTwapPrice = getTwapSpotPrice()
   let premium = spotTwapPrice - underlyingPrice
   
@@ -2448,7 +2447,7 @@ func payFunding() = {
   ) then {
     throw("Invalid funding block timestamp: " + lastBlock.timestamp.toString() + " < " + fundingBlockTimestamp.toString())
   } else {
-    let underlyingPrice = getOracleTwapPrice()
+    let underlyingPrice = getOraclePrice()
     let (shortPremiumFraction, longPremiumFraction) = getFunding()
     
     updateFunding(
@@ -2467,7 +2466,7 @@ func syncTerminalPriceToOracle() = {
     newQuoteAssetWeight,
     newBaseAssetWeight,
     marginToVault
-  ) = getSyncTerminalPrice(getOracleTwapPrice())
+  ) = getSyncTerminalPrice(getOraclePrice())
 
   strict doExchangePnL = if (marginToVault != 0) then {
     strict doExchangePnL = invoke(
@@ -2532,11 +2531,11 @@ func view_getTerminalAmmPrice() = {
 
 @Callable(i)
 func view_getFunding() = {
-  let underlyingPrice = getOracleTwapPrice()
+  let underlyingPrice = getOraclePrice()
   let (shortPremiumFraction, longPremiumFraction) = getFunding()
   let longFunding = divd(longPremiumFraction, underlyingPrice)
   let shortFunding = divd(shortPremiumFraction, underlyingPrice)
-  throw(s(longFunding) + s(shortFunding) + s(getTwapSpotPrice()) + s(getOracleTwapPrice()))
+  throw(s(longFunding) + s(shortFunding) + s(getTwapSpotPrice()) + s(getOraclePrice()))
 }
 
 @Callable(i)
