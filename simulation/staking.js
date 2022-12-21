@@ -1,1 +1,1 @@
-let timeInterval = 60
+let timeInterval = 60;

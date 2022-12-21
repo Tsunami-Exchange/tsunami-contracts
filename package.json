@@ -8,7 +8,7 @@
     "ride-test:vAMM2:liquidation": "cd contracts && surfboard test vAMM2-liquidation.ride-test.js",
     "ride-test:vAMM2:impact": "cd contracts && surfboard test vAMM2-impact.ride-test.js",
     "ride-test:vAMM2:spread": "cd contracts && surfboard test vAMM2-spread.ride-test.js",
-    "_ride-test:vAMM2:orders": "cd contracts && surfboard test vAMM2-orders.ride-test.js",
+    "ride-test:vAMM2:orders": "cd contracts && surfboard test vAMM2-orders.ride-test.js",
     "ride-test:vAMM2:referral": "cd contracts && surfboard test vAMM2-referral.ride-test.js",
     "ride-test:vAMM2:peg": "cd contracts && surfboard test vAMM2-peg.ride-test.js",
     "ride-test:vAMM2:multicollateral": "cd contracts && surfboard test vAMM2-multicollateral.ride-test.js",

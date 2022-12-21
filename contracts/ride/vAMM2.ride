@@ -483,15 +483,28 @@ func getOraclePrice() = {
   }
 }
 
+func absPriceDiff(
+  _oraclePrice: Int,
+  _quoteAssetReserve: Int, 
+  _baseAssetReserve: Int,
+  _qtAstW: Int,
+  _bsAstW: Int
+) = {
+  let priceAfter = divd(_quoteAssetReserve.muld(_qtAstW), _baseAssetReserve.muld(_bsAstW))
+  let averagePrice = divd(_oraclePrice + priceAfter, 2 * DECIMAL_UNIT)
+  let absPriceDiff = divd(abs(_oraclePrice - priceAfter), averagePrice)
+
+  absPriceDiff
+}
+
 func requireNotOverSpreadLimit(_quoteAssetReserve: Int, _baseAssetReserve: Int) = {
   let oraclePrice = getOraclePrice()
   let _qtAstW = qtAstW()
   let _bsAstW = bsAstW()
-  let priceAfter = divd(_quoteAssetReserve.muld(_qtAstW), _baseAssetReserve.muld(_bsAstW))
-  let averagePrice = divd(oraclePrice + priceAfter, 2 * DECIMAL_UNIT)
-  let absPriceDiff = divd(abs(oraclePrice - priceAfter), averagePrice)
-  if (absPriceDiff > maxPriceSpread()) then {
-      throw("Price spread " + absPriceDiff.toString() + " > max price spread " + maxPriceSpread().toString())
+  let absPriceDiffBefore = absPriceDiff(oraclePrice, qtAstR(), bsAstR(), _qtAstW, _bsAstW)
+  let absPriceDiffAfter = absPriceDiff(oraclePrice, _quoteAssetReserve, _baseAssetReserve, _qtAstW, _bsAstW)
+  if (absPriceDiffAfter > maxPriceSpread() && absPriceDiffAfter > absPriceDiffBefore) then {
+      throw("Price spread " + absPriceDiffAfter.toString() + " > max price spread " + maxPriceSpread().toString())
   } else {
     true
   }
@@ -798,12 +811,10 @@ func getQuoteAssetWeight(
     result.toInt()
 }
 
-func getSyncTerminalPrice(_terminalPrice: Int) = {
+func getSyncTerminalPrice(_terminalPrice: Int, _qtAstR: Int, _bsAstR: Int) = {
   let _positionSize = totalPositionSize()
   if (_positionSize == 0) then {
-    let _qtAstR = qtAstR()
-    let _bsAstR = bsAstR()
-    let newQtAstW = divd(_terminalPrice.muld(_bsAstR), _qtAstR)    
+    let newQtAstW = divd(_terminalPrice.muld(_bsAstR), _qtAstR)
     (
       newQtAstW,
       DECIMAL_UNIT,
@@ -817,8 +828,6 @@ func getSyncTerminalPrice(_terminalPrice: Int) = {
       false
     )._1
 
-    let _qtAstR = qtAstR()
-    let _bsAstR = bsAstR()
     # Compute new qW and bW
     let newQtAstW = getQuoteAssetWeight(_bsAstR, _positionSize, _qtAstR, _terminalPrice)
     let newBsAstW = DECIMAL_UNIT
@@ -1235,12 +1244,33 @@ func addLiquidity(_quoteAssetAmount: Int) = {
     let _qtAstW = qtAstW()
     let _bsAstW = bsAstW()
     let price = divd(_qtAstR.muld(_qtAstW), _bsAstR.muld(_bsAstW))
-    let baseAssetAmountToAdd = divd(_quoteAssetAmount, price)
 
     let qtAstRAfter = _qtAstR + _quoteAssetAmount
-    let bsAstRAfter = _bsAstR + baseAssetAmountToAdd  
+    let baseAssetAmountToAdd = divd(qtAstRAfter.muld(_qtAstW), price) - _bsAstR
+
+    let bsAstRAfter = _bsAstR + baseAssetAmountToAdd
+
+    let (
+      newQuoteAssetWeight,
+      newBaseAssetWeight,
+      marginToVault
+    ) = getSyncTerminalPrice(getOraclePrice(), qtAstRAfter, bsAstRAfter)
+
+    strict doExchangePnL = if (marginToVault != 0) then {
+      strict doExchangePnL = invoke(
+        vaultAddress(),
+        "exchangeFreeAndLocked",
+        [marginToVault],
+        []
+      )
+      []
+    } else {
+      []
+    }
 
     updateAmmReserves(qtAstRAfter, bsAstRAfter)
+    ++
+    updateAmmWeights(newQuoteAssetWeight, newBaseAssetWeight)
   }
 }
 
@@ -2462,11 +2492,13 @@ func payFunding() = {
 
 @Callable(i)  
 func syncTerminalPriceToOracle() = {
+  let _qtAstR = qtAstR()
+  let _bsAstR = bsAstR()
   let (
     newQuoteAssetWeight,
     newBaseAssetWeight,
     marginToVault
-  ) = getSyncTerminalPrice(getOraclePrice())
+  ) = getSyncTerminalPrice(getOraclePrice(), _qtAstR, _bsAstR)
 
   strict doExchangePnL = if (marginToVault != 0) then {
     strict doExchangePnL = invoke(
@@ -2479,9 +2511,6 @@ func syncTerminalPriceToOracle() = {
   } else {
     []
   }
-
-  let _qtAstR = qtAstR()
-  let _bsAstR = bsAstR()
 
   updateAmmWeights(newQuoteAssetWeight, newBaseAssetWeight)
   ++
@@ -2518,7 +2547,10 @@ func view_calcRemainMarginWithFundingPayment(_trader: String) = {
 
 @Callable(i)
 func view_getPegAdjustCost(_price: Int) = {
-  let result = getSyncTerminalPrice(_price)
+  let _qtAstR = qtAstR()
+  let _bsAstR = bsAstR()
+
+  let result = getSyncTerminalPrice(_price, _qtAstR, _bsAstR)
   throw(result._3.toString())
 }
 

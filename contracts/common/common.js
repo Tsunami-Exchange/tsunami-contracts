@@ -2716,9 +2716,15 @@ class Orders {
     );
 
     let ttx = await waitForTx(tx.id);
-    let id = ttx.stateChanges.invokes[0].stateChanges.data
+    let datas = ttx.stateChanges.invokes.flatMap((i) => i.stateChanges.data);
+
+    console.log(JSON.stringify(datas, null, 2));
+
+    let id = datas
       .filter((x) => x.key === "k_lastOrderId")
       .map((x) => x.value)[0];
+
+    console.log(`id=${id}`);
 
     console.log(JSON.stringify(ttx));
     return [id, ttx];
