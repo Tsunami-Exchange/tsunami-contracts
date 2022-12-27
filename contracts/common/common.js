@@ -1917,9 +1917,9 @@ class AMM {
     );
 
     await broadcast(closePositionTx);
-    await waitForTx(closePositionTx.id);
+    let ttx = await waitForTx(closePositionTx.id);
 
-    return closePositionTx;
+    return ttx;
   }
 
   async liquidate(_trader) {
@@ -2742,6 +2742,13 @@ class Orders {
 
     await waitForTx(tx.id);
     return tx;
+  }
+
+  async getOrderCount(_trader, _amm) {
+    return await accountDataByKey(
+      `k_traderOrderCnt_${_amm}_${_trader}`,
+      address(this.e.seeds.orders)
+    ).then((x) => x && x.value);
   }
 
   async canExecute(_order) {

@@ -561,7 +561,7 @@ describe("Should execute STOP loss orders on SHORT position", async function () 
     ).to.eventually.be.rejected;
   });
 
-  it.only("Can create and execute stop loss order with size > positionSize", async function () {
+  it("Can create and execute stop loss order with size > positionSize", async function () {
     await amm.setOraclePrice(55.0);
     await amm.syncTerminalPriceToOracle();
 
@@ -868,5 +868,93 @@ describe("Should be able to use a helper", async function () {
       );
 
     console.log(x.id);
+  });
+});
+
+describe.only("Should be to reset order counter", async function () {
+  this.timeout(600000);
+
+  let e, amm, longer, user, shorter, executor, lp;
+
+  before(async function () {
+    await setupAccounts({
+      admin: 1 * wvs,
+      longer: 0.1 * wvs,
+      user: 0.1 * wvs,
+      lp: 0.1 * wvs,
+      shorter: 0.1 * wvs,
+      executor: 0.2 * wvs,
+    });
+
+    longer = accounts.longer;
+    shorter = accounts.shorter;
+    executor = accounts.executor;
+    user = accounts.user;
+    lp = accounts.lp;
+
+    e = new Environment(accounts.admin);
+    await e.deploy();
+    await e.fundAccounts({
+      [longer]: 50000,
+      [shorter]: 50000,
+      [user]: 50000,
+      [lp]: 100000,
+    });
+
+    amm = await e.deployAmm(1000000, 55);
+
+    await e.vault.as(lp).stake(100000);
+  });
+
+  it("Will decrement order count", async function () {
+    await amm.as(longer).increasePosition(1000, DIR_LONG, 3, 50);
+
+    let [orderId1] = await e.orders
+      .as(longer)
+      .createOrder(
+        amm.address,
+        STOP_LOSS,
+        57.0,
+        0,
+        e.orders.FULL_POSITION,
+        0,
+        DIR_SHORT
+      );
+
+    let [orderId2] = await e.orders
+      .as(longer)
+      .createOrder(
+        amm.address,
+        STOP_LOSS,
+        57.0,
+        0,
+        e.orders.FULL_POSITION,
+        0,
+        DIR_SHORT
+      );
+
+    let cnt1 = await e.orders.getOrderCount(address(longer), amm.address);
+    expect(cnt1).to.be.equal(2);
+
+    await e.orders.executeOrder(orderId1);
+    let cnt2 = await e.orders.getOrderCount(address(longer), amm.address);
+    expect(cnt2).to.be.equal(1);
+
+    await amm.as(longer).increasePosition(1000, DIR_LONG, 3, 50);
+
+    let [_] = await e.orders
+      .as(longer)
+      .createOrder(
+        amm.address,
+        STOP_LOSS,
+        57.0,
+        0,
+        e.orders.FULL_POSITION,
+        0,
+        DIR_SHORT
+      );
+
+    let cnt3 = await e.orders.getOrderCount(address(longer), amm.address);
+    expect(cnt3).to.be.equal(1);
   });
 });

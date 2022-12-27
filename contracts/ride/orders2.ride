@@ -252,8 +252,9 @@
   @Callable(i)
   func cleanUpStaleOrders(_amm: String, _trader: String) = {
     let orders = traderAmmOrdersIds(_amm, _trader)
+    let orderCount = getTraderOrderCount(_amm, _trader)
     
-    func cleanUpOne(_acc: List[BooleanEntry|StringEntry], _orderId: String) = {
+    func cleanUpOne(_acc: (Int, List[BooleanEntry|StringEntry]), _orderId: String) = {
       let orderIdInt = _orderId.parseInt().valueOrErrorMessage("Invalid order id")
       let (
         _x1, 
@@ -282,13 +283,17 @@
           ++
           addRemoveOrderId(orderIdInt, _amm, _trader, false)
 
-        _acc ++ change
+        (_acc._1 + 1, _acc._2 ++ change)
       } else {
         _acc
       }
     }
     
-    FOLD<5>(orders, [], cleanUpOne)
+    let result = FOLD<5>(orders, (0, []), cleanUpOne)
+
+    result._2
+    ++
+    updateTraderOrderCount(_amm, _trader, orderCount - result._1)
   }
 
   @Callable(i)
@@ -617,7 +622,7 @@
     ) = getOrder(_orderId)
 
     strict cleanUp = invoke(this, "cleanUpStaleOrders", [_amm, _trader], [])
-    
+
     if (
       !initialized()
       || !isValid(_orderId)

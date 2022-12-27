@@ -7,9 +7,11 @@
 ##### Key constants #####
 
 # Oracle keys
-let k_ora_key = "k_ora_key"             # Key in Index Price Oracle account to read price from
-let k_ora_block_key = "k_ora_block_key" # Key for last updated block in oracle
-let k_ora = "k_ora"                     # Address of Index Price oracle account
+let k_ora_key = "k_ora_key"               # Key in Index Price Oracle account to read price from
+let k_ora_block_key = "k_ora_block_key"   # Key for last updated block in oracle
+let k_ora_open_key = "k_ora_open_key"     # Key for open / closed market
+let k_ora = "k_ora"                       # Address of Index Price oracle account
+
 
 # AMM Balance
 let k_balance = "k_balance" # How much of a trader's funds is controlled by this AMM
@@ -483,6 +485,19 @@ func getOraclePrice() = {
   }
 }
 
+func isMarketClosed() = {
+  let oracle = addressFromString(this.getStringValue(k_ora)).valueOrErrorMessage("")
+  let openKey = this.getString(k_ora_open_key).valueOrElse("")
+
+  if (openKey != "") then {
+    let isOpen = oracle.getBoolean(openKey).valueOrErrorMessage("Can not get oracle is open/closed. Oracle: " + oracle.toString() + " key: " + openKey)
+    
+    !isOpen
+  } else {
+    false
+  }
+}
+
 func absPriceDiff(
   _oraclePrice: Int,
   _quoteAssetReserve: Int, 
@@ -857,7 +872,11 @@ func getFunding() = {
   let spotTwapPrice = getTwapSpotPrice()
   let premium = spotTwapPrice - underlyingPrice
   
-  if (totalShortPositionSize() == 0 || totalLongPositionSize() == 0) then {
+  if (
+    totalShortPositionSize() == 0 
+    || totalLongPositionSize() == 0
+    || isMarketClosed()
+  ) then {
     (0, 0)
   } else {
     if (premium < 0) then {
@@ -1424,6 +1443,7 @@ func decreasePosition(
     || !requireMoreMarginRatio(divd(DECIMAL_UNIT, _leverage), initMarginRatio(), true)
     || !requireOpenPosition(_trader)
     || paused()
+    || isMarketClosed()
   ) then {
     throw("Invalid decreasePosition parameters")
   } else {
@@ -1554,6 +1574,7 @@ func increasePosition(
     || !requireMoreMarginRatio(divd(DECIMAL_UNIT, _leverage), initMarginRatio(), true)
     || paused()
     || closeOnly()
+    || isMarketClosed()
   ) then {
     throw("Invalid increasePosition parameters")
   } else {
@@ -1769,6 +1790,7 @@ func addMargin() = {
     || !initialized()
     || paused()
     || closeOnly()
+    || isMarketClosed()
   ) then {
     throw("Invalid addMargin parameters")
   } else {
@@ -1880,6 +1902,7 @@ func removeMargin(
     || !requireOpenPosition(_trader)
     || !initialized()
     || paused()
+    || isMarketClosed()
   ) then {
     throw("Invalid removeMargin parameters")
   } else {
@@ -1981,6 +2004,7 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
       || paused()
       || _size <= 0
       || _minQuoteAssetAmount < 0
+      || isMarketClosed()
   ) then {
     throw("Invalid closePosition parameters")
   } else {
@@ -2039,6 +2063,14 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
       #
       let realizedPnl = muld(unrealizedPnl, realizedRatio)
 
+      let remainMarginBefore = 
+          calcRemainMarginWithFundingPayment(
+              oldPositionSize,
+              oldPositionMargin,
+              oldPositionLstUpdCPF,
+              unrealizedPnl
+          )._1
+
       let (remainMargin, positionBadDebt, fundingPayment) = 
           calcRemainMarginWithFundingPayment(
               oldPositionSize,
@@ -2070,7 +2102,7 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
           newPositionLstUpdCPF,
           positionBadDebt,
           realizedPnl,
-          abs(remainMargin - newPositionMargin) + realizedPnl,
+          remainMarginBefore - newPositionMargin,
           quoteAssetReserveAfter,
           baseAssetReserveAfter,
           totalPositionSizeAfter,
@@ -2233,6 +2265,7 @@ func liquidate(_trader: String) = {
     || !requireOpenPosition(_trader)
     || !initialized()
     || paused()
+    || isMarketClosed()
   ) then {
     throw("Unable to liquidate")
   } else {
