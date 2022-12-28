@@ -2079,6 +2079,7 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
               realizedPnl
           )
       let unrealizedPnlAfter = unrealizedPnl - realizedPnl
+      
       let remainOpenNotional = if (oldPositionSize > 0) then {
         oldPositionNotional - exchangedQuoteAssetAmount - unrealizedPnlAfter
       } else {
@@ -2086,7 +2087,18 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
       }
 
       let newPositionOpenNotional = abs(remainOpenNotional)
-      let newPositionMargin = muld(newPositionOpenNotional, mr)
+      
+      #strict x = throw(
+      #  "newPositionOpenNotional=" + newPositionOpenNotional.toString()
+      #  + "unrealizedPnlAfter=" + unrealizedPnlAfter.toString()
+      #  + "mr=" + mr.toString()
+      #)
+
+      let newPositionMargin = if (oldPositionSize > 0) then {
+        muld(newPositionOpenNotional + unrealizedPnlAfter, mr) - unrealizedPnlAfter
+      } else {
+        muld(newPositionOpenNotional - unrealizedPnlAfter, mr) - unrealizedPnlAfter
+      }
       let newPositionSize = oldPositionSize + exchangedPositionSize
       let newPositionLstUpdCPF = latestCumulativePremiumFraction(newPositionSize)
 
@@ -2102,7 +2114,7 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
           newPositionLstUpdCPF,
           positionBadDebt,
           realizedPnl,
-          remainMarginBefore - newPositionMargin,
+          remainMarginBefore - (newPositionMargin + unrealizedPnlAfter),
           quoteAssetReserveAfter,
           baseAssetReserveAfter,
           totalPositionSizeAfter,

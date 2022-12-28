@@ -114,7 +114,7 @@ class Environment {
       coordinator: 0.05 * wvs,
       insurance: 0.05 * wvs,
       staking: 0.05 * wvs,
-      oracle: 0.01 * wvs,
+      oracle: 1 * wvs,
       miner: 0.05 * wvs,
       orders: 0.05 * wvs,
       referral: 0.05 * wvs,
