@@ -2338,9 +2338,10 @@ func liquidate(_trader: String) = {
       let newPositionMargin = remainMargin - liquidationPenalty
       let newPositionSize = oldPositionSize + exchangedPositionSize
       let newPositionOpenNotional = abs(remainOpenNotional)
+      let openNotionalDelta = oldPositionOpenNotional - newPositionOpenNotional
       let newPositionLstUpdCPF = latestCumulativePremiumFraction(newPositionSize)
 
-      let openInterestNotionalAfter = openInterestNotional() - exchangedQuoteAssetAmount
+      let openInterestNotionalAfter = openInterestNotional() - openNotionalDelta
 
       # Liquidating a position can incur bad debt. If AMM does not have enough funds to cover up bad debt
       # use Insurance Fund to cover it up
@@ -2403,8 +2404,8 @@ func liquidate(_trader: String) = {
         openInterestNotionalAfter,
         totalLongPositionSize() - if (newPositionSize > 0) then abs(exchangedPositionSize) else 0,
         totalShortPositionSize() - if (newPositionSize < 0) then abs(exchangedPositionSize) else 0,
-        openInterestLong() - if (newPositionSize > 0) then exchangedQuoteAssetAmount else 0,
-        openInterestShort() - if (newPositionSize < 0) then exchangedQuoteAssetAmount else 0
+        openInterestLong() - if (newPositionSize > 0) then openNotionalDelta else 0,
+        openInterestShort() - if (newPositionSize < 0) then openNotionalDelta else 0
       )
       ++
       withdraw(i.caller, feeToLiquidator)

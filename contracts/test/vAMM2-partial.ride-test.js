@@ -466,4 +466,36 @@ describe("vAMM should be able to partially close position", async function () {
     expect(notional.longNotional).to.be.closeTo(0, 0.01);
     expect(notional.shortNotional).to.be.closeTo(0, 0.01);
   });
+
+  it("can partially liquidate short position and bring notional down", async function () {
+    await amm.as(shorter).increasePosition(1000, DIR_SHORT, 3);
+    await amm.setOraclePrice(69);
+
+    await amm.as(liquidator).liquidate(shorter);
+    await amm.as(liquidator).liquidate(shorter);
+
+    await amm.as(shorter).closePosition();
+
+    let notional = await amm.getOpenNotional();
+    console.log(JSON.stringify(notional));
+
+    expect(notional.longNotional).to.be.closeTo(0, 0.01);
+    expect(notional.shortNotional).to.be.closeTo(0, 0.01);
+  });
+
+  it("can partially liquidate long position and bring notional down", async function () {
+    await amm.as(longer).increasePosition(1000, DIR_LONG, 3);
+    await amm.setOraclePrice(38);
+
+    await amm.as(liquidator).liquidate(longer);
+    await amm.as(liquidator).liquidate(longer);
+
+    await amm.as(longer).closePosition();
+
+    let notional = await amm.getOpenNotional();
+    console.log(JSON.stringify(notional));
+
+    expect(notional.longNotional).to.be.closeTo(0, 0.01);
+    expect(notional.shortNotional).to.be.closeTo(0, 0.01);
+  });
 });
