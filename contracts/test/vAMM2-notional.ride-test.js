@@ -13,7 +13,7 @@ const { expect } = require("chai");
 const { Environment } = require("../common/common");
 const { decimals } = require("../common/utils");
 
-describe("vAMM should be able to partially close position", async function () {
+describe("vAMM should be able to properly track open notional", async function () {
   this.timeout(600000);
 
   let e, amm, longer, shorter, liquidator, lp;
@@ -49,7 +49,7 @@ describe("vAMM should be able to partially close position", async function () {
     await amm.syncTerminalPriceToOracle();
   });
 
-  it("can partially close long position with positive PnL", async function () {
+  it("can track open notional for partial position close", async function () {
     await amm.as(longer).increasePosition(1000, DIR_LONG, 3);
 
     await amm.setOraclePrice(65);
@@ -68,15 +68,9 @@ describe("vAMM should be able to partially close position", async function () {
     }
 
     await amm.as(longer).closePosition();
-
-    let notional = await amm.getOpenNotional();
-    console.log(JSON.stringify(notional));
-
-    expect(notional.longNotional).to.be.closeTo(0, 0.01);
-    expect(notional.shortNotional).to.be.closeTo(0, 0.01);
   });
 
-  it("can partially close long position with negative PnL", async function () {
+  it("can partially close position with negative PnL", async function () {
     await amm.as(longer).increasePosition(1000, DIR_LONG, 3);
 
     await amm.setOraclePrice(45);
@@ -96,44 +90,9 @@ describe("vAMM should be able to partially close position", async function () {
     }
 
     await amm.as(longer).closePosition();
-
-    let notional = await amm.getOpenNotional();
-    console.log(JSON.stringify(notional));
-
-    expect(notional.longNotional).to.be.closeTo(0, 0.01);
-    expect(notional.shortNotional).to.be.closeTo(0, 0.01);
   });
 
-  it("can partially close short position with negative PnL", async function () {
-    await amm.as(shorter).increasePosition(1000, DIR_SHORT, 3);
-
-    await amm.setOraclePrice(60);
-    await amm.syncTerminalPriceToOracle();
-
-    // 1549758872 - should be
-    // 2109517715
-    {
-      let { size } = await amm.getPositionActualData(shorter);
-
-      console.log(`Position size = ${size}`);
-      let closeAmount = Math.abs(size) - 0.00001;
-      console.log(`Close amount = ${closeAmount}`);
-      let tx = await amm.as(shorter).closePosition(closeAmount); // Almost 100% close positions
-      let amount = tx.stateChanges.transfers[0].amount;
-
-      expect(amount / decimals).to.be.closeTo(720, 0.1);
-    }
-
-    await amm.as(shorter).closePosition();
-
-    let notional = await amm.getOpenNotional();
-    console.log(JSON.stringify(notional));
-
-    expect(notional.longNotional).to.be.closeTo(0, 0.01);
-    expect(notional.shortNotional).to.be.closeTo(0, 0.01);
-  });
-
-  it("can partially close long position in steps with negative PnL", async function () {
+  it("can partially close long position with negative PnL", async function () {
     await amm.as(longer).increasePosition(1000, DIR_LONG, 3);
 
     {
@@ -182,15 +141,9 @@ describe("vAMM should be able to partially close position", async function () {
     let amount2 = tx2.stateChanges.transfers[0].amount;
 
     console.log(`2 Got ${amount2 / decimals}`);
-
-    let notional = await amm.getOpenNotional();
-    console.log(JSON.stringify(notional));
-
-    expect(notional.longNotional).to.be.closeTo(0, 0.01);
-    expect(notional.shortNotional).to.be.closeTo(0, 0.01);
   });
 
-  it("can partially close short position in steps with negative PnL", async function () {
+  it("can partially close short position with negative PnL", async function () {
     await amm.as(shorter).increasePosition(1000, DIR_SHORT, 3);
 
     {
@@ -235,12 +188,6 @@ describe("vAMM should be able to partially close position", async function () {
     let amount2 = tx2.stateChanges.transfers[0].amount;
 
     console.log(`2 Got ${amount2 / decimals}`);
-
-    let notional = await amm.getOpenNotional();
-    console.log(JSON.stringify(notional));
-
-    expect(notional.longNotional).to.be.closeTo(0, 0.01);
-    expect(notional.shortNotional).to.be.closeTo(0, 0.01);
   });
 
   it("can partially close long position in profit with multiple iterations", async function () {
@@ -291,12 +238,6 @@ describe("vAMM should be able to partially close position", async function () {
     }
 
     expect(ref / decimals).to.be.closeTo(sum / decimals, 0.1);
-
-    let notional = await amm.getOpenNotional();
-    console.log(JSON.stringify(notional));
-
-    expect(notional.longNotional).to.be.closeTo(0, 0.01);
-    expect(notional.shortNotional).to.be.closeTo(0, 0.01);
   });
 
   it("can partially close long position in loss with multiple iterations", async function () {
@@ -347,12 +288,6 @@ describe("vAMM should be able to partially close position", async function () {
     }
 
     expect(ref / decimals).to.be.closeTo(sum / decimals, 0.1);
-
-    let notional = await amm.getOpenNotional();
-    console.log(JSON.stringify(notional));
-
-    expect(notional.longNotional).to.be.closeTo(0, 0.01);
-    expect(notional.shortNotional).to.be.closeTo(0, 0.01);
   });
 
   it("can partially close short position in profit with multiple iterations", async function () {
@@ -403,12 +338,6 @@ describe("vAMM should be able to partially close position", async function () {
     }
 
     expect(ref / decimals).to.be.closeTo(sum / decimals, 0.1);
-
-    let notional = await amm.getOpenNotional();
-    console.log(JSON.stringify(notional));
-
-    expect(notional.longNotional).to.be.closeTo(0, 0.01);
-    expect(notional.shortNotional).to.be.closeTo(0, 0.01);
   });
 
   it("can partially close short position in loss with multiple iterations", async function () {
@@ -459,11 +388,5 @@ describe("vAMM should be able to partially close position", async function () {
     }
 
     expect(ref / decimals).to.be.closeTo(sum / decimals, 0.1);
-
-    let notional = await amm.getOpenNotional();
-    console.log(JSON.stringify(notional));
-
-    expect(notional.longNotional).to.be.closeTo(0, 0.01);
-    expect(notional.shortNotional).to.be.closeTo(0, 0.01);
   });
 });

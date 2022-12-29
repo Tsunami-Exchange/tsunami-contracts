@@ -1942,6 +1942,23 @@ class AMM {
     return liquidatePositionTx;
   }
 
+  async getOpenNotional() {
+    let longNotional = await accountDataByKey(
+      "k_openInterestLong",
+      this.address
+    );
+
+    let shortNotional = await accountDataByKey(
+      "k_openInterestShort",
+      this.address
+    );
+
+    return {
+      longNotional: longNotional.value / decimals,
+      shortNotional: shortNotional.value / decimals,
+    };
+  }
+
   async getNextFundingTimestamp() {
     let nextFundingBlockTsV = await accountDataByKey(
       "k_nextFundingBlockMinTimestamp",

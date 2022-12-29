@@ -1486,7 +1486,7 @@ func decreasePosition(
             throw("Too little base asset exchanged, got " + exchangedPositionSizeAbs.toString() + " expected " + _minBaseAssetAmount.toString())
         } else {
           let realizedPnl = divd(muld(unrealizedPnl, exchangedPositionSizeAbs), abs(oldPositionSize))
-          let (remainMargin, badDebt, fundingPayment) = 
+          let (remainMargin, badDebt) = 
             calcRemainMarginWithFundingPayment(
                 oldPositionSize, 
                 oldPositionMargin, 
@@ -2071,7 +2071,7 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
               unrealizedPnl
           )._1
 
-      let (remainMargin, positionBadDebt, fundingPayment) = 
+      let (x1, positionBadDebt, fundingPayment) = 
           calcRemainMarginWithFundingPayment(
               oldPositionSize,
               oldPositionMargin,
@@ -2099,11 +2099,12 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
       } else {
         muld(newPositionOpenNotional - unrealizedPnlAfter, mr) - unrealizedPnlAfter
       }
+      let openNotionalDelta = oldPositionOpenNotional - newPositionOpenNotional
       let newPositionSize = oldPositionSize + exchangedPositionSize
       let newPositionLstUpdCPF = latestCumulativePremiumFraction(newPositionSize)
 
-      let openInterestNotionalAfter = openInterestNotional() - exchangedQuoteAssetAmount
-
+      let openInterestNotionalAfter = openInterestNotional() - openNotionalDelta
+      
       if (_minQuoteAssetAmount != 0 && exchangedQuoteAssetAmount < _minQuoteAssetAmount) then {
         throw("Limit error: " + exchangedQuoteAssetAmount.toString() + " < " + _minQuoteAssetAmount.toString())
       } else {
@@ -2121,8 +2122,8 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
           openInterestNotionalAfter,
           totalLongPositionSize() - if (newPositionSize > 0) then abs(exchangedPositionSize) else 0,
           totalShortPositionSize() - if (newPositionSize < 0) then abs(exchangedPositionSize) else 0,
-          openInterestLong() - if (newPositionSize > 0) then exchangedQuoteAssetAmount else 0,
-          openInterestShort() - if (newPositionSize < 0) then exchangedQuoteAssetAmount else 0
+          openInterestLong() - if (newPositionSize > 0) then openNotionalDelta else 0,
+          openInterestShort() - if (newPositionSize < 0) then openNotionalDelta else 0
         )
       }
     } else if (_size > abs(oldPositionSize)) then {
