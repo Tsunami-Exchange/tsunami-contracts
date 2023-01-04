@@ -3141,6 +3141,40 @@ class Vault {
     return this.e.upgradeContract("vault.ride", this.address, 3700000);
   }
 
+  async addRewards(_amount) {
+    let tx = await invoke(
+      {
+        dApp: address(this.e.seeds.vault),
+        functionName: "addRewards",
+        arguments: [],
+        payment: [
+          {
+            amount: Math.round(_amount * wvs),
+            assetId: this.e.assets.tsn,
+          },
+        ],
+      },
+      this.sender
+    );
+
+    await waitForTx(tx.id);
+    return tx;
+  }
+
+  async withdrawRewards() {
+    let tx = await invoke(
+      {
+        dApp: address(this.e.seeds.vault),
+        functionName: "withdrawRewards",
+        arguments: [],
+      },
+      this.sender
+    );
+
+    await waitForTx(tx.id);
+    return tx;
+  }
+
   async stake(_amount) {
     let tx = await invoke(
       {
