@@ -217,10 +217,10 @@ func getActualCaller(i: Invocation) = {
 func requireMoreMarginRatio(_marginRatio: Int, _baseMarginRatio: Int, _largerThanOrEqualTo: Boolean) = {
   let remainingMarginRatio = _marginRatio - _baseMarginRatio
   if (_largerThanOrEqualTo && remainingMarginRatio < 0) then {
-    throw("Invalid margin")
+    throw("Invalid margin: " + _marginRatio.toString() + " < " + _baseMarginRatio.toString())
   } else {
     if (!_largerThanOrEqualTo && remainingMarginRatio >= 0) then {
-      throw("Invalid margin")
+      throw("Invalid margin: " + _marginRatio.toString() + " > " + _baseMarginRatio.toString())
     } else {
       true
     }
@@ -302,13 +302,11 @@ func updateReserve(_isAdd: Boolean, _quoteAssetAmount: Int, _baseAssetAmount: In
   }
 }
 
-func calcInvariant(_qtAstR: Int, _qtAstW: Int, _bsAstR: Int, _bsAstW: Int) = {
+func calcInvariant(_qtAstR: Int, _bsAstR: Int) = {
   let bqtAstR = _qtAstR.toBigInt()
-  let bqtAstW = _qtAstW.toBigInt()
   let bbsAstR = _bsAstR.toBigInt()
-  let bbsAstW = _bsAstW.toBigInt()
 
-  bqtAstR.bmuld(bqtAstW).bmuld(bbsAstR.bmuld(bbsAstW))
+  bqtAstR.bmuld(bbsAstR)
 }
 
 # Computes result of swapping a given amount of _quoteAssetAmount
@@ -320,15 +318,17 @@ func swapInput(_isAdd: Boolean, _quoteAssetAmount: Int) = {
   let _qtAstW = qtAstW()
   let _bsAstW = bsAstW()
 
-  let k = calcInvariant(_qtAstR, _qtAstW, _bsAstR, _bsAstW)
+  let quoteAssetAmountAdjusted = _quoteAssetAmount.divd(_qtAstW)
+
+  let k = calcInvariant(_qtAstR, _bsAstR)
   let quoteAssetReserveAfter = if (_isAdd) then {
-    _qtAstR + _quoteAssetAmount
+    _qtAstR + quoteAssetAmountAdjusted
   } else {
-    _qtAstR - _quoteAssetAmount
+    _qtAstR - quoteAssetAmountAdjusted
   }
 
-  let baseAssetReserveAfter = bdivd(k, quoteAssetReserveAfter.muld(_qtAstW).toBigInt()).toInt()
-  let amountBaseAssetBoughtAbs = abs(baseAssetReserveAfter - _bsAstR).divd(_qtAstW)
+  let baseAssetReserveAfter = bdivd(k, quoteAssetReserveAfter.toBigInt()).toInt()
+  let amountBaseAssetBoughtAbs = abs(baseAssetReserveAfter - _bsAstR)
   let amountBaseAssetBought = if (_isAdd) then {
     amountBaseAssetBoughtAbs
   } else {
@@ -339,7 +339,7 @@ func swapInput(_isAdd: Boolean, _quoteAssetAmount: Int) = {
     quoteAssetReserveAfter1,
     baseAssetReserveAfter1,
     totalPositionSizeAfter1
-  ) = updateReserve(_isAdd, _quoteAssetAmount, amountBaseAssetBoughtAbs)
+  ) = updateReserve(_isAdd, quoteAssetAmountAdjusted, amountBaseAssetBoughtAbs)
 
   let priceBefore = divd(_qtAstR.muld(_qtAstW), _bsAstR.muld(_bsAstW))
   let marketPrice = divd(_quoteAssetAmount, amountBaseAssetBoughtAbs)
@@ -405,15 +405,16 @@ func swapOutputWithReserves(
   if (_baseAssetAmount == 0) then {
     throw("Invalid base asset amount")
   } else {
-    let k = calcInvariant(_quoteAssetReserve, _quoteAssetWeight, _baseAssetReserve, _baseAssetWeight)
+    let k = calcInvariant(_quoteAssetReserve, _baseAssetReserve)
     let baseAssetPoolAmountAfter = if (_isAdd) then {
       _baseAssetReserve + _baseAssetAmount 
     } else {
       _baseAssetReserve - _baseAssetAmount
     }
 
-    let quoteAssetAfter = bdivd(k, baseAssetPoolAmountAfter.muld(_baseAssetWeight).toBigInt()).toInt()
-    let quoteAssetSold = abs(quoteAssetAfter - _quoteAssetReserve.muld(_quoteAssetWeight))
+    let quoteAssetAfter = bdivd(k, baseAssetPoolAmountAfter.toBigInt()).toInt()
+    let quoteAssetDelta = abs(quoteAssetAfter - _quoteAssetReserve)
+    let quoteAssetSold = quoteAssetDelta.muld(_quoteAssetWeight)
 
     let maxPriceImpactValue = maxPriceImpact()
 
@@ -421,7 +422,7 @@ func swapOutputWithReserves(
       quoteAssetReserveAfter1,
       baseAssetReserveAfter1,
       totalPositionSizeAfter1
-    ) = updateReserve(!_isAdd, quoteAssetSold, _baseAssetAmount)
+    ) = updateReserve(!_isAdd, quoteAssetDelta, _baseAssetAmount)
 
     let marketPrice = divd(quoteAssetSold, _baseAssetAmount)
     let priceDiff = abs(priceBefore - marketPrice)
@@ -813,15 +814,11 @@ func getQuoteAssetWeight(
     let q = quoteAssetReserve.toBigInt()
     let p = targetPrice.toBigInt()
     
-    let bs2 = bpowd(b + sz, (2 * DECIMAL_UNIT).toBigInt())
-    let qbs2 = bmuld(q, bs2)
-    let ps4 = 4.toBigInt() * p.bmuld(sz)
-    let sqr = bsqrtd(qbs2.bmuld(q - ps4))
-    let bq = b.bmuld(q)
-    let qs = q.bmuld(sz)
-    let top = -sqr + bq + qs
-    let bot = 2.toBigInt() * q.bmuld(sz)
-    let result = top.bdivd(bot)
+    let k = bmuld(q, b)
+    let newB = b + sz
+    let newQ = bdivd(k, newB)
+    let z = bdivd(newQ, newB)
+    let result = bdivd(p, z)
 
     result.toInt()
 }
@@ -1665,15 +1662,15 @@ func increasePosition(
         let newPositionSize = oldPositionSize + amountBaseAssetBought
         let totalLongOpenInterestAfter = openInterestLong() + if (newPositionSize > 0) then openNotional else 0
         let totalShortOpenInterestAfter = openInterestShort() + if (newPositionSize < 0) then openNotional else 0
-
-        let increaseMarginRequirement = divd(openNotional, _leverage)
+        
         let (remainMargin, x1, x2) =
           calcRemainMarginWithFundingPayment(
                 oldPositionSize, 
                 oldPositionMargin, 
                 oldPositionLstUpdCPF, 
-                increaseMarginRequirement
+                _amount
             )
+
         if (!requireNotOverSpreadLimit(quoteAssetReserveAfter, baseAssetReserveAfter)) then {
           throw("Over max spread limit")
         } else {

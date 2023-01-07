@@ -1650,6 +1650,34 @@ class Environment {
     return tx;
   }
 
+  async forceSetKeyForSeed(seed, key, value) {
+    console.log(`seed=${seed}`);
+    let fee = 500000;
+    await this.ensureDeploymentFee(address(seed), fee);
+    let senderPublicKey = await publicKey(seed);
+    const tx = data(
+      {
+        senderPublicKey,
+        fee,
+        data: [
+          {
+            key,
+            value,
+          },
+        ],
+      },
+      this.seeds.admin
+    );
+
+    await broadcast(tx);
+    await waitForTx(tx.id);
+
+    console.log(
+      `Updated key ${key} to ${value} on ${address(seed)} in tx ${tx.id}`
+    );
+    return tx;
+  }
+
   async clearAdminScript() {
     const tx = await clearScript(this.seeds.admin);
     console.log(`Cleared admin script at ${address} in ${tx.id}`);
@@ -2095,6 +2123,32 @@ class AMM {
     };
   }
 
+  async getAmmData() {
+    let dApp = address(this.e.seeds.amms[this.address]);
+    let quote = await accountDataByKey(`k_qtAstR`, dApp).then((x) => x.value);
+    let quoteW = await accountDataByKey(`k_qtAstW`, dApp).then((x) =>
+      x ? x.value : decimals
+    );
+    let base = await accountDataByKey(`k_bsAstR`, dApp).then((x) => x.value);
+    let size = await accountDataByKey(`k_totalPositionSize`, dApp).then((x) =>
+      x ? x.value : 0
+    );
+
+    let rawQ = quote / decimals;
+    let rawB = base / decimals;
+    let rawq = quoteW / decimals;
+    let rawsize = size / decimals;
+
+    return {
+      quoteAssetReserve: Number.parseFloat(rawQ.toFixed(4)),
+      baseAssetReserve: Number.parseFloat(rawB.toFixed(4)),
+      quoteAssetWeight: Number.parseFloat(rawq.toFixed(4)),
+      totalPositionSize: Number.parseFloat(rawsize.toFixed(4)),
+    };
+    //let rawB = (base * baseW) / decimals;
+    //return Number.parseFloat((rawQ / rawB).toFixed(4));
+  }
+
   async getMarketPrice() {
     let dApp = address(this.e.seeds.amms[this.address]);
     let quote = await accountDataByKey(`k_qtAstR`, dApp).then((x) => x.value);
@@ -2180,6 +2234,9 @@ class AMM {
       await broadcast(invokeTx);
     } catch (e) {
       let { message } = JSON.parse(JSON.stringify(e));
+      if (message.includes("xxx")) {
+        throw Error(message);
+      }
       let parts = message
         .replace("Error while executing account-script: ", "")
         .split(",");
@@ -2263,6 +2320,9 @@ class AMM {
       await broadcast(invokeTx);
     } catch (e) {
       let { message } = JSON.parse(JSON.stringify(e));
+      if (message.includes("xxx")) {
+        throw Error(message);
+      }
       let parts = message
         .replace("Error while executing account-script: ", "")
         .split(",");

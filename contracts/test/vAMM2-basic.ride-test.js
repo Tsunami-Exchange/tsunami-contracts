@@ -154,3 +154,72 @@ describe("vAMM should work with positive funding", async function () {
     await amm.as(longer).closePosition();
   });
 });
+
+describe("vAMM should ensure 0 PnL for open increase position", async function () {
+  this.timeout(600000);
+
+  let e, amm, longer, shorter, liquidator;
+
+  before(async function () {
+    await setupAccounts({
+      admin: 1 * wvs,
+      longer: 0.1 * wvs,
+      shorter: 0.1 * wvs,
+      liquidator: 0.1 * wvs,
+    });
+
+    longer = accounts.longer;
+    shorter = accounts.shorter;
+    liquidator = accounts.liquidator;
+
+    e = new Environment(accounts.admin);
+    await e.deploy();
+    await e.fundAccounts({
+      [longer]: 3000,
+    });
+
+    amm = await e.deployAmm(100000, 55, {
+      initMarginRatio: 0.1,
+      maintenanceMarginRatio: 0.05,
+    });
+
+    await Promise.all([
+      e.forceSetKeyForSeed(
+        e.seeds.amms[amm.address],
+        "k_qtAstR",
+        3007658618568
+      ),
+      e.forceSetKeyForSeed(
+        e.seeds.amms[amm.address],
+        "k_bsAstR",
+        1269447541797
+      ),
+      e.forceSetKeyForSeed(e.seeds.amms[amm.address], "k_qtAstW", 580248),
+    ]);
+  });
+
+  it("Can open and increase position with 0 PnL", async function () {
+    let price = await amm.getMarketPrice();
+    await amm.setOraclePrice(price);
+    await amm.syncTerminalPriceToOracle();
+
+    console.log(`Market price: ${price}`);
+
+    await amm.as(longer).increasePosition(2000, DIR_LONG, 10);
+    {
+      let info = await amm.getPositionActualData(longer);
+      let ammInfo = await amm.getAmmData();
+
+      console.log(`Open=${JSON.stringify(info)}`);
+      console.log(`Open=${JSON.stringify(ammInfo)}`);
+      expect(info.unrealizedPnl).to.be.closeTo(0, 0.1, "after open");
+    }
+
+    await amm.as(longer).increasePosition(1000, DIR_LONG, 10);
+    {
+      let info = await amm.getPositionActualData(longer);
+      console.log(`Increase=${JSON.stringify(info)}`);
+      expect(info.unrealizedPnl).to.be.closeTo(0, 0.1, "after increase");
+    }
+  });
+});
