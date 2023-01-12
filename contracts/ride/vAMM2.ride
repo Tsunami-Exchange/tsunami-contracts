@@ -1294,7 +1294,7 @@ func addLiquidity(_quoteAssetAmount: Int) = {
 func removeLiquidity(_quoteAssetAmount: Int) = {
   if (
     i.caller != adminAddress()
-    || _quoteAssetAmount <= 0
+    || _quoteAssetAmount >= 0
   ) then {
     throw("Invalid removeLiquidity params")
   } else {
@@ -1303,12 +1303,33 @@ func removeLiquidity(_quoteAssetAmount: Int) = {
     let _qtAstW = qtAstW()
     let _bsAstW = bsAstW()
     let price = divd(_qtAstR.muld(_qtAstW), _bsAstR.muld(_bsAstW))
-    let baseAssetAmountToRemove = divd(_quoteAssetAmount, price)
 
     let qtAstRAfter = _qtAstR - _quoteAssetAmount
+    let baseAssetAmountToRemove = abs(divd(qtAstRAfter.muld(_qtAstW), price) - _bsAstR)
+
     let bsAstRAfter = _bsAstR - baseAssetAmountToRemove
 
+    let (
+      newQuoteAssetWeight,
+      newBaseAssetWeight,
+      marginToVault
+    ) = getSyncTerminalPrice(getOraclePrice(), qtAstRAfter, bsAstRAfter)
+
+    strict doExchangePnL = if (marginToVault != 0) then {
+      strict doExchangePnL = invoke(
+        vaultAddress(),
+        "exchangeFreeAndLocked",
+        [marginToVault],
+        []
+      )
+      []
+    } else {
+      []
+    }
+
     updateAmmReserves(qtAstRAfter, bsAstRAfter)
+    ++
+    updateAmmWeights(newQuoteAssetWeight, newBaseAssetWeight)
   }
 }
 

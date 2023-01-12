@@ -214,6 +214,19 @@
     }
   }
 
+  func updateLockedBalanceUnchecked(_change: Int) = {
+    let balance = lockedBalance()
+    if (balance + _change >= 0) then {
+      [
+        IntegerEntry(k_lockedBalance, balance + _change)
+      ]
+    } else {
+      [
+        IntegerEntry(k_lockedBalance, 0)
+      ]
+    }
+  }
+
   func updateVLockedBalance(_change: Int) = {
     let balance = vLockedBalance()
     if (balance + _change >= 0) then {
@@ -545,7 +558,7 @@
 
       let newRate = computeNewRate(freeUpdate)
       
-      updateLockedBalance(amountOfQuoteAsset)
+      updateLockedBalanceUnchecked(amountOfQuoteAsset)
       ++
       updateFreeBalance(freeUpdate)
       ++

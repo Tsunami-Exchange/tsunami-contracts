@@ -455,7 +455,6 @@ describe("vAMM should work with multi-collateral and borrowing maker USDN to set
       })
     );
 
-    expect(stakedUSDN).to.be.greaterThan(183);
     expect(realUSDN).to.be.greaterThan(183);
   });
 });

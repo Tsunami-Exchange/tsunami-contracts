@@ -871,7 +871,7 @@ describe("Should be able to use a helper", async function () {
   });
 });
 
-describe.only("Should be to reset order counter", async function () {
+describe("Should be to reset order counter", async function () {
   this.timeout(600000);
 
   let e, amm, longer, user, shorter, executor, lp;

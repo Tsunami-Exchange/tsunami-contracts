@@ -41,7 +41,7 @@ describe("vAMM should be able to partially close position", async function () {
     });
 
     amm = await e.deployAmm(1000000000, 55);
-    await e.vault.as(lp).stake(5000);
+    await e.vault.as(lp).stake(15000);
   });
 
   this.beforeEach(async function () {

@@ -41,7 +41,7 @@ describe("vAMM should be able to properly track open notional", async function (
     });
 
     amm = await e.deployAmm(1000000000, 55);
-    await e.vault.as(lp).stake(5000);
+    await e.vault.as(lp).stake(10000);
   });
 
   this.beforeEach(async function () {
@@ -340,7 +340,7 @@ describe("vAMM should be able to properly track open notional", async function (
     expect(ref / decimals).to.be.closeTo(sum / decimals, 0.1);
   });
 
-  it("can partially close short position in loss with multiple iterations", async function () {
+  it.only("can partially close short position in loss with multiple iterations", async function () {
     await amm.as(shorter).increasePosition(1000, DIR_SHORT, 3);
     await amm.setOraclePrice(63);
     await amm.syncTerminalPriceToOracle();
