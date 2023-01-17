@@ -112,7 +112,6 @@ class Environment {
     console.log(`Begin deploy new environment...`);
     await setupAccounts({
       coordinator: 0.05 * wvs,
-      insurance: 0.05 * wvs,
       staking: 0.05 * wvs,
       oracle: 1 * wvs,
       miner: 0.05 * wvs,
@@ -128,7 +127,6 @@ class Environment {
     });
 
     this.seeds.coordinator = accounts.coordinator;
-    this.seeds.insurance = accounts.insurance;
     this.seeds.staking = accounts.staking;
     this.seeds.oracle = accounts.oracle;
     this.seeds.miner = accounts.miner;
@@ -261,12 +259,6 @@ class Environment {
       this.seeds.coordinator,
       "Coordinator"
     );
-    let p2 = deploy(
-      "insurance.ride",
-      3400000,
-      this.seeds.insurance,
-      "Insurance Fund"
-    );
     let p4 = deploy(
       "mining.ride",
       3400000,
@@ -376,7 +368,6 @@ class Environment {
 
     await Promise.all([
       p1,
-      p2,
       p4,
       p5,
       p6,
@@ -407,17 +398,6 @@ class Environment {
 
       console.log(`setAdmin in ${addAdminTx.id}`);
       await waitForTx(addAdminTx.id);
-
-      const setInsuranceFundTx = await invoke(
-        {
-          dApp: address(this.seeds.coordinator),
-          functionName: "setInsuranceFund",
-          arguments: [address(this.seeds.insurance)],
-        },
-        this.seeds.admin
-      );
-
-      console.log(`setInsuranceFund in ${setInsuranceFundTx.id}`);
 
       const setMinerTx = await invoke(
         {
@@ -569,7 +549,6 @@ class Environment {
 
       console.log(`setVaultAddress in ${setExchangeManagerTx.id}`);
 
-      initTxs.push(waitForTx(setInsuranceFundTx.id));
       initTxs.push(waitForTx(setQuoteAssetTx.id));
       initTxs.push(waitForTx(setGovAssetTx.id));
       initTxs.push(waitForTx(setStakingAddressTx.id));
@@ -584,21 +563,6 @@ class Environment {
       initTxs.push(waitForTx(setCollateralManagerTx.id));
       initTxs.push(waitForTx(setExchangeManagerTx.id));
       initTxs.push(waitForTx(setVaultTx.id));
-    }
-
-    // Init insurance
-    {
-      const initInsuranceTx = await invoke(
-        {
-          dApp: address(this.seeds.insurance),
-          functionName: "initialize",
-          arguments: [address(this.seeds.coordinator)],
-        },
-        this.seeds.admin
-      );
-
-      initTxs.push(waitForTx(initInsuranceTx.id));
-      console.log("Insurance initialized in " + initInsuranceTx.id);
     }
 
     // Init staking
@@ -796,7 +760,6 @@ class Environment {
 
     await Promise.all(initTxs);
 
-    this.insurance = new Insurance(this);
     this.miner = new Miner(this);
     this.orders = new Orders(this);
     this.referral = new Referral(this);
@@ -1383,8 +1346,8 @@ class Environment {
               }, // _liquidationFeeRatio = 1%
               {
                 type: "integer",
-                value: Math.round((options.fee || 0.01) * decimals),
-              }, // _fee 1%
+                value: Math.round((options.fee || 0.0012) * decimals),
+              }, // _fee 0.12%
               { type: "string", value: address(this.seeds.oracle) }, // Oracle address
               { type: "string", value: "price" }, // Oracle key
               { type: "string", value: "" }, // Oracle block key
@@ -1848,31 +1811,6 @@ class AMM {
     return openPositionTx;
   }
 
-  async decreasePosition(_amount, _leverage, _minBaseAssetAmount) {
-    const decreasePositionTx = invokeScript(
-      {
-        dApp: address(this.e.seeds.amms[this.address]),
-        call: {
-          function: "decreasePosition",
-          args: [
-            { type: "integer", value: Math.round(_amount * decimals) }, // _amount = 3
-            { type: "integer", value: Math.round(_leverage * decimals) }, // _leverage = 3
-            {
-              type: "integer",
-              value: Math.round(_minBaseAssetAmount * decimals),
-            }, // _minBaseAssetAmount = 0.1 WAVES
-          ],
-        },
-      },
-      this.sender
-    );
-
-    await broadcast(decreasePositionTx);
-    await waitForTx(decreasePositionTx.id);
-
-    return decreasePositionTx;
-  }
-
   async addMargin(_amount) {
     const addMarginTx = invokeScript(
       {
@@ -1915,7 +1853,7 @@ class AMM {
     return removeMarginTx;
   }
 
-  async closePosition(_amount, _minQuoteAssetAmount = 0) {
+  async closePosition(_amount, _minQuoteAssetAmount = 0, _addToMargin = false) {
     if (!_amount) {
       let trader = address(this.sender);
       let dApp = address(this.e.seeds.amms[this.address]);
@@ -1937,6 +1875,10 @@ class AMM {
             {
               type: "integer",
               value: Math.round(_minQuoteAssetAmount * decimals),
+            },
+            {
+              type: "boolean",
+              value: _addToMargin,
             },
           ],
         },

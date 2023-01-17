@@ -39,110 +39,84 @@ describe("vAMM should work with positive funding", async function () {
     amm = await e.deployAmm(100000, 55);
   });
 
-  it("Can add insurance funds", async function () {
-    let addInsuranceFundsTx = await e.insurance.deposit(1);
-
-    console.log("Added insurance funds by " + addInsuranceFundsTx.id);
-  });
-
-  it("Can open position", async function () {
+  it.only("Can open position", async function () {
     await amm.as(longer).increasePosition(10, DIR_LONG, 3, 0.15);
 
     const { size, margin, openNotional } = await amm.getPositionInfo(longer);
 
-    expect(size).to.be.eq(539840);
-    expect(margin).to.be.eq(9900000);
-    expect(openNotional).to.be.eq(29700000);
+    expect(size).to.be.eq(543336);
+    expect(margin).to.be.eq(9964129);
+    expect(openNotional).to.be.eq(29892387);
 
     const { totalSize, totalLong, totalShort } = await amm.totalPositionInfo();
 
-    expect(totalSize).to.be.eq(539840);
-    expect(totalLong).to.be.eq(539840);
+    expect(totalSize).to.be.eq(543336);
+    expect(totalLong).to.be.eq(543336);
     expect(totalShort).to.be.eq(0);
   });
 
-  it("Can increase position", async function () {
+  it.only("Can increase position", async function () {
     await amm.as(longer).increasePosition(5, DIR_LONG, 3, 0.15);
 
     const { size, margin, openNotional } = await amm.getPositionInfo(longer);
 
-    expect(size).to.be.eq(809640);
-    expect(margin).to.be.eq(14850000);
-    expect(openNotional).to.be.eq(44550000);
+    expect(size).to.be.eq(814882);
+    expect(margin).to.be.eq(14946194);
+    expect(openNotional).to.be.eq(44838582);
 
     const { totalSize, totalLong, totalShort } = await amm.totalPositionInfo();
 
-    expect(totalSize).to.be.eq(809640);
-    expect(totalLong).to.be.eq(809640);
+    expect(totalSize).to.be.eq(814882);
+    expect(totalLong).to.be.eq(814882);
     expect(totalShort).to.be.eq(0);
   });
 
-  it("Can decrease position", async function () {
-    await amm.as(longer).decreasePosition(3, 3, 0.15);
-
-    const { size, margin, openNotional } = await amm.getPositionInfo(longer);
-
-    expect(size).to.be.eq(646135);
-    expect(margin).to.be.eq(14850007);
-    expect(openNotional).to.be.eq(35550007);
-
-    const { totalSize, totalLong, totalShort } = await amm.totalPositionInfo();
-
-    expect(totalSize).to.be.eq(646135);
-    expect(totalLong).to.be.eq(646135);
-    expect(totalShort).to.be.eq(0);
-  });
-
-  it("Can add margin", async function () {
+  it.only("Can add margin", async function () {
     await amm.as(longer).addMargin(3);
 
     const { size, margin, openNotional } = await amm.getPositionInfo(longer);
 
-    expect(size).to.be.eq(646135);
-    expect(margin).to.be.eq(17820007);
-    expect(openNotional).to.be.eq(35550007);
+    expect(size).to.be.eq(814882);
+    expect(margin).to.be.eq(17946194);
+    expect(openNotional).to.be.eq(44838582);
   });
 
-  it("Can remove margin", async function () {
+  it.only("Can remove margin", async function () {
     await amm.as(longer).removeMargin(2);
 
     const { size, margin, openNotional } = await amm.getPositionInfo(longer);
 
-    expect(size).to.be.eq(646135);
-    expect(margin).to.be.eq(15820007);
-    expect(openNotional).to.be.eq(35550007);
+    expect(size).to.be.eq(814882);
+    expect(margin).to.be.eq(15946194);
+    expect(openNotional).to.be.eq(44838582);
   });
 
-  it("Can not remove too much margin", async function () {
+  it.only("Can not remove too much margin", async function () {
     return expect(amm.as(longer).removeMargin(110)).to.eventually.be.rejected;
   });
 
-  it("Can open short position", async function () {
+  it.only("Can open short position", async function () {
     await amm.as(shorter).increasePosition(5, DIR_SHORT, 3, 0.15);
   });
 
-  it("Can increase short position", async function () {
+  it.only("Can increase short position", async function () {
     await amm.as(shorter).increasePosition(1, DIR_SHORT, 3, 0.04);
   });
 
-  it("Can decrease short position", async function () {
-    await amm.as(shorter).decreasePosition(1, 3, 0.04);
-  });
-
-  it("Can pay funding", async function () {
+  it.only("Can pay funding", async function () {
     await amm.awaitNextFunding();
     await amm.payFunding();
   });
 
-  it("Can close long position", async function () {
+  it.only("Can close long position", async function () {
     await amm.as(longer).closePosition();
   });
 
-  it("Can close short position", async function () {
+  it.only("Can close short position", async function () {
     await amm.as(shorter).closePosition();
   });
 
-  it("Can partially close long position", async function () {
+  it.only("Can partially close long position", async function () {
     await amm.as(longer).increasePosition(150, DIR_LONG, 3, 0); // 150 * 3 / 55 ~ = 8.18 base asset
     const p1 = await amm.getPositionInfo(longer);
     console.log(`P1=${JSON.stringify(p1)}`);

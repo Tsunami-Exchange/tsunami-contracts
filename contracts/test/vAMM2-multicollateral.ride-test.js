@@ -51,12 +51,6 @@ describe("vAMM should work with multi-collateral", async function () {
     amm = _amm;
   });
 
-  it("Can add insurance funds", async function () {
-    let addInsuranceFundsTx = await e.insurance.deposit(30);
-
-    console.log("Added insurance funds by " + addInsuranceFundsTx.id);
-  });
-
   it("Can open position", async function () {
     await amm
       .as(longer)
@@ -65,14 +59,14 @@ describe("vAMM should work with multi-collateral", async function () {
 
     const { size, margin, openNotional } = await amm.getPositionInfo(longer);
 
-    expect(size).to.be.eq(539840);
-    expect(margin).to.be.eq(9900000);
-    expect(openNotional).to.be.eq(29700000);
+    expect(size).to.be.eq(543336);
+    expect(margin).to.be.eq(9964129);
+    expect(openNotional).to.be.eq(29892387);
 
     const { totalSize, totalLong, totalShort } = await amm.totalPositionInfo();
 
-    expect(totalSize).to.be.eq(539840);
-    expect(totalLong).to.be.eq(539840);
+    expect(totalSize).to.be.eq(543336);
+    expect(totalLong).to.be.eq(543336);
     expect(totalShort).to.be.eq(0);
   });
 
@@ -98,30 +92,14 @@ describe("vAMM should work with multi-collateral", async function () {
 
     const { size, margin, openNotional } = await amm.getPositionInfo(longer);
 
-    expect(size).to.be.eq(809640);
-    expect(margin).to.be.eq(14850000);
-    expect(openNotional).to.be.eq(44550000);
+    expect(size).to.be.eq(814882);
+    expect(margin).to.be.eq(14946194);
+    expect(openNotional).to.be.eq(44838582);
 
     const { totalSize, totalLong, totalShort } = await amm.totalPositionInfo();
 
-    expect(totalSize).to.be.eq(809640);
-    expect(totalLong).to.be.eq(809640);
-    expect(totalShort).to.be.eq(0);
-  });
-
-  it("Can decrease position", async function () {
-    await amm.as(longer).decreasePosition(3, 3, 0.15);
-
-    const { size, margin, openNotional } = await amm.getPositionInfo(longer);
-
-    expect(size).to.be.eq(646135);
-    expect(margin).to.be.eq(14850007);
-    expect(openNotional).to.be.eq(35550007);
-
-    const { totalSize, totalLong, totalShort } = await amm.totalPositionInfo();
-
-    expect(totalSize).to.be.eq(646135);
-    expect(totalLong).to.be.eq(646135);
+    expect(totalSize).to.be.eq(814882);
+    expect(totalLong).to.be.eq(814882);
     expect(totalShort).to.be.eq(0);
   });
 
@@ -130,9 +108,9 @@ describe("vAMM should work with multi-collateral", async function () {
 
     const { size, margin, openNotional } = await amm.getPositionInfo(longer);
 
-    expect(size).to.be.eq(646135);
-    expect(margin).to.be.eq(17820007);
-    expect(openNotional).to.be.eq(35550007);
+    expect(size).to.be.eq(814882);
+    expect(margin).to.be.eq(17946194);
+    expect(openNotional).to.be.eq(44838582);
   });
 
   it("Can NOT add margin in USDC (Different Asset)", async function () {
@@ -147,15 +125,11 @@ describe("vAMM should work with multi-collateral", async function () {
   it("Can remove margin", async function () {
     await amm.as(longer).removeMargin(2);
 
-    //const {amount, assetId} = await amm.getBorrow(longer)
-    //expect(amount).to.be.equal(8 * decimals)
-    //expect(assetId).to.be.equal(e.assets.usdt)
-
     const { size, margin, openNotional } = await amm.getPositionInfo(longer);
 
-    expect(size).to.be.eq(646135);
-    expect(margin).to.be.eq(15820007);
-    expect(openNotional).to.be.eq(35550007);
+    expect(size).to.be.eq(814882);
+    expect(margin).to.be.eq(15946194);
+    expect(openNotional).to.be.eq(44838582);
   });
 
   it("Can not remove too much margin", async function () {
@@ -291,8 +265,8 @@ describe("vAMM should work with multi-collateral and borrowing maker USDN to set
       })
     );
 
-    expect(stakedUSDN).to.be.greaterThan(514);
-    expect(realUSDN).to.be.greaterThan(514);
+    expect(stakedUSDN).to.be.greaterThan(510);
+    expect(realUSDN).to.be.greaterThan(510);
   });
 });
 

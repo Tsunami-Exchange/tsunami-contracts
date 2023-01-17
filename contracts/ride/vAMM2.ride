@@ -26,6 +26,7 @@ let k_positionOpenNotional = "k_positionOpenNotional" # Trader position open not
 let k_positionLastUpdatedCumulativePremiumFraction = "k_positionFraction"        # Trader position last updated cumulative premium fraction
 let k_positionSequence = "k_positionSequence"         # When position was closed
 let k_positionAsset = "k_positionAsset"               # Asset of position
+let k_positionFee = "k_positionFee"                   # Fee for current position
 
 # Global initialization state
 let k_initialized = "k_initialized"                       # If AMM was properly initialized
@@ -255,6 +256,14 @@ func getPositionAsset(_trader: String) = {
   match (positionAssetOpt) {
     case positionAsset: String => positionAsset
     case _ => quoteAsset().toBase58String()
+  }
+}
+
+func getPositionFee(_trader: String) = {
+  let positionFeeOpt = this.getInteger(k_positionFee.toCompositeKey(_trader))
+  match (positionFeeOpt) {
+    case positionFee: Int => positionFee
+    case _ => fee()
   }
 }
 
@@ -1034,14 +1043,28 @@ func updatePositionAsset(
 }
 
 func incrementPositionSequenceNumber(
-  isNewPosition: Boolean,
+  _isNewPosition: Boolean,
   _address: String
 ) = {
-  if (isNewPosition) then {
+  if (_isNewPosition) then {
     let currentSequence = lastSequence()
     [
       IntegerEntry(k_positionSequence.toCompositeKey(_address), currentSequence + 1),
       IntegerEntry(k_sequence, currentSequence + 1)
+    ]
+  } else {
+    []
+  }
+}
+
+func updatePositionFee(
+  _isNewPosition: Boolean,
+  _address: String,
+  _fee: Int
+) = {
+  if (_isNewPosition) then {
+    [
+      IntegerEntry(k_positionFee.toCompositeKey(_address), _fee)
     ]
   } else {
     []
@@ -1446,128 +1469,6 @@ func initialize(
 }
 
 @Callable(i)
-func decreasePosition(
-  _amount: Int,
-  _leverage: Int,
-  _minBaseAssetAmount: Int
-) = {
-  strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
-
-  let _trader = getActualCaller(i)
-
-  if (
-    _amount <= 0
-    || !initialized()
-    || !requireMoreMarginRatio(divd(DECIMAL_UNIT, _leverage), initMarginRatio(), true)
-    || !requireOpenPosition(_trader)
-    || paused()
-    || isMarketClosed()
-  ) then {
-    throw("Invalid decreasePosition parameters")
-  } else {
-    let (
-      oldPositionSize,
-      oldPositionMargin,
-      oldPositionOpenNotional,
-      oldPositionLstUpdCPF
-    ) = getPosition(_trader)
-
-    let _direction = if (oldPositionSize > 0) then DIR_SHORT else DIR_LONG
-    let isAdd = _direction == DIR_LONG
-    
-    let openNotional = muld(_amount, _leverage)
-    let (oldPositionNotional, unrealizedPnl) = getPositionNotionalAndUnrealizedPnl(_trader, PNL_OPTION_SPOT)
-
-    let (
-      newPositionSize,
-      newPositionRemainMargin,
-      newPositionOpenNotional,
-      newPositionLatestCPF,
-      baseAssetReserveAfter,
-      quoteAssetReserveAfter,
-      totalPositionSizeAfter,
-      openInterestNotionalAfter,
-      totalLongAfter,
-      totalShortAfter,
-      totalLongOpenInterestAfter,
-      totalShortOpenInterestAfter
-    ) = if (oldPositionNotional > openNotional) then {
-      let ( 
-          exchangedPositionSize, 
-          quoteAssetReserveAfter, 
-          baseAssetReserveAfter,
-          totalPositionSizeAfter
-        ) = swapInput(isAdd, openNotional)
-        let exchangedPositionSizeAbs = abs(exchangedPositionSize)
-
-        if (_minBaseAssetAmount != 0 && exchangedPositionSizeAbs < _minBaseAssetAmount) then {
-            throw("Too little base asset exchanged, got " + exchangedPositionSizeAbs.toString() + " expected " + _minBaseAssetAmount.toString())
-        } else {
-          let realizedPnl = divd(muld(unrealizedPnl, exchangedPositionSizeAbs), abs(oldPositionSize))
-          let (remainMargin, badDebt) = 
-            calcRemainMarginWithFundingPayment(
-                oldPositionSize, 
-                oldPositionMargin, 
-                oldPositionLstUpdCPF, 
-                realizedPnl
-            )
-          let exchangedQuoteAssetAmount = openNotional
-          let unrealizedPnlAfter = unrealizedPnl - realizedPnl
-          let remainOpenNotional = if (oldPositionSize > 0) then {
-            oldPositionNotional - exchangedQuoteAssetAmount - unrealizedPnlAfter
-          } else {
-            unrealizedPnlAfter + oldPositionNotional - exchangedQuoteAssetAmount
-          }
-
-          let newPositionSize = oldPositionSize + exchangedPositionSize
-          (
-            newPositionSize, # positionSize
-            remainMargin, # remainMargin
-            abs(remainOpenNotional), # pon
-            latestCumulativePremiumFraction(newPositionSize), # latestCPF
-            baseAssetReserveAfter, # baseAssetReserveAfter
-            quoteAssetReserveAfter, # quoteAssetReserveAfter
-            totalPositionSizeAfter, # totalPositionSizeAfter
-            openInterestNotional() - openNotional, # openInterestNotionalAfter
-            totalLongPositionSize() - if (newPositionSize > 0) then abs(exchangedPositionSize) else 0,
-            totalShortPositionSize() - if (newPositionSize < 0) then abs(exchangedPositionSize) else 0,
-            openInterestLong() - if (newPositionSize > 0) then openNotional else 0,
-            openInterestShort() - if (newPositionSize < 0) then openNotional else 0
-          )
-        }
-    } else {
-      throw("Close position first")
-    }
-
-    strict notifyNotional = invoke(
-      minerAddress(),
-      "notifyNotional",
-      [_trader, newPositionOpenNotional],
-      []
-    )
-    
-    updatePosition(
-      _trader,
-      newPositionSize,
-      newPositionRemainMargin,
-      newPositionOpenNotional,
-      newPositionLatestCPF
-    ) 
-    ++
-    updateAmm(
-      quoteAssetReserveAfter,
-      baseAssetReserveAfter,
-      totalPositionSizeAfter,
-      openInterestNotionalAfter,
-      totalLongAfter,
-      totalShortAfter,
-      totalLongOpenInterestAfter,
-      totalShortOpenInterestAfter
-    )
-  }
-}
-
-@Callable(i)
 func increasePosition(
   _direction: Int,
   _leverage: Int,
@@ -1577,7 +1478,6 @@ func increasePosition(
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
 
   let _trader = getActualCaller(i)
-
   let _rawAmount = i.payments[0].amount
   let _assetId = i.payments[0].assetId
   let _assetIdStr = _assetId.value().toBase58String()
@@ -1597,8 +1497,9 @@ func increasePosition(
     throw("Invalid increasePosition parameters")
   } else {
     let (adjustedFee, burnArtifact) = getForTraderWithArtifact(_trader, getArtifactId(i))
-    let rawFeeAmount = muld(_rawAmount, adjustedFee)
-    let _amount = _rawAmount - rawFeeAmount
+    # Compute amount as amount = payment / (leverage * fee + 1)
+    let _amount = _rawAmount.divd(muld(adjustedFee, _leverage) + DECIMAL_UNIT)
+    let rawFeeAmount = _rawAmount - _amount
 
     # If we are operating with non-USDN collateral, borrow _amount
     # of USDN to proceed and send rawFeeAmount of non-USDN collateral
@@ -1739,7 +1640,7 @@ func increasePosition(
       []
     }
 
-    strict depositInsurance = invoke(
+    strict depositVault = invoke(
       vaultAddress(),
       "addFree",
       [],
@@ -1770,6 +1671,8 @@ func increasePosition(
     ++
     incrementPositionSequenceNumber(isNewPosition, _trader)
     ++
+    updatePositionFee(isNewPosition, _trader, adjustedFee)
+    ++
     updatePositionAsset(_trader, _assetIdStr)
     ++
     updateAmm(
@@ -1796,7 +1699,7 @@ func addMargin() = {
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
 
   let _trader = i.caller.toString()
-  let _rawAmount = i.payments[0].amount
+  let _amount = i.payments[0].amount
   let _assetId = i.payments[0].assetId
   let _assetIdStr = _assetId.value().toBase58String()
   let isQuoteAsset = _assetId == quoteAsset()
@@ -1812,59 +1715,12 @@ func addMargin() = {
   ) then {
     throw("Invalid addMargin parameters")
   } else {
-    let (adjustedFee, burnArtifact) = getForTraderWithArtifact(_trader, getArtifactId(i))
-    let rawFeeAmount = muld(_rawAmount, adjustedFee)
-    let _amount = _rawAmount - rawFeeAmount
-
-    # If we are operating with non-USDN collateral, borrow _amount
-    # of USDN to proceed and send rawFeeAmount of non-USDN collateral
-    # to exchange to USDN. 
-    #
-    strict distributeFeeAmount = if (isCollateralAsset) then {
-      strict doBorrow = invoke(
-        collateralAddress(),
-        "borrow",
-        [_trader],
-        [AttachedPayment(_assetId, _amount)]
-      )
-
-      strict balanceBefore = assetBalance(this, quoteAsset())
-      strict doSwap = invoke(
-        swapAddress(),
-        "swap",
-        [toBase58String(quoteAsset()), 0], # Want Quote Asset
-        [AttachedPayment(_assetId, rawFeeAmount)] # In exchange for Provided Asset
-      )
-      strict balanceAfter = assetBalance(this, quoteAsset())
-      strict exchangedAmount = balanceAfter - balanceBefore
-
-      exchangedAmount
-    } else {
-      rawFeeAmount
-    }
-
-    strict referrerFeeAny = invoke(
-      referralAddress(),
-      "acceptPayment",
-      [_trader],
-      [AttachedPayment(quoteAsset(), distributeFeeAmount)]
-    )
-
-    let referrerFee = match(referrerFeeAny) {
-      case x: Int => x
-      case _ => throw("Invalid referrerFee")
-    }
-
-    let feeAmount = distributeFeeAmount - referrerFee
-
     let (
       oldPositionSize,
       oldPositionMargin,
       oldPositionOpenNotional,
       oldPositionLstUpdCPF
     ) = getPosition(_trader)
-
-    let (feeToStakers, feeToVault) = distributeFee(feeAmount)
   
     strict stake = if (isQuoteAsset) then {
       strict stake = invoke(
@@ -1878,20 +1734,6 @@ func addMargin() = {
       []
     }
 
-    strict depositInsurance = invoke(
-      vaultAddress(),
-      "addFree",
-      [],
-      [AttachedPayment(quoteAsset(), feeToVault)]
-    )
-
-    strict notifyFee = invoke(
-      minerAddress(),
-      "notifyFees",
-      [_trader, feeAmount],
-      []
-    )
-
     updatePosition(
       _trader,
       oldPositionSize,
@@ -1900,11 +1742,7 @@ func addMargin() = {
       oldPositionLstUpdCPF
     )
     ++
-    transferFee(feeToStakers)
-    ++
     updateBalance(cbalance() + _amount)
-    ++
-    doBurnArtifact(burnArtifact, i)
   }
 }
 
@@ -2011,18 +1849,19 @@ func removeMargin(
 }
 
 @Callable(i)
-func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
+func closePosition(_size: Int, _minQuoteAssetAmount: Int, _addToMargin: Boolean) = {
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
 
   let _trader = getActualCaller(i)
   let _traderAddress = addressFromString(_trader).valueOrErrorMessage("Invalid caller")
-    if (
-      !requireOpenPosition(_trader)
-      || !initialized()
-      || paused()
-      || _size <= 0
-      || _minQuoteAssetAmount < 0
-      || isMarketClosed()
+  let positionFee = getPositionFee(_trader)
+  if (
+    !requireOpenPosition(_trader)
+    || !initialized()
+    || paused()
+    || _size <= 0
+    || _minQuoteAssetAmount < 0
+    || isMarketClosed()
   ) then {
     throw("Invalid closePosition parameters")
   } else {
@@ -2040,7 +1879,7 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
       newPositionLstUpdCPF,
       positionBadDebt,
       realizedPnl,
-      marginToVault,
+      marginToTrader,
       quoteAssetReserveAfter,
       baseAssetReserveAfter,
       totalPositionSizeAfter,
@@ -2048,7 +1887,8 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
       totalLongAfter,
       totalShortAfter,
       totalLongOpenInterestAfter,
-      totalShortOpenInterestAfter
+      totalShortOpenInterestAfter,
+      realizedFee
     ) = if (_size < abs(oldPositionSize)) then {
       let _direction = if (oldPositionSize > 0) then DIR_SHORT else DIR_LONG
       let isAdd = _direction == DIR_LONG
@@ -2080,6 +1920,7 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
       # Realize a certain percent of position PnL 
       #
       let realizedPnl = muld(unrealizedPnl, realizedRatio)
+      let realizedFee = muld(oldPositionNotional, realizedRatio).muld(positionFee)
 
       let remainMarginBefore = 
           calcRemainMarginWithFundingPayment(
@@ -2089,13 +1930,13 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
               unrealizedPnl
           )._1
 
-      let (x1, positionBadDebt, fundingPayment) = 
+      let positionBadDebt = 
           calcRemainMarginWithFundingPayment(
               oldPositionSize,
               oldPositionMargin,
               oldPositionLstUpdCPF,
               realizedPnl
-          )
+          )._2
       let unrealizedPnlAfter = unrealizedPnl - realizedPnl
       
       let remainOpenNotional = if (oldPositionSize > 0) then {
@@ -2106,34 +1947,36 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
 
       let newPositionOpenNotional = abs(remainOpenNotional)
       
-      #strict x = throw(
-      #  "newPositionOpenNotional=" + newPositionOpenNotional.toString()
-      #  + "unrealizedPnlAfter=" + unrealizedPnlAfter.toString()
-      #  + "mr=" + mr.toString()
-      #)
+      let newPositionSize = oldPositionSize + exchangedPositionSize
+      let newPositionLstUpdCPF = latestCumulativePremiumFraction(newPositionSize)
+
+      let openNotionalDelta = oldPositionOpenNotional - newPositionOpenNotional
+      let openInterestNotionalAfter = openInterestNotional() - openNotionalDelta
 
       let newPositionMargin = if (oldPositionSize > 0) then {
         muld(newPositionOpenNotional + unrealizedPnlAfter, mr) - unrealizedPnlAfter
       } else {
         muld(newPositionOpenNotional - unrealizedPnlAfter, mr) - unrealizedPnlAfter
       }
-      let openNotionalDelta = oldPositionOpenNotional - newPositionOpenNotional
-      let newPositionSize = oldPositionSize + exchangedPositionSize
-      let newPositionLstUpdCPF = latestCumulativePremiumFraction(newPositionSize)
-
-      let openInterestNotionalAfter = openInterestNotional() - openNotionalDelta
+      
+      let marginToTraderRaw = remainMarginBefore - (newPositionMargin + unrealizedPnlAfter) - realizedFee
+      let marginToTrader = if (marginToTraderRaw < 0) then {
+        throw("Margin error: unable to pay close fee")
+      } else {
+        marginToTraderRaw
+      }
       
       if (_minQuoteAssetAmount != 0 && exchangedQuoteAssetAmount < _minQuoteAssetAmount) then {
         throw("Limit error: " + exchangedQuoteAssetAmount.toString() + " < " + _minQuoteAssetAmount.toString())
       } else {
         (
           newPositionSize,
-          newPositionMargin,
+          if (_addToMargin) then newPositionMargin + marginToTrader else newPositionMargin,
           newPositionOpenNotional,
           newPositionLstUpdCPF,
           positionBadDebt,
           realizedPnl,
-          remainMarginBefore - (newPositionMargin + unrealizedPnlAfter),
+          if (_addToMargin) then 0 else marginToTrader,
           quoteAssetReserveAfter,
           baseAssetReserveAfter,
           totalPositionSizeAfter,
@@ -2141,27 +1984,36 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
           totalLongPositionSize() - if (newPositionSize > 0) then abs(exchangedPositionSize) else 0,
           totalShortPositionSize() - if (newPositionSize < 0) then abs(exchangedPositionSize) else 0,
           openInterestLong() - if (newPositionSize > 0) then openNotionalDelta else 0,
-          openInterestShort() - if (newPositionSize < 0) then openNotionalDelta else 0
+          openInterestShort() - if (newPositionSize < 0) then openNotionalDelta else 0,
+          realizedFee
         )
       }
     } else if (_size > abs(oldPositionSize)) then {
       throw("Invalid closePosition parameters")
     } else {
       let (
-        exchangedQuoteAssetAmount,
+        x2,
         positionBadDebt,
         realizedPnl,
-        marginToVault,
+        marginToTraderWithoutFee,
         quoteAssetReserveAfter,
         baseAssetReserveAfter,
         totalPositionSizeAfter,
         openInterestNotionalAfter,
-        x2,
+        exchangedQuoteAssetAmount,
         totalLongAfter,
         totalShortAfter,
         totalLongOpenInterestAfter,
         totalShortOpenInterestAfter
       ) = internalClosePosition(_trader, true)
+
+      let realizedFee = muld(exchangedQuoteAssetAmount, positionFee)
+      let marginToTraderRaw = abs(marginToTraderWithoutFee) - realizedFee
+      let marginToTrader = if (marginToTraderRaw < 0) then {
+        throw("Margin error: unable to pay close fee: " + realizedFee.toString() + " margin: " + marginToTraderWithoutFee.toString()+  " fee percent: " + positionFee.toString() + " notional: " + exchangedQuoteAssetAmount.toString())
+      } else {
+        marginToTraderRaw
+      }
 
       if (_minQuoteAssetAmount != 0 && exchangedQuoteAssetAmount < _minQuoteAssetAmount) then {
         throw("Limit error: " + exchangedQuoteAssetAmount.toString() + " < " + _minQuoteAssetAmount.toString())
@@ -2170,7 +2022,7 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
           0,0,0,0, # Empty new position
           positionBadDebt,
           realizedPnl,
-          marginToVault,
+          marginToTrader,
           quoteAssetReserveAfter,
           baseAssetReserveAfter,
           totalPositionSizeAfter,
@@ -2178,7 +2030,8 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
           totalLongAfter,
           totalShortAfter,
           totalLongOpenInterestAfter,
-          totalShortOpenInterestAfter
+          totalShortOpenInterestAfter,
+          realizedFee
         )
       }
     }
@@ -2186,9 +2039,10 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
     if (positionBadDebt > 0) then {
       throw("Unable to close position with bad debt")
     } else {
-      let withdrawAmount = abs(marginToVault)
-
+      let isPartialClose = newPositionSize != 0
+      let withdrawAmount = marginToTrader + realizedFee
       let ammBalance = cbalance() - withdrawAmount
+
       let (ammNewBalance, x11) = if (ammBalance < 0) then {
         (0, abs(ammBalance))
       } else {
@@ -2197,41 +2051,64 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
 
       # As we are closing a position - we need to repay all the debt
       #
-      let (borrowed, assetId) = getBorrowedByTrader(_trader)       
+      let (borrowed, assetId) = getBorrowedByTrader(_trader)
 
-      strict (sendCollateralAction, quoteWithdrawAmount) = if (borrowed > 0) then {
+      strict (assetWithdrawAmountBeforeFee, quoteWithdrawAmountBeforeFee, switchToQuote) = if (borrowed > 0) then {
         if (withdrawAmount >= borrowed) then {
           strict doRepay = invoke(
             collateralAddress(),
             "repay",
             [_trader, borrowed, assetId],
             []
-          )   
+          )
+
+          # If it's a partial close - and we already payed all debt - switch position to quote
+          # 
           
-          ([
-            ScriptTransfer(_traderAddress, borrowed, fromBase58String(assetId))
-          ], withdrawAmount - borrowed)
+          (borrowed, withdrawAmount - borrowed, isPartialClose)
         } else {
           strict realizeAndClose = invoke(
             collateralAddress(),
-            "realizePartiallyAndClose",
+            if (isPartialClose) then "repay" else "realizePartiallyAndClose",
             [_trader, withdrawAmount, assetId],
             []
           )
           
-          ([
-            ScriptTransfer(_traderAddress, withdrawAmount, fromBase58String(assetId))
-          ], 0) # No extra USDN during settlement
+          (withdrawAmount, 0, false)
         }
       } else {
-        ([], withdrawAmount)
+        (0, withdrawAmount, false)
       }
 
-      strict unstake = if (quoteWithdrawAmount > 0) then {
+      strict (
+        assetWithdrawAmountAfterFee, 
+        quoteWithdrawAmountAfterFee, 
+        actualFeeInQuoteAsset
+      ) = 
+        if (quoteWithdrawAmountBeforeFee >= realizedFee) then {
+          (assetWithdrawAmountBeforeFee, quoteWithdrawAmountBeforeFee - realizedFee, realizedFee)
+        } else {
+          let feeLeftToWithdrawFromAsset = realizedFee - quoteWithdrawAmountBeforeFee
+          let assetWithdrawAmountAfterFee = assetWithdrawAmountBeforeFee - feeLeftToWithdrawFromAsset
+
+          strict balanceBefore = assetBalance(this, quoteAsset())
+          strict doSwap = invoke(
+            swapAddress(),
+            "swap",
+            [toBase58String(quoteAsset()), 0], # Want Quote Asset
+            [AttachedPayment(fromBase58String(assetId), feeLeftToWithdrawFromAsset)] # In exchange for Provided Asset
+          )
+          strict balanceAfter = assetBalance(this, quoteAsset())
+          strict exchangedAmount = balanceAfter - balanceBefore
+
+          (assetWithdrawAmountAfterFee, 0, quoteWithdrawAmountBeforeFee + exchangedAmount)
+        }
+
+      strict unstake = if (quoteWithdrawAmountBeforeFee > 0) then {
         strict unstake = invoke(
           vaultAddress(),
           "withdrawLocked",
-          [quoteWithdrawAmount],
+          [quoteWithdrawAmountBeforeFee],
           []
         )
         []
@@ -2239,16 +2116,30 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
         []
       }
 
+      let (feeToStakers, feeToVault) = distributeFee(actualFeeInQuoteAsset)
+
+      strict depositVault = invoke(
+        vaultAddress(),
+        "addFree",
+        [],
+        [AttachedPayment(quoteAsset(), feeToVault)]
+      )
+
+      strict notifyFee = invoke(
+        minerAddress(),
+        "notifyFees",
+        [_trader, realizedFee],
+        []
+      )
+
       strict notifyNotional = invoke(
         minerAddress(),
         "notifyNotional",
-        [_trader, 0],
+        [_trader, newPositionOpenNotional],
         []
       )
       
-      (if (newPositionSize == 0) then { 
-        deletePosition(_trader)
-      } else {
+      (if (isPartialClose) then { 
         updatePosition(
           _trader,
           newPositionSize,
@@ -2256,8 +2147,18 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
           newPositionOpenNotional,
           newPositionLstUpdCPF
         )
+      } else {
+        deletePosition(_trader)
       })
-      ++ 
+      ++
+      (if (switchToQuote) then {
+        let quoteAssetStr = quoteAsset().toBase58String()
+
+        updatePositionAsset(_trader, quoteAssetStr)
+      } else {
+        []
+      }) 
+      ++
       updateAmm(
         quoteAssetReserveAfter,
         baseAssetReserveAfter,
@@ -2269,11 +2170,15 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int) = {
         totalShortOpenInterestAfter
       )
       ++
-      (if (quoteWithdrawAmount > 0) then withdraw(_traderAddress, quoteWithdrawAmount) else [])
+      transferFee(feeToStakers)
+      ++
+      (if (quoteWithdrawAmountAfterFee > 0) then withdraw(_traderAddress, quoteWithdrawAmountAfterFee) else [])
       ++
       updateBalance(ammNewBalance)
       ++
-      sendCollateralAction
+      (if (assetWithdrawAmountAfterFee > 0) then [
+        ScriptTransfer(_traderAddress, assetWithdrawAmountAfterFee, fromBase58String(assetId))
+      ] else [])
     }
   }
 }

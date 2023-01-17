@@ -17,7 +17,6 @@
   let k_admin_public_key = "k_admin_public_key"
   let k_manager_address = "k_manager_address" 
   let k_amm = "k_amm"
-  # let k_insurance_address = "k_insurance_address"
   let k_exchange_address = "k_exchange_address"
   let k_vault_address = "k_vault_address"
 
@@ -31,7 +30,6 @@
   func managerAddress() = addressFromString(coordinator().getStringValue(k_manager_address)).valueOrErrorMessage("Manager not set")
   func isWhitelist(_address: String) = getBoolean(coordinator(), k_amm.toCompositeKey(_address)).valueOrElse(false)
   func isWhitelistAsset(_assetId: String) = getBoolean(this, k_whitelist_asset.toCompositeKey(_assetId)).valueOrElse(false)
-  #func insuranceAddress() = addressFromString(coordinator().getStringValue(k_insurance_address)).valueOrErrorMessage("Insurance not set")
   func vaultAddress() = addressFromString(coordinator().getStringValue(k_vault_address)).valueOrErrorMessage("Vault not set") 
   func swapAddress() = addressFromString(coordinator().getString(k_exchange_address).valueOrErrorMessage("No swap address")).valueOrErrorMessage("Invalid swap address")
 

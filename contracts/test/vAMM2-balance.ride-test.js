@@ -39,17 +39,11 @@ describe("vAMM should work with positive funding", async function () {
     amm = await e.deployAmm(100000, 55);
   });
 
-  it("Can add insurance funds", async function () {
-    let addInsuranceFundsTx = await e.insurance.deposit(1);
-
-    console.log("Added insurance funds by " + addInsuranceFundsTx.id);
-  });
-
   it("Opening and closing positions should change balance", async function () {
     await amm.as(longer).increasePosition(10, DIR_LONG, 3, 0.15);
 
     let balanceIn = await amm.getBalance();
-    expect(balanceIn).to.be.eq(9.9);
+    expect(balanceIn).to.be.eq(9.9641);
 
     await amm.as(longer).closePosition();
 

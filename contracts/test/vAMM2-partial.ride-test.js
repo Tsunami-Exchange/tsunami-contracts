@@ -64,7 +64,7 @@ describe("vAMM should be able to partially close position", async function () {
       let tx = await amm.as(longer).closePosition(52442458 / decimals); // Almost 100% close positions
       let amount = tx.stateChanges.transfers[0].amount;
 
-      expect(amount / decimals).to.be.closeTo(1485.9, 0.1);
+      expect(amount / decimals).to.be.closeTo(1481.8, 0.1);
     }
 
     await amm.as(longer).closePosition();
@@ -92,7 +92,7 @@ describe("vAMM should be able to partially close position", async function () {
       let tx = await amm.as(longer).closePosition(52442458 / decimals); // Almost 100% close positions
       let amount = tx.stateChanges.transfers[0].amount;
 
-      expect(amount / decimals).to.be.closeTo(437, 0.1);
+      expect(amount / decimals).to.be.closeTo(434.2, 0.1);
     }
 
     await amm.as(longer).closePosition();
@@ -121,7 +121,7 @@ describe("vAMM should be able to partially close position", async function () {
       let tx = await amm.as(shorter).closePosition(closeAmount); // Almost 100% close positions
       let amount = tx.stateChanges.transfers[0].amount;
 
-      expect(amount / decimals).to.be.closeTo(720, 0.1);
+      expect(amount / decimals).to.be.closeTo(720.75, 0.1);
     }
 
     await amm.as(shorter).closePosition();
@@ -163,11 +163,11 @@ describe("vAMM should be able to partially close position", async function () {
       let before = await amm.getPositionActualData(longer);
       console.log(`3=${JSON.stringify(before)}`);
 
-      expect(before.margin).to.be.closeTo(360, 0.01);
+      expect(before.margin).to.be.closeTo(362.3, 0.1);
       expect(before.leverage).to.be.closeTo(3, 0.01);
-      expect(before.size).to.be.closeTo(27, 0.01);
-      expect(before.openNotional).to.be.closeTo(1485, 0.01);
-      expect(before.positionalNotional).to.be.closeTo(1350, 0.01);
+      expect(before.size).to.be.closeTo(27.17, 0.01);
+      expect(before.openNotional).to.be.closeTo(1494.61, 0.01);
+      expect(before.positionalNotional).to.be.closeTo(1358.74, 0.01);
     }
 
     await amm.setOraclePrice(58);

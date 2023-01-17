@@ -41,12 +41,6 @@ describe("vAMM should be able to adjust peg (for long)", async function () {
     });
   });
 
-  it("Can add insurance funds", async function () {
-    let addInsuranceFundsTx = await e.insurance.deposit(1000);
-
-    console.log("Added insurance funds by " + addInsuranceFundsTx.id);
-  });
-
   it("Should have 0 cost to adjust peg to terminal price", async function () {
     let priceBefore = await amm.getMarketPrice();
     console.log(`Price before: ${priceBefore}`);
@@ -76,7 +70,7 @@ describe("vAMM should be able to adjust peg (for long)", async function () {
     let costToAdjust = await amm.getPegAdjustCost(targetTerminalPrice);
     console.log(`Cost to adjust: ${costToAdjust}`);
 
-    expect(costToAdjust).to.be.closeTo(135, 0.1);
+    expect(costToAdjust).to.be.closeTo(135.87, 0.1);
     await amm.setOraclePrice(targetTerminalPrice);
     await amm.syncTerminalPriceToOracle();
 
@@ -108,7 +102,7 @@ describe("vAMM should be able to adjust peg (for long)", async function () {
     let costToAdjust = await amm.getPegAdjustCost(targetPrice);
     console.log(`Cost to adjust: ${costToAdjust}`);
 
-    expect(costToAdjust).to.be.closeTo(-135, 0.1);
+    expect(costToAdjust).to.be.closeTo(-135.87, 0.1);
     await amm.setOraclePrice(targetPrice);
     await amm.syncTerminalPriceToOracle();
 
@@ -165,12 +159,6 @@ describe("vAMM should be able to adjust peg (for short)", async function () {
     });
   });
 
-  it("Can add insurance funds", async function () {
-    let addInsuranceFundsTx = await e.insurance.deposit(1000);
-
-    console.log("Added insurance funds by " + addInsuranceFundsTx.id);
-  });
-
   it("Should have 0 cost to adjust peg to terminal price", async function () {
     let priceBefore = await amm.getMarketPrice();
     console.log(`Price before: ${priceBefore}`);
@@ -188,7 +176,7 @@ describe("vAMM should be able to adjust peg (for short)", async function () {
     let costToAdjust = await amm.getPegAdjustCost(targetTerminalPrice);
     console.log(`Cost to adjust: ${costToAdjust}`);
 
-    expect(costToAdjust).to.be.closeTo(135, 0.1);
+    expect(costToAdjust).to.be.closeTo(135.87, 0.1);
     await amm.setOraclePrice(targetTerminalPrice);
     await amm.syncTerminalPriceToOracle();
 
@@ -217,7 +205,7 @@ describe("vAMM should be able to adjust peg (for short)", async function () {
     let costToAdjust = await amm.getPegAdjustCost(targetPrice);
     console.log(`Cost to adjust: ${costToAdjust}`);
 
-    expect(costToAdjust).to.be.closeTo(-135, 0.1);
+    expect(costToAdjust).to.be.closeTo(-135.87, 0.1);
     await amm.setOraclePrice(targetPrice);
     await amm.syncTerminalPriceToOracle();
 

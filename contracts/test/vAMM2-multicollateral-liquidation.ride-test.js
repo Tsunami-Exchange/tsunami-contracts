@@ -45,12 +45,6 @@ describe("vAMM should be able to liquidate underwater long position", async func
     amm = await e.deployAmm(100_000_000, 1.23);
   });
 
-  it("Can add insurance funds", async function () {
-    let addInsuranceFundsTx = await e.insurance.deposit(1);
-
-    console.log("Added insurance funds by " + addInsuranceFundsTx.id);
-  });
-
   it("Can open long position", async function () {
     console.log(`AMM Market Price is: ${await amm.getMarketPrice()}`);
     await amm

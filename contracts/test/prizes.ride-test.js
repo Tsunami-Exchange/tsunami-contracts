@@ -253,7 +253,7 @@ describe("Prize Manager should be able", async function () {
       .increasePosition(100, DIR_LONG, 1, 0, "", artifactId);
     let { margin } = await amm.getPositionInfo(user);
 
-    expect(margin).to.equal(99500000);
+    expect(margin).to.equal(99940036);
 
     let burns = await collectAllBurns(tx.id);
     expect(burns.length).to.be.equal(1);

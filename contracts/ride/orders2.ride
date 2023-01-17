@@ -653,7 +653,7 @@
           else marketPrice >= _triggerPrice
         
         if (isExecutable) then {
-          ("closePosition", [minv(_amountIn, abs(positionSize)), muld(_limitPrice, abs(positionSize))], [])
+          ("closePosition", [minv(_amountIn, abs(positionSize)), muld(_limitPrice, abs(positionSize)), false], [])
         } else {
           throw("Can not execute STOP order: triggerPrice mismatch")
         }
@@ -674,7 +674,7 @@
           else marketPrice <= _triggerPrice
         
         if (isExecutable) then {
-          ("closePosition", [minv(_amountIn, abs(positionSize)), muld(_limitPrice, abs(positionSize))], [])
+          ("closePosition", [minv(_amountIn, abs(positionSize)), muld(_limitPrice, abs(positionSize)), false], [])
         } else {
           throw("Can not execute TAKE order: triggerPrice mismatch")
         }
@@ -708,7 +708,7 @@
               _refLink
             ], [AttachedPayment(quoteAsset(), _amountUsdn)])
           } else {
-            ("closePosition", [_amountIn, muld(_amountIn, _limitPrice)], [])
+            ("closePosition", [_amountIn, muld(_amountIn, _limitPrice), false], [])
           }
         } else {
           throw("Can not execute LIMIT order: triggerPrice mismatch")

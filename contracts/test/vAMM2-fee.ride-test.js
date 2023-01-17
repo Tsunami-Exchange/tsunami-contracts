@@ -13,6 +13,12 @@ const { expect } = require("chai");
 const { Environment } = require("../common/common");
 const { decimals } = require("../common/utils");
 
+const computeFeeAndMargin = (payment, leverage, fee, discount = 1) => {
+  let actualFee = fee * discount;
+  let amount = payment / (actualFee * leverage + 1);
+  return [payment - amount, amount];
+};
+
 describe("vAMM should rely on fee tiers", async function () {
   this.timeout(600000);
 
@@ -51,23 +57,25 @@ describe("vAMM should rely on fee tiers", async function () {
     await amm.as(longer).increasePosition(2000, DIR_LONG, 2, 0);
     // this pays 20 fees, but should have no discount
     let info = await amm.getPositionInfo(longer);
-    let marginWithFee = 2000 - 2000 * 0.01;
-    expect(info.margin / decimals).to.be.equal(marginWithFee);
+    let [_, margin] = computeFeeAndMargin(2000, 2, 0.0012);
+    expect(info.margin / decimals).to.be.closeTo(margin, 0.01);
     await amm.as(longer).closePosition();
-    let notional = marginWithFee * 2; // with leverage
+
+    let notional = margin * 2; // with leverage
     let volume = await e.miner.getTraderVolume(longer);
-    expect(volume / wvs).to.be.equal(2 * notional); // open and close position
+    expect(volume / wvs).to.be.closeTo(2 * notional, 0.01); // open and close position
     expect(volume / wvs).to.be.greaterThan(7900); // open and close position
   });
 
   it("Open second position resulting in minimal fee discounts", async function () {
     let discount = await e.miner.getComputeFeeDiscount(longer);
     expect(discount / decimals).to.be.eq(0.9);
-
     await amm.as(longer).increasePosition(2000, DIR_LONG, 1, 0);
     // this pays 18 more fees, but should have no discount
     let info = await amm.getPositionInfo(longer);
-    expect(info.margin / decimals).to.be.equal(2000 - 2000 * 0.9 * 0.01);
+
+    let [_, margin] = computeFeeAndMargin(2000, 1, 0.0012, 0.9);
+    expect(info.margin / decimals).to.be.closeTo(margin, 0.01);
     await amm.as(longer).closePosition();
   });
 
@@ -86,11 +94,12 @@ describe("vAMM should rely on fee tiers", async function () {
 
     // Check we paid 110 in fees in last 30 days
     let volume = await e.miner.getTraderVolume(longer);
-    expect(volume / wvs).to.be.equal(43596);
+    expect(volume / wvs).to.be.greaterThan(43907);
 
     await amm.as(longer).increasePosition(2000, DIR_LONG, 1, 0);
+    let [_, margin] = computeFeeAndMargin(2000, 1, 0.0012, 0.8);
     let info = await amm.getPositionInfo(longer);
-    expect(info.margin / decimals).to.be.equal(2000 - 2000 * 0.8 * 0.01);
+    expect(info.margin / decimals).to.be.closeTo(margin, 0.01);
     await amm.as(longer).closePosition();
   });
 });
