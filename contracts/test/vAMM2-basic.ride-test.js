@@ -39,7 +39,7 @@ describe("vAMM should work with positive funding", async function () {
     amm = await e.deployAmm(100000, 55);
   });
 
-  it.only("Can open position", async function () {
+  it("Can open position", async function () {
     await amm.as(longer).increasePosition(10, DIR_LONG, 3, 0.15);
 
     const { size, margin, openNotional } = await amm.getPositionInfo(longer);
@@ -55,7 +55,7 @@ describe("vAMM should work with positive funding", async function () {
     expect(totalShort).to.be.eq(0);
   });
 
-  it.only("Can increase position", async function () {
+  it("Can increase position", async function () {
     await amm.as(longer).increasePosition(5, DIR_LONG, 3, 0.15);
 
     const { size, margin, openNotional } = await amm.getPositionInfo(longer);
@@ -71,7 +71,7 @@ describe("vAMM should work with positive funding", async function () {
     expect(totalShort).to.be.eq(0);
   });
 
-  it.only("Can add margin", async function () {
+  it("Can add margin", async function () {
     await amm.as(longer).addMargin(3);
 
     const { size, margin, openNotional } = await amm.getPositionInfo(longer);
@@ -81,7 +81,7 @@ describe("vAMM should work with positive funding", async function () {
     expect(openNotional).to.be.eq(44838582);
   });
 
-  it.only("Can remove margin", async function () {
+  it("Can remove margin", async function () {
     await amm.as(longer).removeMargin(2);
 
     const { size, margin, openNotional } = await amm.getPositionInfo(longer);
@@ -91,32 +91,32 @@ describe("vAMM should work with positive funding", async function () {
     expect(openNotional).to.be.eq(44838582);
   });
 
-  it.only("Can not remove too much margin", async function () {
+  it("Can not remove too much margin", async function () {
     return expect(amm.as(longer).removeMargin(110)).to.eventually.be.rejected;
   });
 
-  it.only("Can open short position", async function () {
+  it("Can open short position", async function () {
     await amm.as(shorter).increasePosition(5, DIR_SHORT, 3, 0.15);
   });
 
-  it.only("Can increase short position", async function () {
+  it("Can increase short position", async function () {
     await amm.as(shorter).increasePosition(1, DIR_SHORT, 3, 0.04);
   });
 
-  it.only("Can pay funding", async function () {
+  it("Can pay funding", async function () {
     await amm.awaitNextFunding();
     await amm.payFunding();
   });
 
-  it.only("Can close long position", async function () {
+  it("Can close long position", async function () {
     await amm.as(longer).closePosition();
   });
 
-  it.only("Can close short position", async function () {
+  it("Can close short position", async function () {
     await amm.as(shorter).closePosition();
   });
 
-  it.only("Can partially close long position", async function () {
+  it("Can partially close long position", async function () {
     await amm.as(longer).increasePosition(150, DIR_LONG, 3, 0); // 150 * 3 / 55 ~ = 8.18 base asset
     const p1 = await amm.getPositionInfo(longer);
     console.log(`P1=${JSON.stringify(p1)}`);

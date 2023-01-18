@@ -498,4 +498,76 @@ describe("vAMM should be able to partially close position", async function () {
     expect(notional.longNotional).to.be.closeTo(0, 0.01);
     expect(notional.shortNotional).to.be.closeTo(0, 0.01);
   });
+
+  it("can partially reduce short position in loss with multiple iterations", async function () {
+    await amm.as(shorter).increasePosition(1000, DIR_SHORT, 3);
+    await amm.setOraclePrice(63);
+    await amm.syncTerminalPriceToOracle();
+
+    {
+      let before = await amm.getPositionActualData(shorter);
+      console.log(`REF=${JSON.stringify(before)}`);
+    }
+
+    let tx1 = await amm.as(shorter).closePosition();
+    let ref = tx1.stateChanges.transfers[0].amount;
+
+    console.log(`+++ Closed ref position with ${ref / decimals}`);
+
+    await amm.setOraclePrice(55);
+    await amm.syncTerminalPriceToOracle();
+    await amm.as(shorter).increasePosition(1000, DIR_SHORT, 3);
+    await amm.setOraclePrice(63);
+    await amm.syncTerminalPriceToOracle();
+
+    let sum = 0;
+    let { size } = await amm.getPositionActualData(shorter);
+    let part = size / 9;
+
+    {
+      let before = await amm.getPositionActualData(shorter);
+      console.log(`${0}=${JSON.stringify(before)}`);
+    }
+
+    for (let i = 0; i < 9; i++) {
+      let { size } = await amm.getPositionActualData(shorter);
+      let actualPart = Math.min(Math.abs(size), Math.abs(part));
+      if (i == 8) {
+        actualPart = Math.abs(size);
+      }
+      let tx1 = await amm.as(shorter).closePosition(actualPart, 0, true); // Reduce position
+
+      console.log(`Tx=${tx1.id}`);
+
+      if (i == 8) {
+        let amount1 = tx1.stateChanges.transfers[0].amount;
+        sum += amount1;
+
+        expect(tx1.stateChanges.transfers.length).to.be.equal(
+          2,
+          "Should transfer to trader"
+        );
+      } else {
+        expect(tx1.stateChanges.transfers.length).to.be.equal(
+          1,
+          "No transfers on reduce"
+        );
+      }
+
+      {
+        if (i != 8) {
+          let before = await amm.getPositionActualData(shorter);
+          console.log(`${i + 1}=${JSON.stringify(before)}`);
+        }
+      }
+    }
+
+    expect(ref / decimals).to.be.closeTo(sum / decimals, 0.1);
+
+    let notional = await amm.getOpenNotional();
+    console.log(JSON.stringify(notional));
+
+    expect(notional.longNotional).to.be.closeTo(0, 0.01);
+    expect(notional.shortNotional).to.be.closeTo(0, 0.01);
+  });
 });
