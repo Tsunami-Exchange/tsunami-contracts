@@ -332,7 +332,7 @@
       let vAmount = _amount.divd(currentRate)
       let newAverageRate = divd(
         vAmount.muld(currentRate) + balanceOf(_staker).muld(prevAverageRate), 
-        currentRate + prevAverageRate
+        vAmount + balanceOf(_staker)
       )
 
       let newTotalBalance = vAmount + balanceOf(_staker)

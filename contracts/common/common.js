@@ -1294,7 +1294,7 @@ class Environment {
     console.log(`Seed AMM oracle in ${seedOracleTx.id}`);
 
     let p3 = deploy(
-      "vAMM2.ride",
+      "vAMM3.ride",
       7500000,
       ammSeed,
       "vAMM",
@@ -1386,6 +1386,10 @@ class Environment {
                 type: "integer",
                 value: options.maxOracleDelay || 1,
               }, // _maxOracleDelay 1 block
+              {
+                type: "integer",
+                value: Math.round((options.rolloverFee || 0.000001) * decimals),
+              }, // _rolloverFee 30% APR
             ],
           },
         },
@@ -1677,7 +1681,7 @@ class AMM {
 
   async upgrade() {
     console.log(`Upgrading AMM ${this.address}`);
-    return this.e.upgradeContract("vAMM2.ride", this.address, 7500000);
+    return this.e.upgradeContract("vAMM3.ride", this.address, 7500000);
   }
 
   async migrateLiquidity() {
