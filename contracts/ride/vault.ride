@@ -50,7 +50,7 @@
   func adminAddress() = addressFromString(coordinator().getString(k_admin_address).valueOrErrorMessage("Admin address not set"))
   func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
   func managerAddress() = addressFromString(coordinator().getStringValue(k_manager_address)).valueOrErrorMessage("Manager not set")
-  func collateralAddress() = addressFromString(coordinator().getStringValue(k_collateral_address)).valueOrErrorMessage("Collateral Manager not set")
+  # func collateralAddress() = addressFromString(coordinator().getStringValue(k_collateral_address)).valueOrErrorMessage("Collateral Manager not set")
 
   ##### Core constants #####
 
@@ -87,9 +87,7 @@
   func withdrawnInPeriod(_staker: String) = int0(k_withdraw_in_period.toCompositeKey(_staker))
   func lastWithdrawnDate(_staker: String) = int0(k_last_withdraw_date.toCompositeKey(_staker))
   func freeBalance() = int0(k_freeBalance)
-  func freeBalanceBorrowed() = int0(k_freeBalanceBorrowed)
   func lockedBalance() = int0(k_lockedBalance)
-  func vLockedBalance() = int0(k_vLockedBalance)
   func rewardPerTokenStored() = int0(k_rewardPerTokenStored)
   func lastUpdateTime() = int0(k_lastUpdateTime)
   func rewardRate() = int0(k_rewardRate)
@@ -192,17 +190,6 @@
     ]
   }
 
-  func updateFreeBorrowedBalance(_change: Int) = {
-    let borrowedBalance = freeBalanceBorrowed()
-    if (borrowedBalance + _change >= 0) then {
-      [
-        IntegerEntry(k_freeBalanceBorrowed, borrowedBalance + _change)
-      ]
-    } else {
-      throw("Vault: can not update borrowed free balance. Balance: " + borrowedBalance.toString() + " change: " + _change.toString())
-    }
-  }
-
   func updateLockedBalance(_change: Int) = {
     let balance = lockedBalance()
     if (balance + _change >= 0) then {
@@ -224,17 +211,6 @@
       [
         IntegerEntry(k_lockedBalance, 0)
       ]
-    }
-  }
-
-  func updateVLockedBalance(_change: Int) = {
-    let balance = vLockedBalance()
-    if (balance + _change >= 0) then {
-      [
-        IntegerEntry(k_vLockedBalance, balance + _change)
-      ]
-    } else {
-      throw("Vault: can not update v-locked balance. Balance: " + balance.toString() + " change: " + _change.toString())
     }
   }
 
@@ -480,54 +456,25 @@
   }
 
   @Callable(i)
-  func addLocked(_repay: Boolean) = {
+  func addLocked() = {
     let _amount = i.payments[0].amount.usdnToDecimals()
     if (
       i.payments[0].assetId != quoteAsset()
       || !initialized()
       || !(
         isWhitelist(i.caller.toString()) 
-        || i.caller == collateralAddress()
         || i.caller == adminAddress()
       )
     ) then {
       throw("Invalid addLocked params")
     } else {
-
       strict unstake = invoke(
         managerAddress(),
         "deposit",
         [],
         [AttachedPayment(quoteAsset(), _amount.usdnFromDecimals())]
       )
-
-      let freeBorrowed = freeBalanceBorrowed()
-
-      (if (_repay && freeBorrowed > 0) then {
-        updateFreeBorrowedBalance(-minv(freeBorrowed, _amount))
-      } else {
-        []
-      })
-      ++
       updateLockedBalance(_amount)
-    }
-  }
-
-  @Callable(i)
-  func addLockedV(_amountUsdn: Int) = {
-    let _amount = _amountUsdn.usdnToDecimals()
-    if (
-      !initialized()
-      || !(
-        i.caller == collateralAddress()
-        || i.caller == adminAddress()
-      )
-    ) then {
-      throw("Invalid addLockedV params")
-    } else {
-      updateLockedBalance(_amount)
-      ++
-      updateVLockedBalance(_amount)
     }
   }
 
@@ -545,24 +492,13 @@
       throw("Invalid exchangeFreeAndLocked params")
     } else {
       let amountOfQuoteAsset = _amount.usdnToDecimals()
-      let borrowedBalance = freeBalanceBorrowed()
-      let (freeUpdate, freeBorrowedUpdate) = if (amountOfQuoteAsset > 0 && borrowedBalance > 0 ) then {
-        # Traders won. But, first, of they owe makers something, make then owe less
-        # before actually taking funds from makers
-        (-amountOfQuoteAsset, -minv(amountOfQuoteAsset, borrowedBalance))
-      } else {
-        (-amountOfQuoteAsset, 0)
-      }
-
-      #strict debug = throw("freeUpdate=" + freeUpdate.toString() + " freeBorrowedUpdate=" + freeBorrowedUpdate.toString())
+      let freeUpdate = -amountOfQuoteAsset
 
       let newRate = computeNewRate(freeUpdate)
       
       updateLockedBalanceUnchecked(amountOfQuoteAsset)
       ++
       updateFreeBalance(freeUpdate)
-      ++
-      updateFreeBorrowedBalance(freeBorrowedUpdate)
       ++
       updateRate(newRate)
     }
@@ -596,21 +532,6 @@
         (amountOfQuoteAsset, 0)
       }
 
-      let vLockBalanceNow = vLockedBalance()
-      let realLockBalanceNow = lockBalanceNow - vLockBalanceNow
-
-      let (fromRealLocked, fromVLocked) = if (realLockBalanceNow < fromLocked) then {
-        (realLockBalanceNow, fromLocked - realLockBalanceNow)
-      } else {
-        (fromLocked, 0)
-      }
-
-      (if (fromVLocked > 0) then {
-        updateFreeBorrowedBalance(fromVLocked)
-      } else {
-        []
-      })
-      ++
       (if (fromFree > 0) then {
         let newRate = computeNewRate(-fromFree)
 
@@ -626,43 +547,6 @@
       [
         ScriptTransfer(i.caller, amountOfQuoteAsset.usdnFromDecimals(), quoteAsset())
       ]
-    }
-  }
-  
-  @Callable(i)
-  func withdrawLockedV(_amountUsdn: Int) = {
-    if (
-      !initialized()
-      || _amountUsdn <= 0
-      || !(
-        i.caller == collateralAddress()
-      )
-    ) then {
-      throw("Invalid withdrawLockedV params")
-    } else {
-      let amountOfQuoteAsset = _amountUsdn.usdnToDecimals()
-
-      let lockBalanceNow = lockedBalance()
-      
-      let (fromLocked, fromFree) = if (lockBalanceNow < amountOfQuoteAsset) then {
-        (lockBalanceNow, amountOfQuoteAsset - lockBalanceNow)
-      } else {
-        (amountOfQuoteAsset, 0)
-      }
-
-      (if (fromFree > 0) then {
-        let newRate = computeNewRate(-fromFree)
-
-        updateFreeBalance(-fromFree)
-        ++
-        updateRate(newRate)
-      } else {
-        []
-      })
-      ++
-      updateLockedBalance(-fromLocked)
-      ++
-      updateVLockedBalance(-amountOfQuoteAsset)
     }
   }
 

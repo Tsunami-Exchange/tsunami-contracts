@@ -2297,6 +2297,8 @@ func syncTerminalPriceToOracle() = {
     []
   }
 
+  updateBalance(cbalance() + marginToVault)
+  ++
   updateAmmWeights(newQuoteAssetWeight, newBaseAssetWeight)
   ++
   appendTwap(divd(_qtAstR.muld(newQuoteAssetWeight), _bsAstR.muld(newBaseAssetWeight)))
