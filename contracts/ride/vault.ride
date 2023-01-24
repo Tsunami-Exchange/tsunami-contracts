@@ -7,9 +7,8 @@
   let k_rewardBalance = "k_rewardBalance" # Total supply of rewards tokens
   
   let k_lockedBalance = "k_lockedBalance" # Amount of USDN reserved (locked from LP)
-  let k_vLockedBalance = "k_vLockedBalance" # Amount of vUSDN minted from collateral (locked from LP)
   let k_freeBalance = "k_freeBalance" # Amount of USDN free for LP to withdraw
-  let k_freeBalanceBorrowed = "k_freeBalanceBorrowed" # Amount of USDN borrowed (non-withdrawn) from free balance. Can be read as vault debt to makers.
+  
 
   # Global staking
   let k_rate = "k_rate" # Rate of exchange from USDN to v-Shares
@@ -591,6 +590,12 @@
     let currentAmount = rate().muld(balance)
     let earnedQuote = currentAmount - depositedAmount
     throw(earnedQuote.toString())
+  }
+
+  @Callable(i)
+  func view_stakingReward(_staker: String) = {
+      let stakerEarned = updateReward(_staker, 0)._3
+      throw(stakerEarned.usdnFromDecimals().toString())
   }
 
   @Callable(i)

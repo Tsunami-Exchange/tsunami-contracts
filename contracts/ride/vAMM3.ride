@@ -1775,7 +1775,7 @@ func increasePosition(
       strict stake = invoke(
         vaultAddress(),
         "addLocked",
-        [false],
+        [],
         [AttachedPayment(quoteAsset(), _amount)]
       )
       []
@@ -1867,7 +1867,7 @@ func addMargin() = {
     strict stake = invoke(
       vaultAddress(),
       "addLocked",
-      [false],
+      [],
       [AttachedPayment(quoteAsset(), _amount)]
     )
 
