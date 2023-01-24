@@ -1771,16 +1771,20 @@ func increasePosition(
 
     let (feeToStakers, feeToVault) = distributeFee(feeAmount + rolloverFee)
     
-    strict stake = if (isQuoteAsset) then {
-      strict stake = invoke(
+    strict stake = if (_amount >= rolloverFee) then {
+      invoke(
         vaultAddress(),
         "addLocked",
         [],
-        [AttachedPayment(quoteAsset(), _amount)]
+        [AttachedPayment(quoteAsset(), _amount - rolloverFee)]
       )
-      []
     } else {
-      []
+      invoke(
+        vaultAddress(),
+        "withdrawLocked",
+        [rolloverFee - _amount],
+        []
+      )
     }
 
     strict depositVault = invoke(
@@ -1830,7 +1834,7 @@ func increasePosition(
     ++
     transferFee(feeToStakers)
     ++
-    updateBalance(cbalance() + _amount)
+    updateBalance(cbalance() + _amount - rolloverFee)
     ++
     doBurnArtifact(burnArtifact, i)
   }

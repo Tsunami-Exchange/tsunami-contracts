@@ -1944,12 +1944,8 @@ class AMM {
 
   async awaitNextFunding() {
     let nextFundingBlockTs = await this.getNextFundingTimestamp();
-
-    while (new Date().getTime() <= nextFundingBlockTs) {
-      await wait(500);
-    }
-
-    await waitNBlocks(1);
+    await this.e.setTime(nextFundingBlockTs + 1);
+    //await waitNBlocks(1);
   }
 
   async payFunding() {
