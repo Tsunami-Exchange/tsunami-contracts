@@ -2368,6 +2368,7 @@ func view_getFunding() = {
 
 @Callable(i)
 func computeSpotPrice() = {
+  strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
   let result = getSpotPrice()
 
   ([], result)
