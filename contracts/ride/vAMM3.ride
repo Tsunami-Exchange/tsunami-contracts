@@ -7,10 +7,8 @@
 ##### Key constants #####
 
 # Oracle keys
-let k_ora_key = "k_ora_key"               # Key in Index Price Oracle account to read price from
-let k_ora_block_key = "k_ora_block_key"   # Key for last updated block in oracle
-let k_ora_open_key = "k_ora_open_key"     # Key for open / closed market
-let k_ora = "k_ora"                       # Address of Index Price oracle account
+let k_baseOracle = "k_baseOracle"     # Base asset oracle data
+let k_quoteOracle = "k_quoteOracle"   # Quote asset oracle data
 
 # AMM Balance
 let k_balance = "k_balance" # How much of a trader's funds is controlled by this AMM
@@ -277,11 +275,28 @@ func requireOpenPosition(_trader: String) = {
     }
 }
 
+# Reads oracle data by key
+#
+func getOracleData(key: String) = {
+  let oracleDataStr = this.getString(key)
+  if (oracleDataStr.isDefined() && oracleDataStr.value() != "") then {
+    let oracleData = oracleDataStr.value().split(",")
+    let oracleAddress = addressFromString(oracleData.getElement(0)).valueOrErrorMessage("Invalid oracle address in: " + oracleDataStr.value())
+    let priceKey = oracleData.getElement(1)
+    let blockKey = oracleData.getElement(2)
+    let openKey = oracleData.getElement(3)
+
+    (oracleAddress, priceKey, blockKey, openKey)
+  } else {
+    unit
+  }
+}
+
 # Checks if AMM was properly initialized
 #
 func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
 
-# Checks if AMM was paused
+# Checks if AMM was paused  
 #
 func paused() = this.getBoolean(k_paused).valueOrElse(false)
 
@@ -509,16 +524,11 @@ func swapOutput(
   )
 }
 
-# Returns oracle price (Index Price)
-#
-func getOraclePrice() = {
-  let oracle = addressFromString(this.getString(k_ora).valueOrErrorMessage("No value: " + k_ora)).valueOrErrorMessage("")
-  let priceKey = this.getString(k_ora_key).valueOrElse("No value: " + k_ora_key)
+func getOraclePriceValue(oracle: Address, priceKey: String, blockKey: String) = {
   let lastValue = oracle.getInteger(priceKey).valueOrErrorMessage("Can not get oracle price. Oracle: " + oracle.toString() + " key: " + priceKey)
 
   # If block key is set, than check that return value was set no more than maxOracleDelay blocks ago
   #
-  let blockKey = this.getString(k_ora_block_key).valueOrElse("")
   if (blockKey != "") then {
     let currentBlock = lastBlock.height
     let lastOracleBlock = oracle.getInteger(blockKey).valueOrErrorMessage("Can not get oracle block. Oracle: " + oracle.toString() + " key: " + blockKey)
@@ -532,11 +542,29 @@ func getOraclePrice() = {
   }
 }
 
+# Returns oracle price (Index Price)
+#
+func getOraclePrice() = {
+  let baseOracle = getOracleData(k_baseOracle).valueOrErrorMessage("No base asset oracle data")
+  let baseOraclePrice = getOraclePriceValue(baseOracle._1, baseOracle._2, baseOracle._3)
+  let quoteOracle = getOracleData(k_quoteOracle)
+  let quoteOraclePrice = if (quoteOracle.isDefined()) then {
+    let quoteOracleV = quoteOracle.value()
+
+    getOraclePriceValue(quoteOracleV._1, quoteOracleV._2, quoteOracleV._3)
+  } else {
+    DECIMAL_UNIT
+  }
+
+  divd(baseOraclePrice, quoteOraclePrice)
+}
+
 # Checks that market is closed. May be the case with stock / forex markets
 #
 func isMarketClosed() = {
-  let oracle = addressFromString(this.getStringValue(k_ora)).valueOrErrorMessage("")
-  let openKey = this.getString(k_ora_open_key).valueOrElse("")
+  let baseOracle = getOracleData(k_baseOracle).valueOrErrorMessage("No base asset oracle data")
+  let oracle = baseOracle._1
+  let openKey = baseOracle._4
 
   if (openKey != "") then {
     let isOpen = oracle.getBoolean(openKey).valueOrErrorMessage("Can not get oracle is open/closed. Oracle: " + oracle.toString() + " key: " + openKey)
@@ -1561,9 +1589,8 @@ func initialize(
   _mmr: Int,
   _liquidationFeeRatio: Int,
   _fee: Int,
-  _oracle: String,
-  _oracleKey: String,
-  _oracleBlockKey: String,
+  _baseOracleData: String,
+  _quoteOracleData: String,
   _coordinator: String,
   _spreadLimit: Int,
   _maxPriceImpact: Int,
@@ -1624,9 +1651,8 @@ func initialize(
     ++
     [
       BooleanEntry(k_initialized, true),
-      StringEntry(k_ora, _oracle),
-      StringEntry(k_ora_key, _oracleKey),
-      StringEntry(k_ora_block_key, _oracleBlockKey),
+      StringEntry(k_baseOracle, _baseOracleData),
+      StringEntry(k_quoteOracle, _quoteOracleData),
       StringEntry(k_coordinatorAddress, _coordinator)
     ]
   }

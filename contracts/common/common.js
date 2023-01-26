@@ -1348,9 +1348,11 @@ class Environment {
                 type: "integer",
                 value: Math.round((options.fee || 0.0012) * decimals),
               }, // _fee 0.12%
-              { type: "string", value: address(this.seeds.oracle) }, // Oracle address
-              { type: "string", value: "price" }, // Oracle key
-              { type: "string", value: "" }, // Oracle block key
+              {
+                type: "string",
+                value: `${address(this.seeds.oracle)},price,,`,
+              }, // Base oracle data address
+              { type: "string", value: "" }, // Quote oracle data
               { type: "string", value: address(this.seeds.coordinator) }, // Coordinator address,
               {
                 type: "integer",
