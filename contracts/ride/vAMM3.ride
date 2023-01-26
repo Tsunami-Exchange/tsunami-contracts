@@ -74,6 +74,9 @@ let k_openInterestNotional = "k_openInterestNotional"     # Open Interest Notion
 let k_openInterestShort = "k_openInterestShort"           # Open Interest Notional (short)
 let k_openInterestLong = "k_openInterestLong"             # Open Interest Notional (long)
 
+# Reentrance protection
+let k_lastTx = "k_lastTx"
+
 # Coordinator
 let k_coordinatorAddress = "k_coordinatorAddress"         # Address of Coordinator (base contract that keeps references to all infrastructure)
 
@@ -104,7 +107,6 @@ func minerAddress() = addressFromString(coordinator().getStringValue(k_miner_add
 func ordersAddress() = addressFromString(coordinator().getStringValue(k_orders_address)).valueOrErrorMessage("Orders not set")
 func referralAddress() = addressFromString(coordinator().getStringValue(k_referral_address)).valueOrErrorMessage("Referral not set")
 func nftManagerAddress() = addressFromString(coordinator().getStringValue(k_nft_manager_address)).valueOrErrorMessage("NFT Manager not set")
-func swapAddress() = addressFromString(coordinator().getString(k_exchange_address).valueOrErrorMessage("No swap address")).valueOrErrorMessage("Invalid swap address")
 
 ##### NFT Artifacts #####
 let k_token_param = "k_token_param"
@@ -113,18 +115,15 @@ let FEE_REDUCTION_TOKEN_TYPE = "fee_reduction"
 
 ##### Core constants #####
 
-let DIR_LONG                = 1
-let DIR_SHORT               = 2
-let TWAP_INTERVAL           = 15
-let ORACLE_INTERVAL         = 15
-
-let SECONDS = 1000
-let DECIMAL_NUMBERS = 6
-let DECIMAL_UNIT = 1 * (10 * 10 * 10 * 10 * 10 * 10)
-let MINUTES_IN_YEAR = 525600 * DECIMAL_UNIT
-let ONE_DAY = 86400 * DECIMAL_UNIT
-let ALL_FEES = 100
-let PNL_OPTION_SPOT = 1
+let DIR_LONG          = 1
+let DIR_SHORT         = 2
+let TWAP_INTERVAL     = 15
+let SECONDS           = 1000
+let DECIMAL_NUMBERS   = 6
+let DECIMAL_UNIT      = 1 * (10 * 10 * 10 * 10 * 10 * 10)
+let MINUTES_IN_YEAR   = 525600 * DECIMAL_UNIT
+let ONE_DAY           = 86400 * DECIMAL_UNIT
+let PNL_OPTION_SPOT   = 1
 let PNL_OPTION_ORACLE = 2
 
 ##### Helper functions #####
@@ -1641,6 +1640,7 @@ func increasePosition(
   _refLink: String
 ) = {
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
+  strict ensureCalledOnce = invoke(this, "ensureCalledOnce", [], [])
 
   let _trader = getActualCaller(i)
   let _rawAmount = i.payments[0].amount
@@ -1843,6 +1843,7 @@ func increasePosition(
 @Callable(i)
 func addMargin() = {
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
+  strict ensureCalledOnce = invoke(this, "ensureCalledOnce", [], [])
 
   let _trader = i.caller.toString()
   let _amount = i.payments[0].amount
@@ -1918,6 +1919,7 @@ func removeMargin(
   _amount: Int
 ) = {
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
+  strict ensureCalledOnce = invoke(this, "ensureCalledOnce", [], [])
 
   let _trader = i.caller.toString()
   if (
@@ -1995,6 +1997,7 @@ func removeMargin(
 @Callable(i)
 func closePosition(_size: Int, _minQuoteAssetAmount: Int, _addToMargin: Boolean) = {
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
+  strict ensureCalledOnce = invoke(this, "ensureCalledOnce", [], [])
 
   let _trader = getActualCaller(i)
   let _traderAddress = addressFromString(_trader).valueOrErrorMessage("Invalid caller")
@@ -2009,12 +2012,7 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int, _addToMargin: Boolean)
   ) then {
     throw("Invalid closePosition parameters")
   } else {
-    let (
-      oldPositionSize,
-      oldPositionMargin,
-      oldPositionOpenNotional,
-      oldPositionLstUpdCPF
-    ) = getPosition(_trader)
+    let oldPositionTimestamp = getPosition(_trader)._5
 
     let (
       newPositionSize,
@@ -2044,6 +2042,8 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int, _addToMargin: Boolean)
 
     if (positionBadDebt > 0) then {
       throw("Invalid closePosition parameters: bad debt")
+    } else if (oldPositionTimestamp >= lastTimestamp()) then {
+      throw("Invalid closePosition parameters: wait at least 1 block before closing the position")
     } else {
       let isPartialClose = newPositionSize != 0
       let withdrawAmount = marginToTrader + realizedFee
@@ -2306,6 +2306,22 @@ func syncTerminalPriceToOracle() = {
   updateAmmWeights(newQuoteAssetWeight, newBaseAssetWeight)
   ++
   appendTwap(divd(_qtAstR.muld(newQuoteAssetWeight), _bsAstR.muld(newBaseAssetWeight)))
+}
+
+@Callable(i)  
+func ensureCalledOnce() = {
+  if (i.caller != this) then {
+    throw("Invalid saveCurrentTxId parameters")
+  } else {
+    let lastTx = this.getString(k_lastTx).valueOrElse("")
+    if (lastTx != i.transactionId.toBase58String()) then {
+      [
+        StringEntry(k_lastTx, lastTx)
+      ]
+    } else {
+      throw("Can not call vAMM methods twice in one tx")
+    }
+  }
 }
 
 # View callable functions exposed for UI and debug

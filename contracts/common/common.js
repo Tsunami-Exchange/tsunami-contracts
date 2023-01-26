@@ -1858,6 +1858,8 @@ class AMM {
   }
 
   async closePosition(_amount, _minQuoteAssetAmount = 0, _addToMargin = false) {
+    await this.e.setTime(new Date().getTime() + 1);
+
     if (!_amount) {
       let trader = address(this.sender);
       let dApp = address(this.e.seeds.amms[this.address]);
