@@ -344,6 +344,7 @@
     let amountOfQuoteAsset = _amount.usdnToDecimals()
     if ( 
       i.payments != []
+      || amountOfQuoteAsset <= 0
       || !initialized()
     ) then {
       throw("Invalid call to unStake")
