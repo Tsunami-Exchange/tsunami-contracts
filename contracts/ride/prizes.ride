@@ -7,7 +7,6 @@
 
   # Coordinator
   let k_coordinatorAddress = "k_coordinatorAddress"
-  let k_admin_public_key = "k_admin_public_key" 
   let k_admin_address = "k_admin_address"
   let k_nft_manager_address = "k_nft_manager_address"
 
@@ -18,7 +17,6 @@
   ##### Coordinator constants #####
   func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
   func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
-  func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
   func rewarderPublicKey() = fromBase58String(this.getStringValue(k_rewarder_public_key))
   func nftManagerAddress() = addressFromString(coordinator().getStringValue(k_nft_manager_address)).valueOrErrorMessage("NFT Manager not set")
 
@@ -43,11 +41,11 @@
     _coordinator: String,
     _rewarderPublicKey: String
   ) = {
-    if (initialized()) then {
-      throw("Already initialized")
+    if (initialized() || i.caller != this) then {
+      throw("Unable to initialize")
     } else {
       [
-        StringEntry(k_coordinatorAddress, _coordinator),
+        StringEntry(k_coordinatorAddress, addressFromStringValue(_coordinator).toString()),
         StringEntry(k_rewarder_public_key, _rewarderPublicKey),
         BooleanEntry(k_initialized, true)
       ]
@@ -123,4 +121,18 @@
   }
 
   @Verifier(tx)
-  func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], adminPublicKey())
+  func verify() = {
+    let coordinatorStr = this.getString(k_coordinatorAddress)
+    if (coordinatorStr.isDefined()) then {
+      let admin = addressFromStringValue(coordinatorStr.value()).getString(k_admin_address)
+      if (admin.isDefined()) then {
+        admin.value().addressFromStringValue().getBoolean("status_" + this.toString() + "_" + tx.id.toBase58String() ).valueOrElse(false)
+      } else { 
+        # Admin is not defined in coordinator, set admin first
+        throw("unable to verify: admin not set in coordinator")
+      }
+    } else {
+      # Coordinator not set, use native verify
+      sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)
+    }
+  }

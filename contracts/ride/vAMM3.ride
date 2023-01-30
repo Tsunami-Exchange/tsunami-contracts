@@ -81,7 +81,6 @@ let k_coordinatorAddress = "k_coordinatorAddress"         # Address of Coordinat
 # Coordinator keys
 let k_vault_address = "k_vault_address"           # Address of vault contract
 let k_admin_address = "k_admin_address"           # Address of admin account           
-let k_admin_public_key = "k_admin_public_key"     # Pubic key of admin account
 let k_quote_asset = "k_quote_asset"               # Address of quote asset (USDN in our case)
 let k_quote_staking = "k_quote_staking"           # Address of quote asset staking contract (USDN staking in our case)
 let k_staking_address = "k_staking_address"       # Address that should receive staking benefits
@@ -96,7 +95,6 @@ func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
 ##### Coordinator data ##### 
 func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
 func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
-func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
 func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
 func quoteAssetStaking() = addressFromString(coordinator().getStringValue(k_quote_staking)).valueOrErrorMessage("Quote asset staking not set")
 func stakingAddress() = addressFromString(coordinator().getStringValue(k_staking_address)).valueOrErrorMessage("Staking not set")
@@ -1618,6 +1616,7 @@ func initialize(
     || _maxOracleDelay <= 0
     || _rolloverFee <= 0
     || initialized()
+    || i.caller != this
   ) then {
     throw("Invalid initialize parameters")
   } else {
@@ -1653,7 +1652,7 @@ func initialize(
       BooleanEntry(k_initialized, true),
       StringEntry(k_baseOracle, _baseOracleData),
       StringEntry(k_quoteOracle, _quoteOracleData),
-      StringEntry(k_coordinatorAddress, _coordinator)
+      StringEntry(k_coordinatorAddress, addressFromStringValue(_coordinator).toString())
     ]
   }
 }
@@ -2423,5 +2422,19 @@ func computeFeeForTraderWithArtifact(_trader: String, _artifactId: String) = {
   ([], result)
 }
 
-@Verifier(tx)
-func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], adminPublicKey())
+  @Verifier(tx)
+  func verify() = {
+    let coordinatorStr = this.getString(k_coordinatorAddress)
+    if (coordinatorStr.isDefined()) then {
+      let admin = addressFromStringValue(coordinatorStr.value()).getString(k_admin_address)
+      if (admin.isDefined()) then {
+        admin.value().addressFromStringValue().getBoolean("status_" + this.toString() + "_" + tx.id.toBase58String() ).valueOrElse(false)
+      } else { 
+        # Admin is not defined in coordinator, set admin first
+        throw("unable to verify: admin not set in coordinator")
+      }
+    } else {
+      # Coordinator not set, use native verify
+      sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)
+    }
+  }

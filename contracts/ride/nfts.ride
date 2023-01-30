@@ -72,15 +72,13 @@
   func initialize(
     _coordinator: String,
     _nftCreatorAddress: String
-    # _nftMinter: String
   ) = {
-    if (initialized()) then {
-      throw("Already initialized")
+    if (initialized() || i.caller != this) then {
+      throw("Unable to initialize")
     } else {
       [
-        StringEntry(k_coordinatorAddress, _coordinator),
-        StringEntry(k_nft_creator_address, _nftCreatorAddress),
-        # StringEntry(k_minter, _nftMinter),
+        StringEntry(k_coordinatorAddress, addressFromStringValue(_coordinator).toString()),
+        StringEntry(k_nft_creator_address, addressFromStringValue(_nftCreatorAddress).toString()),
         BooleanEntry(k_initialized, true)
       ]
     }
@@ -166,4 +164,18 @@
   }
 
   @Verifier(tx)
-  func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], adminPublicKey())
+  func verify() = {
+    let coordinatorStr = this.getString(k_coordinatorAddress)
+    if (coordinatorStr.isDefined()) then {
+      let admin = addressFromStringValue(coordinatorStr.value()).getString(k_admin_address)
+      if (admin.isDefined()) then {
+        admin.value().addressFromStringValue().getBoolean("status_" + this.toString() + "_" + tx.id.toBase58String() ).valueOrElse(false)
+      } else { 
+        # Admin is not defined in coordinator, set admin first
+        throw("unable to verify: admin not set in coordinator")
+      }
+    } else {
+      # Coordinator not set, use native verify
+      sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)
+    }
+  }

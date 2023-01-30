@@ -34,7 +34,6 @@
   let k_amm = "k_amm"
   let k_governance_asset = "k_gov_asset"
   let k_quote_asset = "k_quote_asset" 
-  let k_admin_public_key = "k_admin_public_key"
   let k_admin_address = "k_admin_address"
   let k_manager_address = "k_manager_address"
   let k_collateral_address = "k_collateral_address"
@@ -44,7 +43,6 @@
   ##### Coordinator constants #####
   func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
   func isWhitelist(_address: String) = getBoolean(coordinator(), k_amm.toCompositeKey(_address)).valueOrElse(false)
-  func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
   func governanceAsset() = fromBase58String(coordinator().getStringValue(k_governance_asset))
   func adminAddress() = addressFromString(coordinator().getString(k_admin_address).valueOrErrorMessage("Admin address not set"))
   func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
@@ -275,8 +273,8 @@
   func initialize(
     _coordinator: String
   ) = {
-    if (initialized()) then {
-      throw("Already initialized")
+    if (initialized() || i.caller != this) then {
+      throw("Unable to initialize")
     } else {
       [
         StringEntry(k_coordinatorAddress, addressFromString(_coordinator).valueOrErrorMessage("Invalid coordinator address").toString()),
@@ -594,4 +592,18 @@
   }
 
   @Verifier(tx)
-  func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], adminPublicKey())
+  func verify() = {
+    let coordinatorStr = this.getString(k_coordinatorAddress)
+    if (coordinatorStr.isDefined()) then {
+      let admin = addressFromStringValue(coordinatorStr.value()).getString(k_admin_address)
+      if (admin.isDefined()) then {
+        admin.value().addressFromStringValue().getBoolean("status_" + this.toString() + "_" + tx.id.toBase58String() ).valueOrElse(false)
+      } else { 
+        # Admin is not defined in coordinator, set admin first
+        throw("unable to verify: admin not set in coordinator")
+      }
+    } else {
+      # Coordinator not set, use native verify
+      sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)
+    }
+  }

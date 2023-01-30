@@ -391,9 +391,9 @@ class Environment {
         {
           dApp: address(accounts.coordinator),
           functionName: "setAdmin",
-          arguments: [publicKey(accounts.admin)],
+          arguments: [address(accounts.admin)],
         },
-        this.seeds.admin
+        this.seeds.coordinator
       );
 
       console.log(`setAdmin in ${addAdminTx.id}`);
@@ -573,7 +573,7 @@ class Environment {
           functionName: "initialize",
           arguments: [address(this.seeds.coordinator)],
         },
-        this.seeds.admin
+        this.seeds.staking
       );
 
       initTxs.push(waitForTx(initStakingTx.id));
@@ -591,7 +591,7 @@ class Environment {
             address(this.seeds.oracle),
           ],
         },
-        this.seeds.admin
+        this.seeds.miner
       );
 
       initTxs.push(waitForTx(initMinerTx.id));
@@ -606,7 +606,7 @@ class Environment {
           functionName: "initialize",
           arguments: [address(this.seeds.coordinator)],
         },
-        this.seeds.admin
+        this.seeds.orders
       );
 
       initTxs.push(waitForTx(initOrdersTx.id));
@@ -625,7 +625,7 @@ class Environment {
             address(this.seeds.puzzleSwap),
           ],
         },
-        this.seeds.admin
+        this.seeds.referral
       );
 
       initTxs.push(waitForTx(initReferralTx.id));
@@ -643,7 +643,7 @@ class Environment {
             address(this.seeds.puzzleSwap),
           ],
         },
-        this.seeds.admin
+        this.seeds.farming
       );
 
       initTxs.push(waitForTx(initFarmingTx.id));
@@ -665,7 +665,7 @@ class Environment {
             address(this.seeds.vires),
           ],
         },
-        this.seeds.admin
+        this.seeds.manager
       );
 
       initTxs.push(waitForTx(initManagerTx.id));
@@ -680,7 +680,7 @@ class Environment {
           functionName: "initialize",
           arguments: [address(this.seeds.coordinator)],
         },
-        this.seeds.admin
+        this.seeds.housekeeper
       );
 
       initTxs.push(waitForTx(initHousekeeperTx.id));
@@ -698,7 +698,7 @@ class Environment {
             publicKey(this.seeds.admin),
           ],
         },
-        this.seeds.admin
+        this.seeds.prizes
       );
 
       initTxs.push(waitForTx(initPrizesTx.id));
@@ -716,7 +716,7 @@ class Environment {
             address(this.seeds.marketplace),
           ],
         },
-        this.seeds.admin
+        this.seeds.nfts
       );
 
       initTxs.push(waitForTx(initNFTManagerTx.id));
@@ -734,7 +734,7 @@ class Environment {
             `${this.assets.usdt},${this.assets.usdc}`,
           ],
         },
-        this.seeds.admin
+        this.seeds.collateral
       );
 
       initTxs.push(waitForTx(initCollateralManagerTx.id));
@@ -751,7 +751,7 @@ class Environment {
           functionName: "initialize",
           arguments: [address(this.seeds.coordinator)],
         },
-        this.seeds.admin
+        this.seeds.vault
       );
 
       initTxs.push(waitForTx(initVaultTx.id));
@@ -1395,7 +1395,7 @@ class Environment {
             ],
           },
         },
-        this.seeds.admin
+        ammSeed
       );
 
       await broadcast(initTx);
@@ -1637,6 +1637,22 @@ class Environment {
       },
       this.seeds.admin
     );
+
+    const preTx = data(
+      {
+        senderPublicKey: publicKey(this.seeds.admin),
+        data: [
+          {
+            key: `status_${address(seed)}_${tx.id}`,
+            value: true,
+          },
+        ],
+      },
+      this.seeds.admin
+    );
+
+    await broadcast(preTx);
+    await waitForTx(preTx.id);
 
     await broadcast(tx);
     await waitForTx(tx.id);
