@@ -485,8 +485,7 @@
     if (
       !initialized()
       || !(
-        isWhitelist(i.caller.toString()) 
-        || i.caller == adminAddress()
+        isWhitelist(i.caller.toString())
       )
     ) then {
       throw("Invalid exchangeFreeAndLocked params")
@@ -524,25 +523,7 @@
         []
       )
 
-      let lockBalanceNow = lockedBalance()
-      
-      let (fromLocked, fromFree) = if (lockBalanceNow < amountOfQuoteAsset) then {
-        (lockBalanceNow, amountOfQuoteAsset - lockBalanceNow)
-      } else {
-        (amountOfQuoteAsset, 0)
-      }
-
-      (if (fromFree > 0) then {
-        let newRate = computeNewRate(-fromFree)
-
-        updateFreeBalance(-fromFree)
-        ++
-        updateRate(newRate)
-      } else {
-        []
-      })
-      ++
-      updateLockedBalance(-fromLocked)
+      updateLockedBalance(-amountOfQuoteAsset)
       ++
       [
         ScriptTransfer(i.caller, amountOfQuoteAsset.usdnFromDecimals(), quoteAsset())
@@ -553,7 +534,10 @@
   # New rewards added to contract
   @Callable(i)
   func addRewards() = {
-    if (i.payments[0].assetId != governanceAsset() || !initialized()) then {
+    if (
+      i.payments[0].assetId != governanceAsset() 
+      || !initialized()
+    ) then {
       throw("Invalid addRewards params")
     } else {
       let _reward = i.payments[0].amount
