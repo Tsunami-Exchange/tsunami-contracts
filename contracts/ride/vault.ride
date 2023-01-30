@@ -279,7 +279,7 @@
       throw("Already initialized")
     } else {
       [
-        StringEntry(k_coordinatorAddress, _coordinator),
+        StringEntry(k_coordinatorAddress, addressFromString(_coordinator).valueOrErrorMessage("Invalid coordinator address").toString()),
         BooleanEntry(k_initialized, true)
       ]
     }
