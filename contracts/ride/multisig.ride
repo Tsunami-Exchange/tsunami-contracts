@@ -1,0 +1,86 @@
+{-# STDLIB_VERSION 6 #-}
+{-# CONTENT_TYPE DAPP #-}
+{-# SCRIPT_TYPE ACCOUNT #-}
+
+@Callable( i )
+func init( admins: String ) =
+{
+    if( this.getString( "verifier" ).isDefined() ) then throw( "already initialized" ) else
+    if( i.caller != this ) then throw( "self call only" ) else
+    let admins_list = admins.split( "," )
+    if( size( admins_list ) > 10 ) then throw( "too many admins" ) else
+    if( size( admins_list ) < 1 ) then throw( "at least 1 admin needed" ) else
+    func fold( verified: Boolean, admin: String ) =
+    {
+        if( !verified ) then verified else
+        match addressFromString( admin )
+        {
+            case address: Address => address != this
+            case _ => throw( "wrong admin address " + admin )
+        }
+    }
+    if( FOLD<10>( admins_list, true, fold ) == false ) then throw( "admin cannot be this dapp " + this.toString() ) else
+
+    [
+        StringEntry( "verifier", this.toString() ),
+        StringEntry( "admins", admins )
+    ]
+}
+
+@Callable( i )
+func approve( address: String, txid: String ) =
+{
+    let admin = i.caller.toString()
+    let admins = this.getStringValue( "admins" )
+    let admins_list = admins.split( "," )
+    if( !contains( admins, admin ) ) then throw( "admins only" ) else
+
+    let addressOK = match addressFromString( address )
+    {
+        case a: Address => true
+        case _ => false
+    }
+    if( !addressOK  ) then throw( "wrong address " + address ) else
+    let txidOK = size( fromBase58String( txid ) ) == 32
+    if( !txidOK ) then throw( "wrong txid " + txid ) else
+
+    let approveKey = "approve_" + address + "_" + txid
+    let approve = this.getString( approveKey ).valueOrElse( "" )
+    if( contains( approve, admin ) ) then throw( "already approved by " + admin ) else
+
+    let approveCount = 1 + if( approve == "" ) then 0 else approve.split( "," ).size()
+    let approveBy = if( approve == "" ) then admin else approve + "," + admin
+    let status = if( approveCount > size( admins_list ) / 2 ) then true else false
+    [
+        StringEntry( approveKey, approveBy ),
+        BooleanEntry( "status_" + address + "_" + txid, status )
+    ]
+}
+
+@Callable( i )
+func set_verifier( verifier: String ) =
+{
+    if( i.caller != this ) then throw( "self call only" ) else
+
+    let addressOK = match addressFromString( verifier )
+    {
+        case a: Address => true
+        case _ => false
+    }
+    if( !addressOK  ) then throw( "verifier wrong address " + verifier ) else
+
+    if( this.getString( "verifier" ).isDefined() ) then throw( "verifier already defined" ) else
+    [
+        StringEntry( "verifier", verifier )
+    ]
+}
+
+@Verifier( tx )
+func verify() =
+{
+    match this.getString( "verifier" )
+    {
+        case verifier:String => verifier.addressFromStringValue().getBoolean( "status_" + this.toString() + "_" + tx.id.toBase58String() ).valueOrElse( false )
+        case _ => sigVerify( tx.bodyBytes, tx.proofs[0], tx.senderPublicKey )
+    }
+}
