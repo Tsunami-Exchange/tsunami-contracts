@@ -437,13 +437,9 @@
     ) then {
       throw("Invalid addFree params")
     } else {
-      let newRate = if (totalSupply() > 0) then {
-        (freeBalance() + _amount).divd(totalSupply())
-      } else {
-        DECIMAL_UNIT
-      }
+      let newRate = computeNewRate(_amount)
 
-      strict unstake = invoke(
+      strict stake = invoke(
         managerAddress(),
         "deposit",
         [],
@@ -566,6 +562,40 @@
         timestamp + DURATION
       )
     }
+  }
+
+  @Callable(i)
+  func ackRewards() = {
+    strict profitResp = invoke(
+      managerAddress(),
+      "claimProfit",
+      [quoteAsset().toBase58String()],
+      []
+    )
+
+    let profit = match profitResp {
+      case p: Int => p.usdnToDecimals()
+      case _ => throw("Invalid claimProfit response")
+    }
+
+    strict result = if (profit > 0) then {
+      let newRate = computeNewRate(profit)
+
+      strict stake = invoke(
+        managerAddress(),
+        "deposit",
+        [],
+        [AttachedPayment(quoteAsset(), profit.usdnFromDecimals())]
+      )
+
+      updateFreeBalance(profit)
+      ++
+      updateRate(newRate)
+    } else {
+      []
+    }
+
+    result
   }
 
   @Callable(i)

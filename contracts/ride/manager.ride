@@ -144,7 +144,7 @@ func claimProfit(_assetId: String) = {
   if (
     fromBase58String(_assetId) != quoteAsset()
     || !initialized()
-    || i.caller != adminAddress()
+    || i.caller != vaultAddress()
   ) then {
     throw("Invalid claimProfit params")
   } else {
@@ -170,9 +170,9 @@ func claimProfit(_assetId: String) = {
       []
     )
 
-    [
+    ([
       ScriptTransfer(i.caller, profit, fromBase58String(_assetId))
-    ]
+    ], profit)
   }
 }
 

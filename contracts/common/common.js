@@ -770,6 +770,7 @@ class Environment {
     this.nfts = new NFTManager(this);
     this.vault = new Vault(this);
     this.manager = new Manager(this);
+    this.vires = new Vires(this);
 
     console.log(`Environment deployed`);
   }
@@ -3183,6 +3184,21 @@ class Vault {
     return tx;
   }
 
+  async ackRewards() {
+    let tx = await invoke(
+      {
+        dApp: address(this.e.seeds.vault),
+        functionName: "ackRewards",
+        arguments: [],
+        payment: [],
+      },
+      this.sender
+    );
+
+    await waitForTx(tx.id);
+    return tx;
+  }
+
   async withdrawRewards() {
     let tx = await invoke(
       {
@@ -3518,6 +3534,38 @@ class Collateral {
   async upgrade() {
     console.log(`Upgrading Collateral ${this.address}`);
     return this.e.upgradeContract("collateral.ride", this.address, 3700000);
+  }
+}
+
+class Vires {
+  constructor(e, address, sender) {
+    this.e = e;
+    this.address = address;
+    this.sender = sender;
+  }
+
+  as(_sender) {
+    return new Vires(this.e, address, _sender);
+  }
+
+  async addProfit(_amount) {
+    let tx = await invoke(
+      {
+        dApp: address(this.e.seeds.vires),
+        functionName: "addProfit",
+        arguments: [],
+        payment: [
+          {
+            amount: Math.round(_amount * decimals),
+            assetId: this.e.assets.neutrino,
+          },
+        ],
+      },
+      this.sender
+    );
+
+    await waitForTx(tx.id);
+    return tx;
   }
 }
 
