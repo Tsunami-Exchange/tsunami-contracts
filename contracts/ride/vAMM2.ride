@@ -772,7 +772,8 @@ func internalClosePosition(
   _fee: Int, 
   _minQuoteAssetAmount: Int,
   _addToMargin: Boolean,
-  _checkMaxPriceImpact: Boolean
+  _checkMaxPriceImpact: Boolean,
+  _liquidate: Boolean
   ) = {
   let (
     oldPositionSize,
@@ -898,10 +899,14 @@ func internalClosePosition(
     #
     let marginToTraderRaw = remainMarginBefore - (newPositionMarginWithSameRatio + unrealizedPnlAfter) - realizedFee
     let marginToTrader = if (marginToTraderRaw < 0) then {
-      # This should basically never happen, as it can only happen when marinRatio < fee, i.e. margin ratio is
-      # less than 0.014%. Note, that liquidation threshold is about 4.5%, or more. So, should not happen.
-      #
-      throw("Invalid internalClosePosition params: unable to pay fee")
+      if (_liquidate) then {
+        0
+      } else {
+        # This should basically never happen, as it can only happen when marinRatio < fee, i.e. margin ratio is
+        # less than 0.014%. Note, that liquidation threshold is about 4.5%, or more. So, should not happen.
+        #
+        throw("Invalid internalClosePosition params: unable to pay fee")
+      }
     } else {
       marginToTraderRaw
     }
@@ -2105,7 +2110,8 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int, _addToMargin: Boolean)
       positionFee,
       _minQuoteAssetAmount,
       _addToMargin,
-      true
+      true,
+      false
     )
 
     if (positionBadDebt > 0) then {
@@ -2316,7 +2322,8 @@ func liquidate(_trader: String) = {
       liquidationFeeRatio(),
       0,
       true,
-      false
+      false,
+      true
     )
 
     let feeToLiquidator = liquidationPenalty / 2

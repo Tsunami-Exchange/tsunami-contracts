@@ -790,7 +790,8 @@ func internalClosePosition(
   _fee: Int, 
   _minQuoteAssetAmount: Int,
   _addToMargin: Boolean,
-  _checkMaxPriceImpact: Boolean
+  _checkMaxPriceImpact: Boolean,
+  _liquidate: Boolean
   ) = {
   let (
     oldPositionSize,
@@ -916,10 +917,14 @@ func internalClosePosition(
     #
     let marginToTraderRaw = remainMarginBefore - (newPositionMarginWithSameRatio + unrealizedPnlAfter) - realizedCloseFee
     let marginToTrader = if (marginToTraderRaw < 0) then {
-      # This should basically never happen, as it can only happen when marinRatio < fee, i.e. margin ratio is
-      # less than 0.014%. Note, that liquidation threshold is about 4.5%, or more. So, should not happen.
-      #
-      throw("Invalid internalClosePosition params: unable to pay fee")
+      if (_liquidate) then {
+        0
+      } else {
+        # This should basically never happen, as it can only happen when marinRatio < fee, i.e. margin ratio is
+        # less than 0.014%. Note, that liquidation threshold is about 4.5%, or more. So, should not happen.
+        #
+        throw("Invalid internalClosePosition params: unable to pay fee")
+      }
     } else {
       marginToTraderRaw
     }
@@ -960,7 +965,7 @@ func internalClosePosition(
       )
     }
   } else {
-    throw("Invalid internalClosePosition params: invalid position size")
+    throw("Invalid internalClosePosition params: invalid position size: " + _size.toString() + " max: " + absOldPositionSize.toString())
   }
 }
 
@@ -2062,6 +2067,7 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int, _addToMargin: Boolean)
       positionFee,
       _minQuoteAssetAmount,
       _addToMargin,
+      true,
       true
     )
 
@@ -2166,8 +2172,8 @@ func liquidate(_trader: String) = {
     throw("Unable to liquidate")
   } else {    
     let isPartialLiquidation = spotMarginRatio > liquidationFeeRatio()
-      || partialLiquidationRatio() > 0
-      || partialLiquidationRatio() < DECIMAL_UNIT
+      && partialLiquidationRatio() > 0
+      && partialLiquidationRatio() < DECIMAL_UNIT
     
     let oldPositionSize = getPosition(_trader)._1
     let positionSizeAbs = abs(oldPositionSize)
@@ -2203,7 +2209,8 @@ func liquidate(_trader: String) = {
       liquidationFeeRatio(),
       0,
       true,
-      false
+      false,
+      true
     )
 
     let feeToLiquidator = liquidationPenalty / 2
@@ -2220,7 +2227,7 @@ func liquidate(_trader: String) = {
       strict lockBadDebt = invoke(
         vaultAddress(),
         "exchangeFreeAndLocked",
-        [positionBadDebt],
+        [positionBadDebt + liquidationPenalty],
         []
       )
       []
@@ -2314,11 +2321,22 @@ func syncTerminalPriceToOracle() = {
     marginToVault
   ) = getSyncTerminalPrice(getOraclePrice(), _qtAstR, _bsAstR)
 
-  strict doExchangePnL = if (marginToVault != 0) then {
+  # marginToVault may cause bad debt to protocol if it's negative 
+  # and |marginToVault| > cbalance()
+  # this means, we can not print money out of thin air
+  # LP's can't get more than the amount the traders have deposited
+  #
+  let marginToVaultAdj = if (marginToVault < 0 && abs(marginToVault) > cbalance()) then {
+    -cbalance()
+  } else {
+    marginToVault
+  } 
+  
+  strict doExchangePnL = if (marginToVaultAdj != 0) then {
     strict doExchangePnL = invoke(
       vaultAddress(),
       "exchangeFreeAndLocked",
-      [marginToVault],
+      [marginToVaultAdj],
       []
     )
     []
@@ -2326,7 +2344,8 @@ func syncTerminalPriceToOracle() = {
     []
   }
 
-  updateBalance(cbalance() + marginToVault)
+  
+  updateBalance(cbalance() + marginToVaultAdj)
   ++
   updateAmmWeights(newQuoteAssetWeight, newBaseAssetWeight)
   ++

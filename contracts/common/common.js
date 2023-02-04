@@ -1763,8 +1763,8 @@ class AMM {
         (x) => x && x.value
       ));
 
-    const changeSettingsTx = invokeScript(
-      {
+    const changeSettingsTx =
+      ({
         dApp: this.address,
         call: {
           function: "changeSettings",
@@ -1782,8 +1782,7 @@ class AMM {
         },
         payment: [],
       },
-      this.e.seeds.admin
-    );
+      this.e.seeds.admin);
 
     await broadcast(changeSettingsTx);
     await waitForTx(changeSettingsTx.id);

@@ -8,7 +8,6 @@
   
   let k_lockedBalance = "k_lockedBalance" # Amount of USDN reserved (locked from LP)
   let k_freeBalance = "k_freeBalance" # Amount of USDN free for LP to withdraw
-  
 
   # Global staking
   let k_rate = "k_rate" # Rate of exchange from USDN to v-Shares
@@ -182,9 +181,14 @@
   }
 
   func updateFreeBalance(_change: Int) = {
-    [
-      IntegerEntry(k_freeBalance, freeBalance() + _change)
-    ]
+    let balance = freeBalance()
+    if (balance + _change >= 0) then {
+      [
+        IntegerEntry(k_freeBalance, balance + _change)
+      ]
+    } else {
+      throw("Vault: can not update free balance. Balance: " + balance.toString() + " change: " + _change.toString())
+    }
   }
 
   func updateLockedBalance(_change: Int) = {
@@ -195,19 +199,6 @@
       ]
     } else {
       throw("Vault: can not update locked balance. Balance: " + balance.toString() + " change: " + _change.toString())
-    }
-  }
-
-  func updateLockedBalanceUnchecked(_change: Int) = {
-    let balance = lockedBalance()
-    if (balance + _change >= 0) then {
-      [
-        IntegerEntry(k_lockedBalance, balance + _change)
-      ]
-    } else {
-      [
-        IntegerEntry(k_lockedBalance, 0)
-      ]
     }
   }
 
@@ -490,7 +481,7 @@
 
       let newRate = computeNewRate(-amountOfQuoteAsset)
       
-      updateLockedBalanceUnchecked(amountOfQuoteAsset)
+      updateLockedBalance(amountOfQuoteAsset)
       ++
       updateFreeBalance(-amountOfQuoteAsset)
       ++
@@ -609,8 +600,8 @@
 
   @Callable(i)
   func view_stakingReward(_staker: String) = {
-      let stakerEarned = updateReward(_staker, 0)._3
-      throw(stakerEarned.usdnFromDecimals().toString())
+    let stakerEarned = updateReward(_staker, 0)._3
+    throw(stakerEarned.usdnFromDecimals().toString())
   }
 
   @Callable(i)
