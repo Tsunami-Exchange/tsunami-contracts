@@ -6,9 +6,9 @@
 {-# CONTENT_TYPE DAPP #-}
 
 ##### Key constants #####
-let k_insurance_address = "k_insurance_address"   # Address of insurance contract
+let k_insurance_address = "k_insurance_address"   # Address of insurance contract (deprecated)
+let k_vault_address = "k_vault_address"           # Address of vault contract
 let k_admin_address = "k_admin_address"           # Address of admin account           
-let k_admin_public_key = "k_admin_public_key"     # Pubic key of admin account
 let k_quote_asset = "k_quote_asset"               # Address of quote asset (USDN in our case)
 let k_quote_staking = "k_quote_staking"           # Address of quote asset staking contract (USDN staking in our case)
 let k_staking_address = "k_staking_address"       # Address that should receive staking benefits
@@ -29,23 +29,20 @@ let k_exchange_address = "k_exchange_address"     # Exchange manager address
 ##### View functions #####
 func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
 func getAddressIfValid(address: String) = address.addressFromString().valueOrErrorMessage("Can't parse \"" + address + "\" as address").toString()
-func adminPublicKey() = getStringValue(this, k_admin_public_key)
 
 func isNoAdmin() = this.getString(k_admin_address) == unit
 func admin() = addressFromStringValue(this.getString(k_admin_address).valueOrErrorMessage("Admin not defined"))
 
-func isNoAdminOrAdmin(i: Invocation) = if (isNoAdmin() || i.caller == admin()) then unit else throw("Only the Admin itself can invoke this function")
+func isNoAdminOrAdmin(i: Invocation) = if ((isNoAdmin() && i.caller == this) || i.caller == admin()) then unit else throw("Only the Admin itself can invoke this function")
 func isAdmin(i: Invocation) = if (i.caller == admin()) then unit else throw("Only the Admin itself can invoke this function")
 
 @Callable(i)
 func setAdmin(
-  _adminPublicKey: String
+  _adminAddress: String
 ) = isNoAdminOrAdmin(i).valueOrElse({
-  let bytes = fromBase58String(_adminPublicKey)
-  let address = addressFromPublicKey(bytes)
+  let address = addressFromStringValue(_adminAddress)
   [
-    StringEntry(k_admin_address, address.toString()),
-    StringEntry(k_admin_public_key, _adminPublicKey)
+    StringEntry(k_admin_address, address.toString())
   ]
 })
 
@@ -182,6 +179,16 @@ func setExchangeAddress(
 })
 
 @Callable(i)
+func setVaultAddress(
+  _vaultAddress: String
+) = isAdmin(i).valueOrElse({
+  let exchangeAddress = getAddressIfValid(_vaultAddress)
+  [
+    StringEntry(k_vault_address, _vaultAddress)
+  ]
+})
+
+@Callable(i)
 func addAmm(
   _ammAddress: String,
   _data: String
@@ -220,4 +227,9 @@ func setGovernanceAsset(_assetId: String) = isAdmin(i).valueOrElse({
 })
 
 @Verifier(tx)
-func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], adminPublicKey().fromBase58String())
+func verify() = {
+  match this.getString(k_admin_address) {
+    case verifier: String => verifier.addressFromStringValue().getBoolean("status_" + this.toString() + "_" + tx.id.toBase58String() ).valueOrElse(false)
+    case _ => sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)
+  }
+}

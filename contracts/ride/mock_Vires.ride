@@ -27,6 +27,13 @@ func getCurrentTotals(_user: String) = {
 }
 
 @Callable(i)
+func addProfit() = {
+  let _amount = i.payments[0].amount
+
+  updateFunds(funds() + _amount)
+}
+
+@Callable(i)
 func withdraw(_assetId: String, _amount: Int) = {
   if (
     _amount > funds()

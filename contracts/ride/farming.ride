@@ -26,13 +26,11 @@
   let k_staking_address = "k_staking_address"
   let k_governance_asset = "k_gov_asset"
   let k_quote_asset = "k_quote_asset" 
-  let k_admin_public_key = "k_admin_public_key" 
   let k_admin_address = "k_admin_address"   
 
   ##### Coordinator constants #####
   func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
   func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
-  func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
   func governanceAsset() = fromBase58String(coordinator().getStringValue(k_governance_asset))
   func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
   func stakingAddress() = addressFromString(coordinator().getStringValue(k_staking_address)).valueOrErrorMessage("Staking not set")
@@ -169,12 +167,12 @@
     _coordinator: String,
     _swapAddress: String
   ) = {
-    if (initialized()) then {
-      throw("Already initialized")
+    if (initialized() || i.caller != this) then {
+      throw("Unable to initialize")
     } else {
       [
-        StringEntry(k_coordinatorAddress, _coordinator),
-        StringEntry(k_swapAddress, _swapAddress),
+        StringEntry(k_coordinatorAddress, addressFromStringValue(_coordinator).toString()),
+        StringEntry(k_swapAddress, addressFromStringValue(_swapAddress).toString()),
         BooleanEntry(k_initialized, true)
       ]
     }
@@ -421,4 +419,18 @@ func setSwap(
   }
 
   @Verifier(tx)
-  func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], adminPublicKey())
+  func verify() = {
+    let coordinatorStr = this.getString(k_coordinatorAddress)
+    if (coordinatorStr.isDefined()) then {
+      let admin = addressFromStringValue(coordinatorStr.value()).getString(k_admin_address)
+      if (admin.isDefined()) then {
+        admin.value().addressFromStringValue().getBoolean("status_" + this.toString() + "_" + tx.id.toBase58String() ).valueOrElse(false)
+      } else { 
+        # Admin is not defined in coordinator, set admin first
+        throw("unable to verify: admin not set in coordinator")
+      }
+    } else {
+      # Coordinator not set, use native verify
+      sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)
+    }
+  }

@@ -1,0 +1,2459 @@
+# This is a vAMM + Exchange contract
+#
+{-# STDLIB_VERSION 6 #-}
+{-# SCRIPT_TYPE ACCOUNT #-}
+{-# CONTENT_TYPE DAPP #-}
+
+##### Key constants #####
+
+# Oracle keys
+let k_baseOracle = "k_baseOracle"     # Base asset oracle data
+let k_quoteOracle = "k_quoteOracle"   # Quote asset oracle data
+
+# AMM Balance
+let k_balance = "k_balance" # How much of a trader's funds is controlled by this AMM
+
+# Global counter
+let k_sequence = "k_sequence" # Sequence number of position identifiers
+
+# Trader Position
+let k_positionSize = "k_positionSize"                 # Trader position size (base asset)
+let k_positionMargin = "k_positionMargin"             # Trader position margin (quote asset) - how much quote asset is supporting the position
+let k_positionOpenNotional = "k_positionOpenNotional" # Trader position open notional - how much quote asset they have borrowed
+let k_positionLastUpdatedCumulativePremiumFraction = "k_positionFraction"        # Trader position last updated cumulative premium fraction
+let k_positionSequence = "k_positionSequence"         # When position was closed
+let k_positionAsset = "k_positionAsset"               # Asset of position
+let k_positionFee = "k_positionFee"                   # Fee for current position
+let k_positionLastUpdatedTimestamp = "k_positionTimestamp" # Trader position last updated timestamp
+
+# Global initialization state
+let k_initialized = "k_initialized"                       # If AMM was properly initialized
+let k_paused = "k_paused"                                 # If all AMM operations are paused
+let k_closeOnly = "k_closeOnly"                           # If all AMM operations are close - only
+
+# Exchange settings
+let k_fee = "k_fee"                                       # Exchange fee. Default is 1%. 1/2 goes to stakers, 1/2 goes to insurance fund
+let k_rolloverFee = "k_rollover_fee"                     # Rollover fee per minute. Default 35% per year.
+let k_fundingPeriod = "k_fundingPeriod"                   # Funding period. By default funding is paid once per hour
+let k_initMarginRatio = "k_initMarginRatio"               # Initial margin ratio. Controls how much leverage can be applied when position is created
+let k_maintenanceMarginRatio = "k_mmr"                    # Maintenance margin ratio (MMR). When MR < MMR position can be liquidated
+let k_liquidationFeeRatio = "k_liquidationFeeRatio"       # % of position size liquidator will get for himself. 1/2 of this goes to liquidator, 1/2 - to insurance fund
+let k_partialLiquidationRatio = "k_partLiquidationRatio"  # % of position notional that will be liquidated in case 0 < MR < MMR
+let k_spreadLimit = "k_spreadLimit"                       # abs((marketPrice - oraclePrice) / oraclePrice). If over spread limit, liquidations consult oracle price
+let k_maxPriceImpact = "k_maxPriceImpact"                 # maximum price impact per order
+let k_maxPriceSpread = "k_maxPriceSpread"                 # max spread between Index and Market Price
+let k_maxOpenNotional = "k_maxOpenNotional"               # max open notional in market
+let k_feeToStakersPercent = "k_feeToStakersPercent"       # percent of fee to stakers (rest goes to vault)
+let k_maxOracleDelay = "k_maxOracleDelay"                 # max delay in oracle data
+
+# TWAP data
+let k_lastDataStr = "k_lastDataStr"                       # List of last 15 TWAP computations (best case - we have a value for each of last 15 mins)
+let k_lastMinuteId = "k_lastMinuteId"                     # ID of last minute, when price measurements was taken
+let k_twapDataLastCumulativePrice = "k_twapDataLastCumulativePrice" # Last cumulative price data (previousPrice * minutesPriceLasted)
+let k_twapDataLastPrice = "k_twapDataLastPrice"           # Last price value
+let k_twapDataPreviousMinuteId = "k_twapDataPreviousMinuteId" # Previous minute id for current twap data
+
+# Funding state
+let k_latestLongCumulativePremiumFraction = "k_latestLongPremiumFraction" # Latest Cumulative Premium Fraction. (Part of Premium paid this funding period). Premium = MarkPrice - IndexPrice
+let k_latestShortCumulativePremiumFraction = "k_latestShortPremiumFraction" # Latest Cumulative Premium Fraction. (Part of Premium paid this funding period). Premium = MarkPrice - IndexPrice
+let k_nextFundingBlock = "k_nextFundingBlockMinTimestamp"         # Timestamp of Next block when funding becomes available
+let k_longFundingRate = "k_longFundingRate"                       # Funding rate  Cumulative Premium Fraction / Index Price
+let k_shortFundingRate = "k_shortFundingRate"                     # Funding rate  Cumulative Premium Fraction / Index Price
+
+# AMM State
+let k_quoteAssetReserve = "k_qtAstR"                      # Quote Asset Reserve (AMM)
+let k_baseAssetReserve = "k_bsAstR"                       # Base Asset Reserve (AMM)
+let k_quoteAssetWeight = "k_qtAstW"                       # Quote Asset Weight
+let k_baseAssetWeight = "k_bsAstW"                        # Base Asset Weight
+let k_totalPositionSize = "k_totalPositionSize"           # Total trader position size (in Base asset)
+let k_totalLongPositionSize = "k_totalLongPositionSize"   # Total LONG trader position size (in Base asset)
+let k_totalShortPositionSize = "k_totalShortPositionSize" # Total SHORT trader position size (in Base asset)
+let k_openInterestNotional = "k_openInterestNotional"     # Open Interest Notional (all positions)
+let k_openInterestShort = "k_openInterestShort"           # Open Interest Notional (short)
+let k_openInterestLong = "k_openInterestLong"             # Open Interest Notional (long)
+
+# Reentrance protection
+let k_lastTx = "k_lastTx"
+
+# Coordinator
+let k_coordinatorAddress = "k_coordinatorAddress"         # Address of Coordinator (base contract that keeps references to all infrastructure)
+
+# Coordinator keys
+let k_vault_address = "k_vault_address"           # Address of vault contract
+let k_admin_address = "k_admin_address"           # Address of admin account           
+let k_quote_asset = "k_quote_asset"               # Address of quote asset (USDN in our case)
+let k_quote_staking = "k_quote_staking"           # Address of quote asset staking contract (USDN staking in our case)
+let k_staking_address = "k_staking_address"       # Address that should receive staking benefits
+let k_miner_address = "k_miner_address"           # Liquidity mining contract address
+let k_orders_address = "k_orders_address"         # Order executor contract address
+let k_referral_address = "k_referral_address"     # Referral contract address
+let k_exchange_address = "k_exchange_address"     # Exchange manager address
+let k_nft_manager_address = "k_nft_manager_address" # NFT manager address
+
+func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
+
+##### Coordinator data ##### 
+func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
+func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
+func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
+func quoteAssetStaking() = addressFromString(coordinator().getStringValue(k_quote_staking)).valueOrErrorMessage("Quote asset staking not set")
+func stakingAddress() = addressFromString(coordinator().getStringValue(k_staking_address)).valueOrErrorMessage("Staking not set")
+func vaultAddress() = addressFromString(coordinator().getStringValue(k_vault_address)).valueOrErrorMessage("Vault not set") 
+func minerAddress() = addressFromString(coordinator().getStringValue(k_miner_address)).valueOrErrorMessage("Miner not set")
+func ordersAddress() = addressFromString(coordinator().getStringValue(k_orders_address)).valueOrErrorMessage("Orders not set")
+func referralAddress() = addressFromString(coordinator().getStringValue(k_referral_address)).valueOrErrorMessage("Referral not set")
+func nftManagerAddress() = addressFromString(coordinator().getStringValue(k_nft_manager_address)).valueOrErrorMessage("NFT Manager not set")
+
+##### NFT Artifacts #####
+let k_token_param = "k_token_param"
+let k_token_type = "k_token_type"
+let FEE_REDUCTION_TOKEN_TYPE = "fee_reduction"
+
+##### Core constants #####
+
+let DIR_LONG          = 1
+let DIR_SHORT         = 2
+let TWAP_INTERVAL     = 15
+let SECONDS           = 1000
+let DECIMAL_NUMBERS   = 6
+let DECIMAL_UNIT      = 1 * (10 * 10 * 10 * 10 * 10 * 10)
+let MINUTES_IN_YEAR   = 525600 * DECIMAL_UNIT
+let ONE_DAY           = 86400 * DECIMAL_UNIT
+let PNL_OPTION_SPOT   = 1
+let PNL_OPTION_ORACLE = 2
+
+##### Helper functions #####
+
+func s(_x: Int) = _x.toString() + ","
+
+func divd(_x: Int, _y: Int) = fraction(_x, DECIMAL_UNIT, _y, HALFEVEN)
+func muld(_x: Int, _y: Int) = fraction(_x, _y, DECIMAL_UNIT, HALFEVEN)
+func sqrtd(_x: Int) = sqrt(_x, DECIMAL_NUMBERS, DECIMAL_NUMBERS, HALFEVEN)
+func powd(_x: Int, _y: Int) = pow(_x, DECIMAL_NUMBERS, _y, DECIMAL_NUMBERS, DECIMAL_NUMBERS, HALFEVEN)
+
+func bdivd(_x: BigInt, _y: BigInt) = fraction(_x, DECIMAL_UNIT.toBigInt(), _y, HALFEVEN)
+func bmuld(_x: BigInt, _y: BigInt) = fraction(_x, _y, DECIMAL_UNIT.toBigInt(), HALFEVEN)
+func bsqrtd(_x: BigInt) = sqrt(_x, DECIMAL_NUMBERS, DECIMAL_NUMBERS, HALFEVEN)
+func bpowd(_x: BigInt, _y: BigInt) = pow(_x, DECIMAL_NUMBERS, _y, DECIMAL_NUMBERS, DECIMAL_NUMBERS, HALFEVEN)
+
+func abs(_x: Int) = if (_x > 0) then _x else -_x
+func vmax(_x: Int, _y: Int) = if (_x >= _y) then _x else _y
+
+func listToStr(_list: List[String]) = 
+  if (_list.size() == 0) then "" else makeString(_list, ",")
+
+func strToList(_str: String) = if (_str == "") then [] else _str.split(",")
+
+func pushToQueue(_list: List[String], _maxSize: Int, _value: String) = 
+  if (_list.size() > _maxSize) then {
+    _list.removeByIndex(0) :+ _value
+  } else {
+    _list :+ _value
+  }
+
+##### Accessor functions #####
+func int(k: String) = this.getInteger(k).valueOrErrorMessage("no value for " + k)
+func intOr(k: String, def: Int) = this.getInteger(k).valueOrElse(def)
+func strA(_address: Address, _key: String) = {
+  let val = _address.getString(_key).valueOrErrorMessage("No value for key " + _key)
+  val
+}
+
+func intA(_address: Address, _key: String) = {
+  let val = _address.getInteger(_key).valueOrErrorMessage("No value for key " + _key)
+  val
+}
+
+func cbalance() = int(k_balance)
+func fee() = int(k_fee)
+func rolloverFeeRate() = int(k_rolloverFee)
+func initMarginRatio() = int(k_initMarginRatio)
+func qtAstR() = int(k_quoteAssetReserve)
+func bsAstR() = int(k_baseAssetReserve)
+func qtAstW() = intOr(k_quoteAssetWeight, DECIMAL_UNIT)
+func bsAstW() = intOr(k_baseAssetWeight, DECIMAL_UNIT)
+func totalPositionSize() = int(k_totalPositionSize)
+func openInterestNotional() = int(k_openInterestNotional)
+func openInterestShort() = int(k_openInterestShort)
+func openInterestLong() = int(k_openInterestLong)
+func nextFundingBlockTimestamp() = int(k_nextFundingBlock)
+func fundingPeriodRaw() = int(k_fundingPeriod)
+func fundingPeriodDecimal() = fundingPeriodRaw() * DECIMAL_UNIT
+func fundingPeriodSeconds() = fundingPeriodRaw() * SECONDS
+func maintenanceMarginRatio() = int(k_maintenanceMarginRatio)
+func liquidationFeeRatio() = int(k_liquidationFeeRatio)
+func partialLiquidationRatio() = int(k_partialLiquidationRatio)
+func spreadLimit() = int(k_spreadLimit)
+func maxPriceImpact() = int(k_maxPriceImpact)
+func maxPriceSpread() = int(k_maxPriceSpread)
+func maxOpenNotional() = int(k_maxOpenNotional)
+func latestLongCumulativePremiumFraction() = int(k_latestLongCumulativePremiumFraction)
+func latestShortCumulativePremiumFraction() = int(k_latestShortCumulativePremiumFraction)
+func totalShortPositionSize() = int(k_totalShortPositionSize)
+func totalLongPositionSize() = int(k_totalLongPositionSize)
+func lastSequence() = intOr(k_sequence, 0)
+func feeToStakersPercent() = int(k_feeToStakersPercent)
+func maxOracleDelay() = int(k_maxOracleDelay)
+
+func lastTimestamp() = lastBlock.timestamp
+
+##### Order support #####
+func getActualCaller(i: Invocation) = {
+  ordersAddress().getString("k_sender").valueOrElse(i.caller.toString())
+}
+
+##### Validator functions #####
+func requireMoreMarginRatio(_marginRatio: Int, _baseMarginRatio: Int, _largerThanOrEqualTo: Boolean) = {
+  let remainingMarginRatio = _marginRatio - _baseMarginRatio
+  if (_largerThanOrEqualTo && remainingMarginRatio < 0) then {
+    throw("Invalid margin: " + _marginRatio.toString() + " < " + _baseMarginRatio.toString())
+  } else {
+    if (!_largerThanOrEqualTo && remainingMarginRatio >= 0) then {
+      throw("Invalid margin: " + _marginRatio.toString() + " > " + _baseMarginRatio.toString())
+    } else {
+      true
+    }
+  }
+}
+
+# Returns latest cumulative premium fraction for a position (long for long position, short for short)
+#
+func latestCumulativePremiumFraction(
+  _positionSize: Int
+) = if (_positionSize == 0)
+  then throw("Should not be called with _positionSize == 0")
+  else if (_positionSize > 0)
+    then latestLongCumulativePremiumFraction() 
+    else latestShortCumulativePremiumFraction()
+
+# Returns info on traders position
+#
+func getPosition(_trader: String) = {
+  let positionSizeOpt = this.getInteger(k_positionSize.toCompositeKey(_trader))
+  match (positionSizeOpt) {
+      case positionSize: Int => (
+        positionSize,
+        this.getIntegerValue(k_positionMargin.toCompositeKey(_trader)),
+        this.getIntegerValue(k_positionOpenNotional.toCompositeKey(_trader)),
+        this.getIntegerValue(k_positionLastUpdatedCumulativePremiumFraction.toCompositeKey(_trader)),
+        this.getIntegerValue(k_positionLastUpdatedTimestamp.toCompositeKey(_trader))
+      )
+      case _ => (0, 0, 0, 0, 0)
+    }
+}
+
+# Returns info on position's asset
+#
+func getPositionAsset(_trader: String) = {
+  let positionAssetOpt = this.getString(k_positionAsset.toCompositeKey(_trader))
+  match (positionAssetOpt) {
+    case positionAsset: String => positionAsset
+    case _ => quoteAsset().toBase58String()
+  }
+}
+
+# Returns info on positions's fee closing fee, including 
+# fee tier on increase position and applied NFT artifact
+#
+func getPositionFee(_trader: String) = {
+  let positionFeeOpt = this.getInteger(k_positionFee.toCompositeKey(_trader))
+  match (positionFeeOpt) {
+    case positionFee: Int => positionFee
+    case _ => fee()
+  }
+}
+
+# Checks that a trader have an open position
+#
+func requireOpenPosition(_trader: String) = {
+    if (getPosition(_trader)._1 == 0) then {
+      throw("No open position")
+    } else {
+      true
+    }
+}
+
+# Reads oracle data by key
+#
+func getOracleData(key: String) = {
+  let oracleDataStr = this.getString(key)
+  if (oracleDataStr.isDefined() && oracleDataStr.value() != "") then {
+    let oracleData = oracleDataStr.value().split(",")
+    let oracleAddress = addressFromString(oracleData.getElement(0)).valueOrErrorMessage("Invalid oracle address in: " + oracleDataStr.value())
+    let priceKey = oracleData.getElement(1)
+    let blockKey = oracleData.getElement(2)
+    let openKey = oracleData.getElement(3)
+
+    (oracleAddress, priceKey, blockKey, openKey)
+  } else {
+    unit
+  }
+}
+
+# Checks if AMM was properly initialized
+#
+func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
+
+# Checks if AMM was paused  
+#
+func paused() = this.getBoolean(k_paused).valueOrElse(false)
+
+# Checks if AMM is in close - only mode
+#
+func closeOnly() = this.getBoolean(k_closeOnly).valueOrElse(false)
+
+# Computes new AMM state (quoteAssetReserve, baseAssetReserve, totalPositionSize)
+#
+func updateReserve(_isAdd: Boolean, _quoteAssetAmount: Int, _baseAssetAmount: Int) = {
+  if (_isAdd) then {
+    let newBase = bsAstR() - _baseAssetAmount
+    if (newBase <= 0) then {
+      throw("Tx lead to base asset reserve <= 0, revert")
+    } else {
+      (
+        qtAstR() + _quoteAssetAmount,
+        newBase,
+        totalPositionSize() + _baseAssetAmount
+      )
+    }
+  } else {
+    let newQuote = qtAstR() - _quoteAssetAmount
+    if (newQuote <= 0) then {
+      throw("Tx lead to base quote reserve <= 0, revert")
+    } else {
+      (
+        newQuote,
+        bsAstR() + _baseAssetAmount,
+        totalPositionSize() - _baseAssetAmount
+      )
+    }
+  }
+}
+
+# Computes AMM invariant
+#
+func calcInvariant(_qtAstR: Int, _bsAstR: Int) = {
+  let bqtAstR = _qtAstR.toBigInt()
+  let bbsAstR = _bsAstR.toBigInt()
+
+  bqtAstR.bmuld(bbsAstR)
+}
+
+# Computes result of swapping a given amount of _quoteAssetAmount
+# Returns full new AMM state, as well as amount of base asset bought / sold
+# _isAdd - true when we are adding quote asset to AMM, false when removing
+#
+func swapInput(_isAdd: Boolean, _quoteAssetAmount: Int) = {
+  let _qtAstR = qtAstR()
+  let _bsAstR = bsAstR()
+  let _qtAstW = qtAstW()
+  let _bsAstW = bsAstW()
+
+  let quoteAssetAmountAdjusted = _quoteAssetAmount.divd(_qtAstW)
+
+  let k = calcInvariant(_qtAstR, _bsAstR)
+  let quoteAssetReserveAfter = if (_isAdd) then {
+    _qtAstR + quoteAssetAmountAdjusted
+  } else {
+    _qtAstR - quoteAssetAmountAdjusted
+  }
+
+  let baseAssetReserveAfter = bdivd(k, quoteAssetReserveAfter.toBigInt()).toInt()
+  let amountBaseAssetBoughtAbs = abs(baseAssetReserveAfter - _bsAstR)
+  let amountBaseAssetBought = if (_isAdd) then {
+    amountBaseAssetBoughtAbs
+  } else {
+    -amountBaseAssetBoughtAbs
+  }
+  
+  let (
+    quoteAssetReserveAfter1,
+    baseAssetReserveAfter1,
+    totalPositionSizeAfter1
+  ) = updateReserve(_isAdd, quoteAssetAmountAdjusted, amountBaseAssetBoughtAbs)
+
+  let priceBefore = divd(_qtAstR.muld(_qtAstW), _bsAstR.muld(_bsAstW))
+  let marketPrice = divd(_quoteAssetAmount, amountBaseAssetBoughtAbs)
+  let priceDiff = abs(priceBefore - marketPrice)
+  let priceImpact = DECIMAL_UNIT - divd(priceBefore, (priceBefore + priceDiff))
+
+  let maxPriceImpactValue = maxPriceImpact()
+  if (priceImpact > maxPriceImpactValue) then {
+    throw("Price impact " + priceImpact.toString() + " > max price impact " + maxPriceImpactValue.toString() 
+      + " before quote asset: " + _qtAstR.toString()
+      + " before base asset: " + _bsAstR.toString()
+      + " quote asset amount to exchange: " + _quoteAssetAmount.toString()
+      + " price before: " + priceBefore.toString()
+      + " marketPrice: " + marketPrice.toString()
+    )
+  } else {
+    (
+      amountBaseAssetBought,
+      quoteAssetReserveAfter1,
+      baseAssetReserveAfter1,
+      totalPositionSizeAfter1
+    )
+  }
+}
+
+# Computes rollover fee. Rollover fee is margin (without regards for PnL)
+# Yearly fee percentage is defined in rolloverFeeRate key
+# Fee is taken once a minute
+# 
+func calcRolloverFee(
+  _oldPositionMargin: Int,
+  _oldPositionLastUpdatedTimestamp: Int
+) = {
+  let positionMinutes = ((lastTimestamp() - _oldPositionLastUpdatedTimestamp) / 1000 / 60) * DECIMAL_UNIT
+  let rolloverFee = divd(_oldPositionMargin.muld(positionMinutes).muld(rolloverFeeRate()), MINUTES_IN_YEAR)
+
+  rolloverFee
+}
+
+# Computes position remaining margin with regards fof funding payment, rollover fee
+# and optionally applying a marginDelta - PnL or new margin (in case of position increase)
+#
+func calcRemainMarginWithFundingPaymentAndRolloverFee(
+  _oldPositionSize: Int, 
+  _oldPositionMargin: Int, 
+  _oldPositionCumulativePremiumFraction: Int,
+  _oldPositionLastUpdatedTimestamp: Int,
+  _marginDelta: Int
+) = {
+  let fundingPayment = if (_oldPositionSize != 0) then {
+    let _latestCumulativePremiumFraction = latestCumulativePremiumFraction(_oldPositionSize)
+    muld((_latestCumulativePremiumFraction - _oldPositionCumulativePremiumFraction), _oldPositionSize)
+  } else {
+    0
+  }
+  let rolloverFee = calcRolloverFee(_oldPositionMargin, _oldPositionLastUpdatedTimestamp)
+  let signedMargin = _marginDelta - rolloverFee - fundingPayment + _oldPositionMargin
+  let (remainMargin, badDebt) = if (signedMargin < 0) then {
+    (0, abs(signedMargin))
+  } else {
+    (abs(signedMargin), 0)
+  }
+
+  (remainMargin, badDebt, fundingPayment, rolloverFee)
+}
+
+# Computes result of swapping a given amount of _baseAssetAmount
+# Returns full new AMM state, as well as amount of quote asset bought / sold
+# _isAdd - true when we are adding quote asset to AMM, false when removing
+#
+func swapOutputWithReserves(
+  _isAdd: Boolean, 
+  _baseAssetAmount: Int,
+  _checkMaxPriceImpact: Boolean,
+  _quoteAssetReserve: Int,
+  _quoteAssetWeight: Int,
+  _baseAssetReserve: Int,
+  _baseAssetWeight: Int
+) = {
+  # Price before is computed to check for max price impact during trader
+  #
+  let priceBefore = divd(_quoteAssetReserve.muld(_quoteAssetWeight), _baseAssetReserve.muld(_baseAssetWeight))
+
+  if (_baseAssetAmount == 0) then {
+    throw("Invalid base asset amount")
+  } else {
+    let k = calcInvariant(_quoteAssetReserve, _baseAssetReserve)
+    let baseAssetPoolAmountAfter = if (_isAdd) then {
+      _baseAssetReserve + _baseAssetAmount 
+    } else {
+      _baseAssetReserve - _baseAssetAmount
+    }
+
+    let quoteAssetAfter = bdivd(k, baseAssetPoolAmountAfter.toBigInt()).toInt()
+    let quoteAssetDelta = abs(quoteAssetAfter - _quoteAssetReserve)
+    let quoteAssetSold = quoteAssetDelta.muld(_quoteAssetWeight)
+
+    let maxPriceImpactValue = maxPriceImpact()
+
+    let (
+      quoteAssetReserveAfter1,
+      baseAssetReserveAfter1,
+      totalPositionSizeAfter1
+    ) = updateReserve(!_isAdd, quoteAssetDelta, _baseAssetAmount)
+
+    let marketPrice = divd(quoteAssetSold, _baseAssetAmount)
+    let priceDiff = abs(priceBefore - marketPrice)
+    let priceImpact = DECIMAL_UNIT - divd(priceBefore, (priceBefore + priceDiff))
+    
+    if (priceImpact > maxPriceImpactValue && _checkMaxPriceImpact) then {
+      throw("Price impact " + priceImpact.toString() + " > max price impact " + maxPriceImpactValue.toString() 
+        + " before quote asset: " + _quoteAssetReserve.toString()
+        + " before base asset: " + _baseAssetReserve.toString()
+        + " base asset amount to exchange: " + _baseAssetAmount.toString()
+        + " price before: " + priceBefore.toString()
+        + " market price: " + marketPrice.toString()
+      )
+    } else {
+      (
+        quoteAssetSold,
+        quoteAssetReserveAfter1,
+        baseAssetReserveAfter1,
+        totalPositionSizeAfter1,
+        totalLongPositionSize()  - if (_isAdd)  then abs(_baseAssetAmount) else 0,
+        totalShortPositionSize() - if (!_isAdd) then abs(_baseAssetAmount) else 0,
+        priceImpact
+      )
+    }
+  }
+}
+
+# Computes result of swapping a given amount of _baseAssetAmount
+# Returns full new AMM state, as well as amount of quote asset bought / sold
+# _isAdd - true when we are adding quote asset to AMM, false when removing
+#
+func swapOutput(
+  _isAdd: Boolean, 
+  _baseAssetAmount: Int,
+  _checkMaxPriceImpact: Boolean
+) = {
+  swapOutputWithReserves(
+    _isAdd,
+    _baseAssetAmount,
+    _checkMaxPriceImpact,
+    qtAstR(),
+    qtAstW(),
+    bsAstR(),
+    bsAstW()
+  )
+}
+
+func getOraclePriceValue(oracle: Address, priceKey: String, blockKey: String) = {
+  let lastValue = oracle.getInteger(priceKey).valueOrErrorMessage("Can not get oracle price. Oracle: " + oracle.toString() + " key: " + priceKey)
+
+  # If block key is set, than check that return value was set no more than maxOracleDelay blocks ago
+  #
+  if (blockKey != "") then {
+    let currentBlock = lastBlock.height
+    let lastOracleBlock = oracle.getInteger(blockKey).valueOrErrorMessage("Can not get oracle block. Oracle: " + oracle.toString() + " key: " + blockKey)
+    if (currentBlock - lastOracleBlock > maxOracleDelay()) then {
+      throw("Oracle stale data. Last oracle block: " + lastOracleBlock.toString() + " current block: " + currentBlock.toString())
+    } else {
+      lastValue
+    }
+  } else {
+    lastValue
+  }
+}
+
+# Returns oracle price (Index Price)
+#
+func getOraclePrice() = {
+  let baseOracle = getOracleData(k_baseOracle).valueOrErrorMessage("No base asset oracle data")
+  let baseOraclePrice = getOraclePriceValue(baseOracle._1, baseOracle._2, baseOracle._3)
+  let quoteOracle = getOracleData(k_quoteOracle)
+  let quoteOraclePrice = if (quoteOracle.isDefined()) then {
+    let quoteOracleV = quoteOracle.value()
+
+    getOraclePriceValue(quoteOracleV._1, quoteOracleV._2, quoteOracleV._3)
+  } else {
+    DECIMAL_UNIT
+  }
+
+  divd(baseOraclePrice, quoteOraclePrice)
+}
+
+# Checks that market is closed. May be the case with stock / forex markets
+#
+func isMarketClosed() = {
+  let baseOracle = getOracleData(k_baseOracle).valueOrErrorMessage("No base asset oracle data")
+  let oracle = baseOracle._1
+  let openKey = baseOracle._4
+
+  if (openKey != "") then {
+    let isOpen = oracle.getBoolean(openKey).valueOrErrorMessage("Can not get oracle is open/closed. Oracle: " + oracle.toString() + " key: " + openKey)
+    
+    !isOpen
+  } else {
+    false
+  }
+}
+
+# Computes price diff in % between current and oracle price
+#
+func absPriceDiff(
+  _oraclePrice: Int,
+  _quoteAssetReserve: Int, 
+  _baseAssetReserve: Int,
+  _qtAstW: Int,
+  _bsAstW: Int
+) = {
+  let priceAfter = divd(_quoteAssetReserve.muld(_qtAstW), _baseAssetReserve.muld(_bsAstW))
+  let averagePrice = divd(_oraclePrice + priceAfter, 2 * DECIMAL_UNIT)
+  let absPriceDiff = divd(abs(_oraclePrice - priceAfter), averagePrice)
+
+  absPriceDiff
+}
+
+# Checks that the result of operation is not bringing AMM over the spread limit.
+# Note, that this method will allow any operation that is actually IMPROVING spread.
+#
+func requireNotOverSpreadLimit(_quoteAssetReserve: Int, _baseAssetReserve: Int) = {
+  let oraclePrice = getOraclePrice()
+  let _qtAstW = qtAstW()
+  let _bsAstW = bsAstW()
+  let absPriceDiffBefore = absPriceDiff(oraclePrice, qtAstR(), bsAstR(), _qtAstW, _bsAstW)
+  let absPriceDiffAfter = absPriceDiff(oraclePrice, _quoteAssetReserve, _baseAssetReserve, _qtAstW, _bsAstW)
+  if (absPriceDiffAfter > maxPriceSpread() && absPriceDiffAfter > absPriceDiffBefore) then {
+      throw("Price spread " + absPriceDiffAfter.toString() + " > max price spread " + maxPriceSpread().toString())
+  } else {
+    true
+  }
+}
+
+# Checks that new cumulative notional values are not over max notional limit
+#
+func requireNotOverMaxOpenNotional(_longOpenNotional: Int, _shortOpenNotional: Int) = {
+  let _maxOpenNotional = maxOpenNotional()
+  
+  if (_longOpenNotional > _maxOpenNotional) then {
+      throw("Long open notional " + _longOpenNotional.toString() + " > max open notional " + _maxOpenNotional.toString())
+  } else {
+    if (_shortOpenNotional > _maxOpenNotional) then {
+      throw("Short open notional " + _shortOpenNotional.toString() + " > max open notional " + _maxOpenNotional.toString())
+    } else {
+      true
+    }
+  }
+}
+
+# Returns current spot price
+#
+func getSpotPrice() = {
+  let _quoteAssetReserve = qtAstR()
+  let _baseAssetReserve = bsAstR()
+  let _qtAstW = qtAstW()
+  let _bsAstW = bsAstW()
+  divd(_quoteAssetReserve.muld(_qtAstW), _baseAssetReserve.muld(_bsAstW))
+}
+
+# Checks if stop price and index price diverge more then spreadLimit. Used to determine what price to use
+# to compute liquidation. When isOverFluctuationLimit() == true, best of mark/index MR will be used 
+#
+func isOverFluctuationLimit() = {
+  let oraclePrice = getOraclePrice()
+  let currentPrice = getSpotPrice()
+  divd(abs(oraclePrice - currentPrice), oraclePrice) > spreadLimit()
+}
+
+# Returns actual position notional, adjusted for PnL
+#
+func getPositionAdjustedOpenNotional(
+  _positionSize: Int, 
+  _option: Int,
+  _quoteAssetReserve: Int,
+  _quoteAssetWeight: Int,
+  _baseAssetReserve: Int,
+  _baseAssetWeight: Int
+) = {
+  let positionSizeAbs = abs(_positionSize)
+  let isShort = _positionSize < 0
+  let positionNotional = if (_option == PNL_OPTION_SPOT) then {
+    let outPositionNotional = swapOutputWithReserves(
+      !isShort,
+      positionSizeAbs,
+      false,
+      _quoteAssetReserve,
+      _quoteAssetWeight,
+      _baseAssetReserve,
+      _baseAssetWeight
+    )._1
+
+    outPositionNotional
+  } else {
+    muld(positionSizeAbs, getOraclePrice())
+  }
+
+  positionNotional
+}
+
+# Returns position notional (current value of a position) and
+# position profit/loss (delta between initial position notional and current notional)
+# Accept calculation option - to use spot or index price
+#
+func getPositionNotionalAndUnrealizedPnlByValues(
+    _positionSize: Int, 
+    _positionOpenNotional: Int, 
+    _quoteAssetReserve: Int,
+    _quoteAssetWeight: Int,
+    _baseAssetReserve: Int,
+    _baseAssetWeight: Int,
+    _option: Int
+  ) = {
+    if (_positionSize == 0) then {
+      throw("Invalid position size")
+    } else {
+      let isShort = _positionSize < 0
+      let positionNotional = getPositionAdjustedOpenNotional(
+        _positionSize,
+        _option,
+        _quoteAssetReserve,
+        _quoteAssetWeight,
+        _baseAssetReserve,
+        _baseAssetWeight
+      )
+
+      let unrealizedPnl = if (isShort) then {
+        _positionOpenNotional - positionNotional
+      } else {
+        positionNotional - _positionOpenNotional
+      }
+      (
+        positionNotional,
+        unrealizedPnl
+      )
+    }
+}
+
+# Returns position notional (current value of a position) and
+# position profit/loss (delta between initial position notional and current notional)
+# Accept calculation option - to use spot or index price
+#
+func getPositionNotionalAndUnrealizedPnl(_trader: String, _option: Int) = {
+  let (
+      positionSize,
+      positionMargin,
+      positionOpenNotional,
+      positionLstUpdCPF
+    ) = getPosition(_trader)
+
+    getPositionNotionalAndUnrealizedPnlByValues(
+      positionSize,
+      positionOpenNotional,
+      qtAstR(),
+      qtAstW(),
+      bsAstR(),
+      bsAstW(),
+      _option
+    )
+}
+
+# Computes actual margin ratio
+#
+func calcMarginRatio(_remainMargin: Int, _badDebt: Int, _positionNotional: Int) = {
+  divd(_remainMargin - _badDebt, _positionNotional)
+}
+
+# Computes position margin ratio
+# Accept calculation option - to use spot or index price
+func getMarginRatioByOption(_trader: String, _option: Int) = {
+    let (
+      positionSize,
+      positionMargin,
+      pon,
+      positionLastUpdatedCPF,
+      positionTimestamp
+    ) = getPosition(_trader)
+
+    let (positionNotional, unrealizedPnl) = getPositionNotionalAndUnrealizedPnl(_trader, _option)
+    let (remainMargin, badDebt) = calcRemainMarginWithFundingPaymentAndRolloverFee(
+        positionSize,
+        positionMargin,
+        positionLastUpdatedCPF,
+        positionTimestamp,
+        unrealizedPnl
+    )
+    calcMarginRatio(remainMargin, badDebt, positionNotional)
+}
+
+# Computes position spot margin ratio
+#
+func getMarginRatio(_trader: String) = getMarginRatioByOption(_trader, PNL_OPTION_SPOT)
+
+# Computes partial liquidation position size
+#
+func getPartialLiquidationAmount(_trader: String, _positionSize: Int) = {
+    let maximumRatio = vmax(partialLiquidationRatio(), DECIMAL_UNIT - divd(getMarginRatio(_trader), maintenanceMarginRatio()))
+    let maxExchangedPositionSize = muld(abs(_positionSize), maximumRatio)
+    let swapResult = swapOutput(
+      _positionSize > 0,
+      maxExchangedPositionSize,
+      false
+    )
+    let maxExchangedQuoteAssetAmount = swapResult._1
+    let priceImpact = swapResult._7
+
+    if (priceImpact < maxPriceImpact()) then {
+      maxExchangedPositionSize
+    } else {
+      muld(abs(_positionSize), partialLiquidationRatio())
+    }
+}
+
+func internalClosePosition(
+  _trader: String,
+  _size: Int, 
+  _fee: Int, 
+  _minQuoteAssetAmount: Int,
+  _addToMargin: Boolean,
+  _checkMaxPriceImpact: Boolean,
+  _liquidate: Boolean
+  ) = {
+  let (
+    oldPositionSize,
+    oldPositionMargin,
+    oldPositionOpenNotional,
+    oldPositionLstUpdCPF,
+    oldPositionTimestamp
+  ) = getPosition(_trader)
+
+  let isLongPosition = oldPositionSize > 0
+  let absOldPositionSize = abs(oldPositionSize)
+
+  if (_size <= absOldPositionSize && _size > 0) then {
+    let isPartialClose = _size < absOldPositionSize
+    # Swap _size amount of position for exchangedQuoteAssetAmount of quote asset
+    #
+    let (
+      exchangedQuoteAssetAmount,
+      quoteAssetReserveAfter, 
+      baseAssetReserveAfter,
+      totalPositionSizeAfter
+    ) = swapOutput(
+      oldPositionSize > 0,
+      _size,
+      _checkMaxPriceImpact
+    )
+
+    # exchangedPositionSize should always have a sign opposite to position
+    # if position is short (-500) then +100 will decrease it (make it -400)
+    # if position is long (500) then -100 will decrease it (make it 400)
+    #
+    let exchangedPositionSize = if (oldPositionSize > 0) then -_size else _size
+
+    # Compute actual notional value of position (notional value + pnl - funding)
+    # and use it as a base to compute fee
+    #
+    let (
+      oldPositionNotional, 
+      unrealizedPnl
+    ) = getPositionNotionalAndUnrealizedPnl(
+      _trader, 
+      PNL_OPTION_SPOT
+    )
+
+
+    # Compute how much (in %) of position we are closing
+    #
+    let realizedRatio = divd(abs(exchangedPositionSize), absOldPositionSize)
+
+    # Realize PnL proportionally to the size of position being closed
+    #
+    let realizedPnl = muld(unrealizedPnl, realizedRatio)
+
+    # Get actual position margin *before* closing part of position 
+    # and badDebt *after* part of PnL is realized
+    #
+    let (remainMarginBefore, x1, x2, rolloverFee) = 
+      calcRemainMarginWithFundingPaymentAndRolloverFee(
+        oldPositionSize,
+        oldPositionMargin,
+        oldPositionLstUpdCPF,
+        oldPositionTimestamp,
+        unrealizedPnl
+      )
+
+    let positionBadDebt = 
+      calcRemainMarginWithFundingPaymentAndRolloverFee(
+        oldPositionSize,
+        oldPositionMargin,
+        oldPositionLstUpdCPF,
+        oldPositionTimestamp,
+        realizedPnl
+      )._2
+
+    # Realize fee (both close fee and rollover fee) proportionally to the size of position being closed
+    #
+    let realizedCloseFee = muld(oldPositionNotional, realizedRatio).muld(_fee)
+
+    let unrealizedPnlAfter = unrealizedPnl - realizedPnl
+    
+    # Compute new position notional value, keeping unrealized PnL unrealized
+    # ex. long position
+    # oldPositionNotional = 900 including -100 negative PnL
+    # exchangedQuoteAssetAmount = 300 ~ 1/3 of position
+    # unrealizedPnlAfter = 70 ~ 1/3 of position
+    # remainOpenNotional = 900 - 300 - (-70) = 670, so it will be 600 after deducing PnL
+    #
+    let remainOpenNotional = if (oldPositionSize > 0) then {
+      oldPositionNotional - exchangedQuoteAssetAmount - unrealizedPnlAfter
+    } else {
+      unrealizedPnlAfter + oldPositionNotional - exchangedQuoteAssetAmount
+    }
+
+    # exchangedPositionSize is always in different sign then oldPositionSize so always reduces position
+    #
+    let newPositionSize = oldPositionSize + exchangedPositionSize
+
+    # If newPositionSize == 0 then we do not have to update CPF and notional.
+    # forcing notional to be 0 helps prevent minor rounding mistakes
+    #
+    let (newPositionOpenNotional, newPositionLstUpdCPF) = if (newPositionSize == 0) then {
+      (0, 0)
+    } else {
+      (abs(remainOpenNotional), latestCumulativePremiumFraction(newPositionSize))
+    }
+
+    # Compute notional delta, that will be help us reduce it from cumulative notional.
+    # Note, that cumulative notional is always added and subtracted without regards for PnL
+    #
+    let openNotionalDelta = oldPositionOpenNotional - newPositionOpenNotional
+
+    # When partially closing a position AND removing part of margin to send to trader, position
+    # should keep EXACTLY the margin ration it is currently on.
+    #
+    let marginRatio = getMarginRatioByOption(_trader, PNL_OPTION_SPOT)
+    let newPositionMarginWithSameRatio = if (oldPositionSize > 0) then {
+      muld(newPositionOpenNotional + unrealizedPnlAfter, marginRatio) - unrealizedPnlAfter
+    } else {
+      muld(newPositionOpenNotional - unrealizedPnlAfter, marginRatio) - unrealizedPnlAfter
+    }
+    
+    # This is how much margin we can return back to the trader, while position is closed while keeping MR the same
+    #
+    let marginToTraderRaw = remainMarginBefore - (newPositionMarginWithSameRatio + unrealizedPnlAfter) - realizedCloseFee
+    let marginToTrader = if (marginToTraderRaw < 0) then {
+      if (_liquidate) then {
+        0
+      } else {
+        # This should basically never happen, as it can only happen when marinRatio < fee, i.e. margin ratio is
+        # less than 0.014%. Note, that liquidation threshold is about 4.5%, or more. So, should not happen.
+        #
+        throw("Invalid internalClosePosition params: unable to pay fee")
+      }
+    } else {
+      marginToTraderRaw
+    }
+
+    # If user opted for adding free margin back to position margin he can increase position MR.
+    # This is basically realized profit / loss and use it to increase MR of a current position.
+    # Used in partial liquidations as well.
+    #
+    let newPositionMargin = if (_addToMargin) then {
+      newPositionMarginWithSameRatio + marginToTrader
+    } else {
+      newPositionMarginWithSameRatio
+    }
+    
+    # Finally check slippage tolerance settings. It will always be 0 for liquidation.
+    #
+    if (_minQuoteAssetAmount != 0 && exchangedQuoteAssetAmount < _minQuoteAssetAmount) then {
+      throw("Limit error: " + exchangedQuoteAssetAmount.toString() + " < " + _minQuoteAssetAmount.toString())
+    } else {
+      (
+        newPositionSize,
+        newPositionMargin,
+        newPositionOpenNotional,
+        newPositionLstUpdCPF,
+        positionBadDebt,
+        realizedPnl,
+        if (_addToMargin && isPartialClose) then 0 else marginToTrader,
+        quoteAssetReserveAfter,
+        baseAssetReserveAfter,
+        totalPositionSizeAfter,
+        openInterestNotional() - openNotionalDelta,
+        totalLongPositionSize() - if (isLongPosition) then abs(exchangedPositionSize) else 0,
+        totalShortPositionSize() - if (!isLongPosition) then abs(exchangedPositionSize) else 0,
+        openInterestLong() - if (isLongPosition) then openNotionalDelta else 0,
+        openInterestShort() - if (!isLongPosition) then openNotionalDelta else 0,
+        realizedCloseFee + rolloverFee, # Note that rolloverFee is fully realized
+        exchangedQuoteAssetAmount
+      )
+    }
+  } else {
+    throw("Invalid internalClosePosition params: invalid position size: " + _size.toString() + " max: " + absOldPositionSize.toString())
+  }
+}
+
+# Computes TWAP spot price
+func getTwapSpotPrice() = {
+  let minuteId = lastTimestamp() / 1000 / 60
+  let startMinuteId = minuteId - TWAP_INTERVAL
+  let listStr = this.getString(k_lastDataStr).valueOrElse("")
+  let list = listStr.split(",")
+  func filterFn(accumulator: List[Int], next: String) = {
+    if (next.parseInt().valueOrErrorMessage("getTwapSpotPrice: invalid int: " + listStr) <= startMinuteId) then {
+      accumulator :+ next.parseIntValue()
+    } else {
+      accumulator
+    }
+  }
+  let listF = FOLD<20>(list, [], filterFn)
+  let maxIndex = if (listF.size() > 0) then {
+    max(listF)
+  } else {
+    list.getElement(0).parseInt().valueOrErrorMessage("getTwapSpotPrice: invalid int: " + listStr)
+  }
+  let lastMinuteId = this.getInteger(k_lastMinuteId).valueOrElse(0)
+  let endLastCumulativePrice = this.getInteger(k_twapDataLastCumulativePrice + "_" + lastMinuteId.toString()).valueOrElse(0)
+  let endLastPrice = this.getInteger(k_twapDataLastPrice + "_" + lastMinuteId.toString()).valueOrElse(0)
+  let nowCumulativePrice = endLastCumulativePrice + (minuteId - lastMinuteId) * endLastPrice
+  
+  let startLastCumulativePrice = this.getInteger(k_twapDataLastCumulativePrice + "_" + maxIndex.toString()).valueOrElse(0)
+  let startLastPrice = this.getInteger(k_twapDataLastPrice + "_" + maxIndex.toString()).valueOrElse(0)
+  let startCumulativePrice = startLastCumulativePrice + (startMinuteId - maxIndex) * startLastPrice
+  
+  (nowCumulativePrice - startCumulativePrice) / TWAP_INTERVAL
+}
+
+func getTerminalAmmState() = {
+  let _positionSize = totalPositionSize()
+  if (_positionSize == 0) then {
+    (qtAstR(), bsAstR())
+  } else {
+    let direction = _positionSize > 0
+    let (
+      currentNetMarketValue,
+      terminalQuoteAssetReserve,
+      terminalBaseAssetReserve
+    ) = swapOutput(
+      direction,
+      abs(_positionSize),
+      false
+    )
+
+    (terminalQuoteAssetReserve, terminalBaseAssetReserve)
+  }
+}
+
+func getQuoteAssetWeight(
+  baseAssetReserve: Int,
+  totalPositionSize: Int,
+  quoteAssetReserve: Int, 
+  targetPrice: Int
+) = {
+    let b = baseAssetReserve.toBigInt()
+    let sz = totalPositionSize.toBigInt()
+    let q = quoteAssetReserve.toBigInt()
+    let p = targetPrice.toBigInt()
+    
+    let k = bmuld(q, b)
+    let newB = b + sz
+    let newQ = bdivd(k, newB)
+    let z = bdivd(newQ, newB)
+    let result = bdivd(p, z)
+
+    result.toInt()
+}
+
+func getSyncTerminalPrice(_terminalPrice: Int, _qtAstR: Int, _bsAstR: Int) = {
+  let _positionSize = totalPositionSize()
+  if (_positionSize == 0) then {
+    let newQtAstW = divd(_terminalPrice.muld(_bsAstR), _qtAstR)
+    (
+      newQtAstW,
+      DECIMAL_UNIT,
+      0
+    )
+  } else {
+    let direction = _positionSize > 0
+    let currentNetMarketValue = swapOutput(
+      direction,
+      abs(_positionSize),
+      false
+    )._1
+
+    # Compute new qW and bW
+    let newQtAstW = getQuoteAssetWeight(_bsAstR, _positionSize, _qtAstR, _terminalPrice)
+    let newBsAstW = DECIMAL_UNIT
+
+    # Compute margin to vault
+
+    let marginToVault = getPositionNotionalAndUnrealizedPnlByValues(
+      _positionSize,
+      currentNetMarketValue,
+      _qtAstR,
+      newQtAstW,
+      _bsAstR,
+      newBsAstW,
+      PNL_OPTION_SPOT
+    )._2
+    
+    (
+      newQtAstW,
+      newBsAstW,
+      marginToVault
+    )
+  }
+}
+
+func getFunding() = {
+  let underlyingPrice = getOraclePrice()
+  let spotTwapPrice = getTwapSpotPrice()
+  let premium = spotTwapPrice - underlyingPrice
+  
+  if (
+    totalShortPositionSize() == 0 
+    || totalLongPositionSize() == 0
+    || isMarketClosed()
+  ) then {
+    (0, 0)
+  } else {
+    if (premium < 0) then {
+      # underlyingPrice > spotTwapPrice, need to push spotTwapPrice UP, short pays the longs
+      # how much to take from shorts this funding period
+      let shortPremiumFraction = divd(muld(premium, fundingPeriodDecimal()), ONE_DAY)
+
+      # how much longs will get from shorts total this funding period
+      let longPremiumFraction = divd(muld(shortPremiumFraction, totalShortPositionSize()), totalLongPositionSize())
+      (shortPremiumFraction, longPremiumFraction)
+    } else {
+      # underlyingPrice < spotTwapPrice, need to push spotTwapPrice DOWN, longs pays the shorts
+      # how much to take from longs this funding period
+      let longPremiumFraction = divd(muld(premium, fundingPeriodDecimal()), ONE_DAY)
+
+      # how much shorts will get from longs total this funding period
+      let shortPremiumFraction = divd(muld(longPremiumFraction, totalLongPositionSize()), totalShortPositionSize())
+      (shortPremiumFraction, longPremiumFraction)
+    }
+  }
+}
+
+func getAdjustedFee(_artifactId: String, _baseFeeDiscount: Int) = {
+  let baseFeeRaw = fee()
+  let baseFee = muld(baseFeeRaw, _baseFeeDiscount)
+  let (adjustedFee, burnArtifact) = if (_artifactId != "") then {
+      let artifactKind = strA(nftManagerAddress(), k_token_type.toCompositeKey(_artifactId))
+      if (artifactKind == FEE_REDUCTION_TOKEN_TYPE) then {
+        let reduction = intA(nftManagerAddress(), k_token_param.toCompositeKey(_artifactId))
+        let adjustedFee = muld(baseFee, reduction)
+        (adjustedFee, true)
+      } else {
+        throw("Invalid attached artifact")
+      }
+    } else {
+      (baseFee, false)
+    }
+  (adjustedFee, burnArtifact)
+}
+
+
+func isSameAssetOrNoPosition(_trader: String, _assetId: String) = {
+    let oldPositionSize = getPosition(_trader)._1
+    if (oldPositionSize == 0) then {
+      true
+    } else {
+      getPositionAsset(_trader) == _assetId
+    }
+}
+
+func isSameAsset(_trader: String, _assetId: String) = {
+    getPositionAsset(_trader) == _assetId
+}
+
+func getForTraderWithArtifact(_trader: String, _artifactId: String) = {
+  strict doGetFeeDiscount = invoke(
+    minerAddress(),
+    "computeFeeDiscount",
+    [_trader],
+    []
+  )
+
+  let feeDiscount = match(doGetFeeDiscount) {
+    case x: Int => x
+    case _ => throw("Invalid computeFeeDiscount result")
+  }
+
+  let (adjustedFee, burnArtifact) = getAdjustedFee(_artifactId, feeDiscount)
+
+  (adjustedFee, burnArtifact)
+}
+
+func getArtifactId(i: Invocation) = {
+  let artifactId = if (i.payments.size() > 1) then {
+    i.payments[1].assetId.valueOrErrorMessage("Invalid artifactId").toBase58String()
+  } else {
+    ""
+  }
+
+  artifactId
+}
+
+func distributeFee(_feeAmount: Int) = {
+  let feeToStakers = muld(_feeAmount, feeToStakersPercent())
+  let feeToVault = _feeAmount - feeToStakers
+
+  (feeToStakers, feeToVault)
+}
+
+func updateSettings(
+  _initMarginRatio: Int,
+  _mmr: Int,
+  _liquidationFeeRatio: Int,
+  _fundingPeriod: Int,
+  _fee: Int,
+  _spreadLimit: Int,
+  _maxPriceImpact: Int,
+  _partialLiquidationRatio: Int,
+  _maxPriceSpread: Int,
+  _maxOpenNotional: Int,
+  _feeToStakersPercent: Int,
+  _maxOracleDelay: Int,
+  _rolloverFee: Int
+) = {
+  [
+    IntegerEntry(k_initMarginRatio, _initMarginRatio),
+    IntegerEntry(k_maintenanceMarginRatio, _mmr),
+    IntegerEntry(k_liquidationFeeRatio, _liquidationFeeRatio),
+    IntegerEntry(k_fundingPeriod, _fundingPeriod),
+    IntegerEntry(k_fee, _fee),
+    IntegerEntry(k_spreadLimit, _spreadLimit),
+    IntegerEntry(k_maxPriceImpact, _maxPriceImpact),
+    IntegerEntry(k_partialLiquidationRatio, _partialLiquidationRatio),
+    IntegerEntry(k_maxPriceSpread, _maxPriceSpread),
+    IntegerEntry(k_maxOpenNotional, _maxOpenNotional),
+    IntegerEntry(k_feeToStakersPercent, _feeToStakersPercent),
+    IntegerEntry(k_maxOracleDelay, _feeToStakersPercent),
+    IntegerEntry(k_rolloverFee, _rolloverFee)
+  ]
+}
+
+func updateFunding( 
+  _nextFundingBlock: Int,
+  _latestLongCumulativePremiumFraction: Int,
+  _latestShortCumulativePremiumFraction: Int,
+  _longFundingRate: Int,
+  _shortFundingRate: Int
+) = {
+  [
+    IntegerEntry(k_nextFundingBlock, _nextFundingBlock),
+    IntegerEntry(k_latestLongCumulativePremiumFraction, _latestLongCumulativePremiumFraction),
+    IntegerEntry(k_latestShortCumulativePremiumFraction, _latestShortCumulativePremiumFraction),
+    IntegerEntry(k_longFundingRate, _longFundingRate),
+    IntegerEntry(k_shortFundingRate, _shortFundingRate)
+  ]
+}
+
+func incrementPositionSequenceNumber(
+  _isNewPosition: Boolean,
+  _address: String
+) = {
+  if (_isNewPosition) then {
+    let currentSequence = lastSequence()
+    [
+      IntegerEntry(k_positionSequence.toCompositeKey(_address), currentSequence + 1),
+      IntegerEntry(k_sequence, currentSequence + 1)
+    ]
+  } else {
+    []
+  }
+}
+
+func updatePositionFee(
+  _isNewPosition: Boolean,
+  _address: String,
+  _fee: Int
+) = {
+  if (_isNewPosition) then {
+    [
+      IntegerEntry(k_positionFee.toCompositeKey(_address), _fee)
+    ]
+  } else {
+    []
+  }
+}
+
+func updatePosition(
+  _address: String,
+  _size: Int,
+  _margin: Int,
+  _openNotional: Int,
+  _latestCumulativePremiumFraction: Int,
+  _latestTimestamp: Int
+) = {
+  [
+    IntegerEntry(k_positionSize.toCompositeKey(_address), _size),
+    IntegerEntry(k_positionMargin.toCompositeKey(_address), _margin),
+    IntegerEntry(k_positionOpenNotional.toCompositeKey(_address), _openNotional),
+    IntegerEntry(k_positionLastUpdatedCumulativePremiumFraction.toCompositeKey(_address), _latestCumulativePremiumFraction),
+    IntegerEntry(k_positionLastUpdatedTimestamp.toCompositeKey(_address), _latestTimestamp)
+  ]
+}
+
+func appendTwap(_price: Int) = {
+  let minuteId = lastTimestamp() / 1000 / 60
+  let previousMinuteId = this.getInteger(k_lastMinuteId).valueOrElse(0)
+  if (minuteId < previousMinuteId) then {
+    throw("TWAP out-of-order")
+  } else {
+    let lastMinuteId = if (previousMinuteId == 0) then minuteId else previousMinuteId
+    if (minuteId > previousMinuteId) then {
+      let prevCumulativePrice = this.getInteger(k_twapDataLastCumulativePrice + "_" + previousMinuteId.toString()).valueOrElse(0)
+      let prevPrice = this.getInteger(k_twapDataLastPrice + "_" + previousMinuteId.toString()).valueOrElse(_price)
+      let lastCumulativePrice = prevCumulativePrice + (minuteId - lastMinuteId) * prevPrice
+
+      # Push new minute to list of last minutes with recorded TWAP info
+      let list = this.getString(k_lastDataStr).valueOrElse("").strToList().pushToQueue(TWAP_INTERVAL, minuteId.toString())
+
+      # Append new measurement to list of TWAP's
+      [
+        IntegerEntry(k_twapDataLastCumulativePrice.toCompositeKey(minuteId.toString()), lastCumulativePrice),
+        IntegerEntry(k_twapDataLastPrice.toCompositeKey(minuteId.toString()), _price),
+        IntegerEntry(k_twapDataPreviousMinuteId.toCompositeKey(minuteId.toString()), previousMinuteId),
+        IntegerEntry(k_lastMinuteId, minuteId),
+        StringEntry(k_lastDataStr, listToStr(list))
+      ]
+    } else {
+      let twapDataPreviousMinuteId = this.getInteger(k_twapDataPreviousMinuteId.toCompositeKey(minuteId.toString())).valueOrElse(0)
+      let prevCumulativePrice = this.getInteger(k_twapDataLastCumulativePrice.toCompositeKey(twapDataPreviousMinuteId.toString())).valueOrElse(0)
+      let prevPrice = this.getInteger(k_twapDataLastPrice.toCompositeKey(twapDataPreviousMinuteId.toString())).valueOrElse(_price)
+      let lastCumulativePrice = prevCumulativePrice + (minuteId - twapDataPreviousMinuteId) * prevPrice
+      
+      # Override LastCumulativePrice and LastPrice to keep latest measurement
+      [
+        IntegerEntry(k_twapDataLastCumulativePrice.toCompositeKey(minuteId.toString()), lastCumulativePrice),
+        IntegerEntry(k_twapDataLastPrice.toCompositeKey(minuteId.toString()), _price)
+      ]
+    }
+  }
+}
+
+func updateAmmReserves(
+  _qtAstR: Int,
+  _bsAstR: Int
+) = {
+  [
+    IntegerEntry(k_quoteAssetReserve, _qtAstR),
+    IntegerEntry(k_baseAssetReserve, _bsAstR)
+  ]
+}
+
+func updateAmmWeights(
+  _qtAstW: Int,
+  _bsAstW: Int
+) = {
+  [
+    IntegerEntry(k_quoteAssetWeight, _qtAstW),
+    IntegerEntry(k_baseAssetWeight, _bsAstW)
+  ]
+}
+
+func updateAmm(
+  _qtAstR: Int,
+  _bsAstR: Int,
+  _totalPositionSizeAfter: Int,
+  _openInterestNotional: Int,
+  _totalLongPositionSize: Int,
+  _totalShortPositionSize: Int,
+  _totalLongOpenNotional: Int,
+  _totalShortOpenNotional: Int
+) = {
+  let _qtAstW = qtAstW()
+  let _bsAstW = bsAstW()
+  if (_totalLongPositionSize - _totalShortPositionSize != _totalPositionSizeAfter) then {
+    throw("Invalid AMM state data: " + _totalLongPositionSize.toString() + " +  " + _totalShortPositionSize.toString() + " != " + _totalPositionSizeAfter.toString())
+  } else {
+    updateAmmReserves(_qtAstR, _bsAstR)
+    ++
+    [
+      IntegerEntry(k_totalPositionSize, _totalPositionSizeAfter),
+      IntegerEntry(k_openInterestNotional, _openInterestNotional),
+      IntegerEntry(k_totalLongPositionSize, _totalLongPositionSize),
+      IntegerEntry(k_totalShortPositionSize, _totalShortPositionSize),
+      IntegerEntry(k_openInterestLong, _totalLongOpenNotional),
+      IntegerEntry(k_openInterestShort, _totalShortOpenNotional)
+    ] ++ appendTwap(divd(_qtAstR.muld(_qtAstW), _bsAstR.muld(_bsAstW)))
+  }
+}
+
+func deletePosition(
+  _address: String
+) = {
+  [
+    DeleteEntry(k_positionSize.toCompositeKey(_address)),
+    DeleteEntry(k_positionMargin.toCompositeKey(_address)),
+    DeleteEntry(k_positionOpenNotional.toCompositeKey(_address)),
+    DeleteEntry(k_positionLastUpdatedCumulativePremiumFraction.toCompositeKey(_address)),
+    DeleteEntry(k_positionAsset.toCompositeKey(_address)),
+    DeleteEntry(k_positionFee.toCompositeKey(_address)),
+    DeleteEntry(k_positionLastUpdatedTimestamp.toCompositeKey(_address))
+  ]
+}
+
+func withdraw(
+  _address: Address,
+  _amount: Int
+) = {
+  let balance = assetBalance(this, quoteAsset())
+  if (balance < _amount) then {
+    throw("Unable to withdraw " + _amount.toString() + " from contract balance " + balance.toString())
+  } else {
+    [
+      ScriptTransfer(_address, _amount, quoteAsset())
+    ]
+  }
+}
+
+func updateBalance(i: Int) = {
+  if (i < 0) then {
+    throw("Balance")
+  } else {
+    [
+      IntegerEntry(k_balance, i)
+    ]
+  }
+}
+
+func transferFee(i: Int) = {
+  [
+    ScriptTransfer(stakingAddress(), i, quoteAsset())
+  ]
+}
+
+func doBurnArtifact(_burnArtifact: Boolean, i: Invocation) = {
+  if (_burnArtifact) then {
+    [
+      Burn(i.payments[1].assetId.valueOrErrorMessage("Invalid artifact"), 1)
+    ]
+  } else {
+    []
+  }
+}
+
+##### Callable functions #####
+
+@Callable(i)
+func pause() = {
+  if (i.caller != adminAddress()) then {
+    throw("Invalid pause params")
+  } else {
+    [
+      BooleanEntry(k_paused, true)
+    ]
+  }
+}
+
+@Callable(i)
+func unpause() = {
+  if (i.caller != adminAddress()) then {
+    throw("Invalid unpause params")
+  } else {
+    [
+      BooleanEntry(k_paused, false)
+    ]
+  }
+}
+
+@Callable(i)
+func setCloseOnly() = {
+  if (i.caller != adminAddress()) then {
+    throw("Invalid setCloseOnly params")
+  } else {
+    [
+      BooleanEntry(k_closeOnly, true)
+    ]
+  }
+}
+
+@Callable(i)
+func unsetCloseOnly() = {
+  if (i.caller != adminAddress()) then {
+    throw("Invalid unsetCloseOnly params")
+  } else {
+    [
+      BooleanEntry(k_closeOnly, false)
+    ]
+  }
+}
+
+@Callable(i)
+func addLiquidity(_quoteAssetAmount: Int) = {
+  if (
+    i.caller != adminAddress()
+    || _quoteAssetAmount <= 0
+  ) then {
+    throw("Invalid addLiquidity params")
+  } else {
+    let _qtAstR = qtAstR()
+    let _bsAstR = bsAstR()
+    let _qtAstW = qtAstW()
+    let _bsAstW = bsAstW()
+    let price = divd(_qtAstR.muld(_qtAstW), _bsAstR.muld(_bsAstW))
+
+    let qtAstRAfter = _qtAstR + _quoteAssetAmount
+    let baseAssetAmountToAdd = divd(qtAstRAfter.muld(_qtAstW), price) - _bsAstR
+
+    let bsAstRAfter = _bsAstR + baseAssetAmountToAdd
+
+    let (
+      newQuoteAssetWeight,
+      newBaseAssetWeight,
+      marginToVault
+    ) = getSyncTerminalPrice(getOraclePrice(), qtAstRAfter, bsAstRAfter)
+
+    strict doExchangePnL = if (marginToVault != 0) then {
+      strict doExchangePnL = invoke(
+        vaultAddress(),
+        "exchangeFreeAndLocked",
+        [marginToVault],
+        []
+      )
+      []
+    } else {
+      []
+    }
+
+    updateAmmReserves(qtAstRAfter, bsAstRAfter)
+    ++
+    updateAmmWeights(newQuoteAssetWeight, newBaseAssetWeight)
+  }
+}
+
+@Callable(i)
+func removeLiquidity(_quoteAssetAmount: Int) = {
+  if (
+    i.caller != adminAddress()
+    || _quoteAssetAmount >= 0
+  ) then {
+    throw("Invalid removeLiquidity params")
+  } else {
+    let _qtAstR = qtAstR()
+    let _bsAstR = bsAstR()
+    let _qtAstW = qtAstW()
+    let _bsAstW = bsAstW()
+    let price = divd(_qtAstR.muld(_qtAstW), _bsAstR.muld(_bsAstW))
+
+    let qtAstRAfter = _qtAstR - _quoteAssetAmount
+    let baseAssetAmountToRemove = abs(divd(qtAstRAfter.muld(_qtAstW), price) - _bsAstR)
+
+    let bsAstRAfter = _bsAstR - baseAssetAmountToRemove
+
+    let (
+      newQuoteAssetWeight,
+      newBaseAssetWeight,
+      marginToVault
+    ) = getSyncTerminalPrice(getOraclePrice(), qtAstRAfter, bsAstRAfter)
+
+    strict doExchangePnL = if (marginToVault != 0) then {
+      strict doExchangePnL = invoke(
+        vaultAddress(),
+        "exchangeFreeAndLocked",
+        [marginToVault],
+        []
+      )
+      []
+    } else {
+      []
+    }
+
+    updateAmmReserves(qtAstRAfter, bsAstRAfter)
+    ++
+    updateAmmWeights(newQuoteAssetWeight, newBaseAssetWeight)
+  }
+}
+
+@Callable(i)
+func changeSettings(
+  _initMarginRatio: Int,
+  _mmr: Int,
+  _liquidationFeeRatio: Int,
+  _fundingPeriod: Int,
+  _fee: Int,
+  _spreadLimit: Int,
+  _maxPriceImpact: Int,
+  _partialLiquidationRatio: Int,
+  _maxPriceSpread: Int,
+  _maxOpenNotional: Int,
+  _feeToStakersPercent: Int,
+  _maxOracleDelay: Int,
+  _rolloverFee: Int
+) = {
+  if (i.caller != adminAddress()) then {
+    throw("Invalid changeSettings params")
+  } else {
+    updateSettings(
+      _initMarginRatio, 
+      _mmr, 
+      _liquidationFeeRatio, 
+      _fundingPeriod, 
+      _fee, 
+      _spreadLimit, 
+      _maxPriceImpact,
+      _partialLiquidationRatio,
+      _maxPriceSpread,
+      _maxOpenNotional,
+      _feeToStakersPercent,
+      _maxOracleDelay,
+      _rolloverFee
+    )
+  }
+}
+
+@Callable(i)
+func initialize(
+  _qtAstR: Int,
+  _bsAstR: Int,
+  _fundingPeriod: Int,
+  _initMarginRatio: Int,
+  _mmr: Int,
+  _liquidationFeeRatio: Int,
+  _fee: Int,
+  _baseOracleData: String,
+  _quoteOracleData: String,
+  _coordinator: String,
+  _spreadLimit: Int,
+  _maxPriceImpact: Int,
+  _partialLiquidationRatio: Int,
+  _maxPriceSpread: Int,
+  _maxOpenNotional: Int,
+  _feeToStakersPercent: Int,
+  _maxOracleDelay: Int,
+  _rolloverFee: Int
+) = {
+  if (
+    _qtAstR <= 0
+    || _bsAstR <= 0
+    || _fundingPeriod <= 0
+    || _initMarginRatio <= 0
+    || _mmr <= 0
+    || _liquidationFeeRatio <= 0
+    || _fee <= 0
+    || _spreadLimit <= 0
+    || _maxPriceImpact <= 0
+    || _partialLiquidationRatio <= 0
+    || _maxPriceSpread <= 0
+    || _maxOpenNotional <= 0
+    || _feeToStakersPercent <= 0 || _feeToStakersPercent > DECIMAL_UNIT
+    || _maxOracleDelay <= 0
+    || _rolloverFee <= 0
+    || initialized()
+    || i.caller != this
+  ) then {
+    throw("Invalid initialize parameters")
+  } else {
+    updateAmm(_qtAstR, _bsAstR, 0, 0, 0, 0, 0, 0)
+    ++
+    updateSettings(
+      _initMarginRatio, 
+      _mmr, 
+      _liquidationFeeRatio, 
+      _fundingPeriod, 
+      _fee, 
+      _spreadLimit, 
+      _maxPriceImpact,
+      _partialLiquidationRatio,
+      _maxPriceSpread,
+      _maxOpenNotional,
+      _feeToStakersPercent,
+      _maxOracleDelay,
+      _rolloverFee
+    )
+    ++
+    updateFunding(
+      lastTimestamp() + _fundingPeriod,
+      0,
+      0,
+      0,
+      0
+    )
+    ++
+    updateBalance(0)
+    ++
+    [
+      BooleanEntry(k_initialized, true),
+      StringEntry(k_baseOracle, _baseOracleData),
+      StringEntry(k_quoteOracle, _quoteOracleData),
+      StringEntry(k_coordinatorAddress, addressFromStringValue(_coordinator).toString())
+    ]
+  }
+}
+
+@Callable(i)
+func increasePosition(
+  _direction: Int,
+  _leverage: Int,
+  _minBaseAssetAmount: Int,
+  _refLink: String
+) = {
+  strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
+  strict ensureCalledOnce = invoke(this, "ensureCalledOnce", [], [])
+
+  let _trader = getActualCaller(i)
+  let _rawAmount = i.payments[0].amount
+  let _assetId = i.payments[0].assetId
+  let _assetIdStr = _assetId.value().toBase58String()
+  let isQuoteAsset = _assetId == quoteAsset()
+  if (
+    (_direction != DIR_LONG && _direction != DIR_SHORT)
+    || _rawAmount <= 0
+    || !initialized()
+    || !isQuoteAsset
+    || !isSameAssetOrNoPosition(_trader, _assetIdStr)
+    || !requireMoreMarginRatio(divd(DECIMAL_UNIT, _leverage), initMarginRatio(), true)
+    || paused()
+    || closeOnly()
+    || isMarketClosed()
+  ) then {
+    throw("Invalid increasePosition parameters")
+  } else {
+    let (adjustedFee, burnArtifact) = getForTraderWithArtifact(_trader, getArtifactId(i))
+    # Compute amount as amount = payment / (leverage * fee + 1)
+    let _amount = _rawAmount.divd(muld(adjustedFee, _leverage) + DECIMAL_UNIT)
+    let distributeFeeAmount = _rawAmount - _amount
+
+    strict referrerFeeAny = invoke(
+      referralAddress(),
+      "acceptPaymentWithLink",
+      [_trader, _refLink],
+      [AttachedPayment(quoteAsset(), distributeFeeAmount)]
+    )
+
+    let referrerFee = match(referrerFeeAny) {
+      case x: Int => x
+      case _ => throw("Invalid referrerFee")
+    }
+
+    let feeAmount = distributeFeeAmount - referrerFee
+    let (
+      oldPositionSize,
+      oldPositionMargin,
+      oldPositionOpenNotional,
+      oldPositionLstUpdCPF,
+      oldPositionTimestamp
+    ) = getPosition(_trader)
+    let isNewPosition = oldPositionSize == 0
+    let isSameDirection = if (oldPositionSize > 0) then {
+      _direction == DIR_LONG
+    } else {
+      _direction == DIR_SHORT
+    }
+    let expandExisting = !isNewPosition && isSameDirection
+    let isAdd = _direction == DIR_LONG
+    
+    let (
+      newPositionSize,
+      newPositionRemainMargin,
+      newPositionOpenNotional,
+      newPositionLatestCPF,
+      newPositionTimestamp,
+      baseAssetReserveAfter,
+      quoteAssetReserveAfter,
+      totalPositionSizeAfter,
+      openInterestNotionalAfter,
+      totalLongAfter,
+      totalShortAfter,
+      totalLongOpenInterestAfter,
+      totalShortOpenInterestAfter,
+      rolloverFee
+    ) = if (isNewPosition || expandExisting) then {
+      let openNotional = muld(_amount, _leverage)
+      let ( 
+        amountBaseAssetBought,
+        quoteAssetReserveAfter, 
+        baseAssetReserveAfter,
+        totalPositionSizeAfter
+      ) = swapInput(isAdd, openNotional)
+       
+      if (_minBaseAssetAmount != 0 && abs(amountBaseAssetBought) < _minBaseAssetAmount) then {
+         throw("Limit error: " + abs(amountBaseAssetBought).toString() + " < " + _minBaseAssetAmount.toString())
+       } else {
+        let newPositionSize = oldPositionSize + amountBaseAssetBought
+        let totalLongOpenInterestAfter = openInterestLong() + if (newPositionSize > 0) then openNotional else 0
+        let totalShortOpenInterestAfter = openInterestShort() + if (newPositionSize < 0) then openNotional else 0
+        
+        let (remainMargin, x1, x2, rolloverFee) =
+          calcRemainMarginWithFundingPaymentAndRolloverFee(
+              oldPositionSize, 
+              oldPositionMargin, 
+              oldPositionLstUpdCPF,
+              oldPositionTimestamp,
+              _amount
+            )
+
+        if (!requireNotOverSpreadLimit(quoteAssetReserveAfter, baseAssetReserveAfter)) then {
+          throw("Over max spread limit")
+        } else {
+          if (!requireNotOverMaxOpenNotional(totalLongOpenInterestAfter, totalShortOpenInterestAfter)) then {
+            throw("Over max open notional")
+          } else {
+            (
+              newPositionSize, # positionSize
+              remainMargin, # remainMargin
+              oldPositionOpenNotional + openNotional, # positionOpenNotional
+              latestCumulativePremiumFraction(newPositionSize), # latestCPF
+              lastTimestamp(),
+              baseAssetReserveAfter, # baseAssetReserveAfter
+              quoteAssetReserveAfter, # quoteAssetReserveAfter
+              totalPositionSizeAfter, # totalPositionSizeAfter
+              openInterestNotional() + openNotional, # openInterestNotionalAfter
+              totalLongPositionSize() + if (newPositionSize > 0) then abs(amountBaseAssetBought) else 0,
+              totalShortPositionSize() + if (newPositionSize < 0) then abs(amountBaseAssetBought) else 0,
+              totalLongOpenInterestAfter,
+              totalShortOpenInterestAfter,
+              rolloverFee
+            )
+          }
+        }
+       }
+    } else {
+      let openNotional = muld(_amount, _leverage)
+      let (oldPositionNotional, unrealizedPnl) = getPositionNotionalAndUnrealizedPnl(i.caller.toString(), PNL_OPTION_SPOT)
+      if (oldPositionNotional > openNotional) then {
+        throw("Use decreasePosition to decrease position size")
+      } else {
+        throw("Close position first")
+      }
+    }
+
+    let (feeToStakers, feeToVault) = distributeFee(feeAmount + rolloverFee)
+    
+    strict stake = if (_amount >= rolloverFee) then {
+      invoke(
+        vaultAddress(),
+        "addLocked",
+        [],
+        [AttachedPayment(quoteAsset(), _amount - rolloverFee)]
+      )
+    } else {
+      invoke(
+        vaultAddress(),
+        "withdrawLocked",
+        [rolloverFee - _amount],
+        []
+      )
+    }
+
+    strict depositVault = invoke(
+      vaultAddress(),
+      "addFree",
+      [],
+      [AttachedPayment(quoteAsset(), feeToVault)]
+    )
+
+    strict notifyFee = invoke(
+      minerAddress(),
+      "notifyFees",
+      [_trader, feeAmount],
+      []
+    )
+
+    strict notifyNotional = invoke(
+      minerAddress(),
+      "notifyNotional",
+      [_trader, newPositionOpenNotional],
+      []
+    )
+    
+    updatePosition(
+      _trader,
+      newPositionSize,
+      newPositionRemainMargin,
+      newPositionOpenNotional,
+      newPositionLatestCPF,
+      newPositionTimestamp
+    )
+    ++
+    incrementPositionSequenceNumber(isNewPosition, _trader)
+    ++
+    updatePositionFee(isNewPosition, _trader, adjustedFee)
+    ++
+    updateAmm(
+      quoteAssetReserveAfter,
+      baseAssetReserveAfter,
+      totalPositionSizeAfter,
+      openInterestNotionalAfter,
+      totalLongAfter,
+      totalShortAfter,
+      totalLongOpenInterestAfter,
+      totalShortOpenInterestAfter
+    )
+    ++
+    transferFee(feeToStakers)
+    ++
+    updateBalance(cbalance() + _amount - rolloverFee)
+    ++
+    doBurnArtifact(burnArtifact, i)
+  }
+}
+
+@Callable(i)
+func addMargin() = {
+  strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
+  strict ensureCalledOnce = invoke(this, "ensureCalledOnce", [], [])
+
+  let _trader = i.caller.toString()
+  let _amount = i.payments[0].amount
+  let _assetId = i.payments[0].assetId
+  let _assetIdStr = _assetId.value().toBase58String()
+  let isQuoteAsset = _assetId == quoteAsset()
+  if (
+    !isQuoteAsset
+    || !requireOpenPosition(i.caller.toString())
+    || !isSameAsset(_trader, _assetIdStr)
+    || !initialized()
+    || paused()
+    || closeOnly()
+    || isMarketClosed()
+  ) then {
+    throw("Invalid addMargin parameters")
+  } else {
+    let (
+      oldPositionSize,
+      oldPositionMargin,
+      oldPositionOpenNotional,
+      oldPositionLstUpdCPF,
+      oldPositionTimestamp
+    ) = getPosition(_trader)
+  
+    strict stake = invoke(
+      vaultAddress(),
+      "addLocked",
+      [],
+      [AttachedPayment(quoteAsset(), _amount)]
+    )
+
+    let rolloverFee = calcRolloverFee(oldPositionMargin, oldPositionTimestamp)
+    strict doTransferFeeToStakers = if (rolloverFee > 0) then {
+      let (feeToStakers, feeToVault) = distributeFee(rolloverFee)
+
+      strict unstake = invoke(
+        vaultAddress(),
+        "withdrawLocked",
+        [feeToStakers],
+        []
+      )
+
+      strict lockBadDebt = invoke(
+        vaultAddress(),
+        "exchangeFreeAndLocked",
+        [-feeToVault], # Negative, because it is directed towards vault, not towards traders
+        []
+      )
+
+      transferFee(feeToStakers)
+    } else {
+      []
+    }
+    
+    updatePosition(
+      _trader,
+      oldPositionSize,
+      oldPositionMargin - rolloverFee + _amount,
+      oldPositionOpenNotional,
+      oldPositionLstUpdCPF,
+      lastTimestamp()
+    )
+    ++
+    updateBalance(cbalance() + _amount - rolloverFee)
+    ++
+    doTransferFeeToStakers
+  }
+}
+
+@Callable(i)
+func removeMargin(
+  _amount: Int
+) = {
+  strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
+  strict ensureCalledOnce = invoke(this, "ensureCalledOnce", [], [])
+
+  let _trader = i.caller.toString()
+  if (
+    _amount <= 0
+    || !requireOpenPosition(_trader)
+    || !initialized()
+    || paused()
+    || isMarketClosed()
+  ) then {
+    throw("Invalid removeMargin parameters")
+  } else {
+    let (
+      oldPositionSize,
+      oldPositionMargin,
+      oldPositionOpenNotional,
+      oldPositionLstUpdCPF,
+      oldPositionTimestamp
+    ) = getPosition(_trader)
+
+    let (remainMargin, badDebt, fundingPayment, rolloverFee) =
+      calcRemainMarginWithFundingPaymentAndRolloverFee(
+        oldPositionSize,
+        oldPositionMargin,
+        oldPositionLstUpdCPF,
+        oldPositionTimestamp,
+        -_amount
+    )
+    if (badDebt != 0) then {
+      throw("Invalid removed margin amount")
+    } else {
+      let marginRatio = calcMarginRatio(remainMargin, badDebt, oldPositionOpenNotional)
+      if (!requireMoreMarginRatio(marginRatio, initMarginRatio(), true)) then {
+        throw("Too much margin removed: " + marginRatio.toString() + " < " + initMarginRatio().toString())
+      } else {
+        let (feeToStakers, feeToVault) = distributeFee(rolloverFee)
+        strict doTransferFeeToStakers = if (rolloverFee > 0) then {
+          strict lockBadDebt = invoke(
+            vaultAddress(),
+            "exchangeFreeAndLocked",
+            [-feeToVault], # Negative, because it is directed towards vault, not towards traders
+            []
+          )
+
+          transferFee(feeToStakers)
+        } else {
+          []
+        }
+
+        strict unstake = invoke(
+          vaultAddress(),
+          "withdrawLocked",
+          [_amount + feeToStakers],
+          []
+        )
+      
+        updatePosition(
+          _trader,
+          oldPositionSize,
+          remainMargin, # Rollover fee is included in remainMargin
+          oldPositionOpenNotional,
+          latestCumulativePremiumFraction(oldPositionSize),
+          lastTimestamp()
+        )
+        ++
+        withdraw(i.caller, _amount)
+        ++
+        updateBalance(cbalance() - _amount - rolloverFee)
+        ++
+        doTransferFeeToStakers
+      }
+    }
+  }
+}
+
+@Callable(i)
+func closePosition(_size: Int, _minQuoteAssetAmount: Int, _addToMargin: Boolean) = {
+  strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
+  strict ensureCalledOnce = invoke(this, "ensureCalledOnce", [], [])
+
+  let _trader = getActualCaller(i)
+  let _traderAddress = addressFromString(_trader).valueOrErrorMessage("Invalid caller")
+  let positionFee = getPositionFee(_trader)
+  if (
+    !requireOpenPosition(_trader)
+    || !initialized()
+    || paused()
+    || _size <= 0
+    || _minQuoteAssetAmount < 0
+    || isMarketClosed()
+  ) then {
+    throw("Invalid closePosition parameters")
+  } else {
+    let oldPositionTimestamp = getPosition(_trader)._5
+
+    let (
+      newPositionSize,
+      newPositionMargin,
+      newPositionOpenNotional,
+      newPositionLstUpdCPF,
+      positionBadDebt,
+      realizedPnl,
+      marginToTrader,
+      quoteAssetReserveAfter,
+      baseAssetReserveAfter,
+      totalPositionSizeAfter,
+      openInterestNotionalAfter,
+      totalLongAfter,
+      totalShortAfter,
+      totalLongOpenInterestAfter,
+      totalShortOpenInterestAfter,
+      realizedFee
+    ) = internalClosePosition(
+      _trader,
+      _size,
+      positionFee,
+      _minQuoteAssetAmount,
+      _addToMargin,
+      true,
+      true
+    )
+
+    if (positionBadDebt > 0) then {
+      throw("Invalid closePosition parameters: bad debt")
+    } else if (oldPositionTimestamp >= lastTimestamp()) then {
+      throw("Invalid closePosition parameters: wait at least 1 block before closing the position")
+    } else {
+      let isPartialClose = newPositionSize != 0
+      let withdrawAmount = marginToTrader + realizedFee
+      let ammBalance = cbalance() - withdrawAmount
+
+      let ammNewBalance = if (ammBalance < 0) then {
+        0
+      } else {
+        ammBalance
+      }
+      
+      strict unstake = invoke(
+        vaultAddress(),
+        "withdrawLocked",
+        [withdrawAmount],
+        []
+      )
+
+      let (feeToStakers, feeToVault) = distributeFee(realizedFee)
+
+      strict depositVault = invoke(
+        vaultAddress(),
+        "addFree",
+        [],
+        [AttachedPayment(quoteAsset(), feeToVault)]
+      )
+
+      strict notifyFee = invoke(
+        minerAddress(),
+        "notifyFees",
+        [_trader, realizedFee],
+        []
+      )
+
+      strict notifyNotional = invoke(
+        minerAddress(),
+        "notifyNotional",
+        [_trader, newPositionOpenNotional],
+        []
+      )
+      
+      (if (isPartialClose) then { 
+        updatePosition(
+          _trader,
+          newPositionSize,
+          newPositionMargin,
+          newPositionOpenNotional,
+          newPositionLstUpdCPF,
+          lastTimestamp()
+        )
+      } else {
+        deletePosition(_trader)
+      })
+      ++
+      updateAmm(
+        quoteAssetReserveAfter,
+        baseAssetReserveAfter,
+        totalPositionSizeAfter,
+        openInterestNotionalAfter,
+        totalLongAfter,
+        totalShortAfter,
+        totalLongOpenInterestAfter,
+        totalShortOpenInterestAfter
+      )
+      ++
+      (if (marginToTrader > 0) then withdraw(_traderAddress, marginToTrader) else [])
+      ++
+      updateBalance(ammNewBalance)
+      ++
+      transferFee(feeToStakers)
+    }
+  }   
+}
+
+@Callable(i)
+func liquidate(_trader: String) = {
+  strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
+  # If market (future) price and index price diverge a lot, use index price to compute
+  # liquidation margin. That provides additional safety layer for traders
+  #
+  let spotMarginRatio = getMarginRatioByOption(_trader, PNL_OPTION_SPOT)
+  let liquidationMarginRatio = if (isOverFluctuationLimit()) then {
+    let oracleMarginRatio = getMarginRatioByOption(_trader, PNL_OPTION_ORACLE)
+    vmax(spotMarginRatio, oracleMarginRatio)
+  } else {
+    spotMarginRatio
+  }
+  if (
+    !requireMoreMarginRatio(liquidationMarginRatio, maintenanceMarginRatio(), false)
+    || !requireOpenPosition(_trader)
+    || !initialized()
+    || paused()
+    || isMarketClosed()
+  ) then {
+    throw("Unable to liquidate")
+  } else {    
+    let isPartialLiquidation = spotMarginRatio > liquidationFeeRatio()
+      && partialLiquidationRatio() > 0
+      && partialLiquidationRatio() < DECIMAL_UNIT
+    
+    let oldPositionSize = getPosition(_trader)._1
+    let positionSizeAbs = abs(oldPositionSize)
+    let (liquidationRatio, liquidationSize) = if (isPartialLiquidation) then {
+      let liquidationSize = getPartialLiquidationAmount(_trader, oldPositionSize)
+      let liquidationRatio = divd(abs(liquidationSize), positionSizeAbs)
+
+      (liquidationRatio, abs(liquidationSize))
+    } else {
+      (0, positionSizeAbs)
+    }
+
+    let (
+      newPositionSize,
+      newPositionMargin,
+      newPositionOpenNotional,
+      newPositionLstUpdCPF,
+      positionBadDebt,
+      realizedPnl,
+      marginToTrader,
+      quoteAssetReserveAfter,
+      baseAssetReserveAfter,
+      totalPositionSizeAfter,
+      openInterestNotionalAfter,
+      totalLongAfter,
+      totalShortAfter,
+      totalLongOpenInterestAfter,
+      totalShortOpenInterestAfter,
+      liquidationPenalty
+    ) = internalClosePosition(
+      _trader,
+      if (isPartialLiquidation) then liquidationSize else positionSizeAbs,
+      liquidationFeeRatio(),
+      0,
+      true,
+      false,
+      true
+    )
+
+    let feeToLiquidator = liquidationPenalty / 2
+    let feeToVault = liquidationPenalty - feeToLiquidator
+
+    let ammBalance = cbalance() - liquidationPenalty
+    let newAmmBalance = if (ammBalance < 0) then {
+      0
+    } else {
+      ammBalance
+    }
+
+    strict lockBadDebt = if (positionBadDebt > 0) then {
+      strict lockBadDebt = invoke(
+        vaultAddress(),
+        "exchangeFreeAndLocked",
+        [positionBadDebt + liquidationPenalty],
+        []
+      )
+      []
+    } else {
+      []
+    }
+
+    strict unstake = invoke(
+      vaultAddress(),
+      "withdrawLocked",
+      [liquidationPenalty],
+      []
+    )
+
+    strict depositInsurance = invoke(
+      vaultAddress(),
+      "addFree",
+      [],
+      [AttachedPayment(quoteAsset(), feeToVault)]
+    )
+
+    strict notifyNotional = invoke(
+      minerAddress(),
+      "notifyNotional",
+      [_trader, newPositionOpenNotional],
+      []
+    )
+
+    (if (isPartialLiquidation) then {
+      updatePosition(
+        _trader,
+        newPositionSize,
+        newPositionMargin,
+        newPositionOpenNotional,
+        newPositionLstUpdCPF,
+        lastTimestamp()
+      )
+    } else {
+      deletePosition(_trader)
+    })
+    ++ 
+    updateAmm(
+      quoteAssetReserveAfter,
+      baseAssetReserveAfter,
+      totalPositionSizeAfter,
+      openInterestNotionalAfter,
+      totalLongAfter,
+      totalShortAfter,
+      totalLongOpenInterestAfter,
+      totalShortOpenInterestAfter
+    )
+    ++
+    withdraw(i.caller, feeToLiquidator)
+    ++
+    updateBalance(newAmmBalance)
+  }
+}
+
+@Callable(i)
+func payFunding() = {
+  strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
+  
+  let fundingBlockTimestamp = nextFundingBlockTimestamp()
+  if (
+    lastTimestamp() < fundingBlockTimestamp
+    || !initialized()
+    || paused()
+  ) then {
+    throw("Invalid funding block timestamp: " + lastTimestamp().toString() + " < " + fundingBlockTimestamp.toString())
+  } else {
+    let underlyingPrice = getOraclePrice()
+    let (shortPremiumFraction, longPremiumFraction) = getFunding()
+    
+    updateFunding(
+      fundingBlockTimestamp + fundingPeriodSeconds(),
+      latestLongCumulativePremiumFraction() + longPremiumFraction,
+      latestShortCumulativePremiumFraction() + shortPremiumFraction,
+      divd(longPremiumFraction, underlyingPrice),
+      divd(shortPremiumFraction, underlyingPrice)
+    )
+  }
+}
+
+@Callable(i)  
+func syncTerminalPriceToOracle() = {
+  let _qtAstR = qtAstR()
+  let _bsAstR = bsAstR()
+  let (
+    newQuoteAssetWeight,
+    newBaseAssetWeight,
+    marginToVault
+  ) = getSyncTerminalPrice(getOraclePrice(), _qtAstR, _bsAstR)
+
+  # marginToVault may cause bad debt to protocol if it's negative 
+  # and |marginToVault| > cbalance()
+  # this means, we can not print money out of thin air
+  # LP's can't get more than the amount the traders have deposited
+  #
+  let marginToVaultAdj = if (marginToVault < 0 && abs(marginToVault) > cbalance()) then {
+    -cbalance()
+  } else {
+    marginToVault
+  } 
+  
+  strict doExchangePnL = if (marginToVaultAdj != 0) then {
+    strict doExchangePnL = invoke(
+      vaultAddress(),
+      "exchangeFreeAndLocked",
+      [marginToVaultAdj],
+      []
+    )
+    []
+  } else {
+    []
+  }
+
+  
+  updateBalance(cbalance() + marginToVaultAdj)
+  ++
+  updateAmmWeights(newQuoteAssetWeight, newBaseAssetWeight)
+  ++
+  appendTwap(divd(_qtAstR.muld(newQuoteAssetWeight), _bsAstR.muld(newBaseAssetWeight)))
+}
+
+@Callable(i)  
+func ensureCalledOnce() = {
+  if (i.caller != this) then {
+    throw("Invalid saveCurrentTxId parameters")
+  } else {
+    let lastTx = this.getString(k_lastTx).valueOrElse("")
+    if (lastTx != i.transactionId.toBase58String()) then {
+      [
+        StringEntry(k_lastTx, lastTx)
+      ]
+    } else {
+      throw("Can not call vAMM methods twice in one tx")
+    }
+  }
+}
+
+# View callable functions exposed for UI and debug
+
+@Callable(i)
+func view_calcRemainMarginWithFundingPayment(_trader: String) = {
+  strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
+  let (
+    positionSize,
+    positionMargin,
+    pon,
+    positionLstUpdCPF,
+    positionTimestamp
+  ) = getPosition(_trader)
+  let (positionNotional, unrealizedPnl) = getPositionNotionalAndUnrealizedPnl(_trader, PNL_OPTION_SPOT)
+  let (remainMargin, badDebt, fundingPayment, rolloverFee) = calcRemainMarginWithFundingPaymentAndRolloverFee(
+      positionSize,
+      positionMargin,
+      positionLstUpdCPF,
+      positionTimestamp,
+      unrealizedPnl
+  )
+  throw(
+    s(remainMargin) 
+    + s(fundingPayment)
+    + s(getMarginRatio(_trader))
+    + s(unrealizedPnl)
+    + s(badDebt)
+    + s(positionNotional)
+    + s(rolloverFee)
+  )
+}
+
+@Callable(i)
+func view_getPegAdjustCost(_price: Int) = {
+  let _qtAstR = qtAstR()
+  let _bsAstR = bsAstR()
+
+  let result = getSyncTerminalPrice(_price, _qtAstR, _bsAstR)
+  throw(result._3.toString())
+}
+
+@Callable(i)
+func view_getTerminalAmmPrice() = {
+  let (terminalQuoteAssetReserve, terminalBaseAssetReserve) = getTerminalAmmState()
+  let price = divd(terminalQuoteAssetReserve.muld(qtAstW()), terminalBaseAssetReserve.muld(bsAstW()))
+  throw(price.toString())
+}
+
+@Callable(i)
+func view_getFunding() = {
+  let underlyingPrice = getOraclePrice()
+  let (shortPremiumFraction, longPremiumFraction) = getFunding()
+  let longFunding = divd(longPremiumFraction, underlyingPrice)
+  let shortFunding = divd(shortPremiumFraction, underlyingPrice)
+  throw(s(longFunding) + s(shortFunding) + s(getTwapSpotPrice()) + s(getOraclePrice()))
+}
+
+# View callable functions exposed for another d-Apps
+
+@Callable(i)
+func computeSpotPrice() = {
+  strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
+  let result = getSpotPrice()
+
+  ([], result)
+}
+
+@Callable(i)
+func computeFeeForTraderWithArtifact(_trader: String, _artifactId: String) = {
+  let result = getForTraderWithArtifact(_trader, _artifactId)
+
+  ([], result)
+}
+
+  @Verifier(tx)
+  func verify() = {
+    let coordinatorStr = this.getString(k_coordinatorAddress)
+    if (coordinatorStr.isDefined()) then {
+      let admin = addressFromStringValue(coordinatorStr.value()).getString(k_admin_address)
+      if (admin.isDefined()) then {
+        admin.value().addressFromStringValue().getBoolean("status_" + this.toString() + "_" + tx.id.toBase58String() ).valueOrElse(false)
+      } else { 
+        # Admin is not defined in coordinator, set admin first
+        throw("unable to verify: admin not set in coordinator")
+      }
+    } else {
+      # Coordinator not set, use native verify
+      sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)
+    }
+  }

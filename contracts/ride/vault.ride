@@ -1,0 +1,630 @@
+  {-# STDLIB_VERSION 6 #-}
+  {-# CONTENT_TYPE DAPP #-}
+  {-# SCRIPT_TYPE ACCOUNT #-}
+
+  ##### Key constants #####
+  let k_totalSupply = "k_totalSupply" # Total supply of v-Shares (virtual LP token)
+  let k_rewardBalance = "k_rewardBalance" # Total supply of rewards tokens
+  
+  let k_lockedBalance = "k_lockedBalance" # Amount of USDN reserved (locked from LP)
+  let k_freeBalance = "k_freeBalance" # Amount of USDN free for LP to withdraw
+
+  # Global staking
+  let k_rate = "k_rate" # Rate of exchange from USDN to v-Shares
+  let k_lastUpdateTime = "k_lastUpdateTime"
+  let k_rewardPerTokenStored = "k_rewardPerTokenStored"
+  let k_rewardRate = "k_rewardRate"
+  let k_periodFinish = "k_periodFinish"
+  let k_userRewardPerToken = "k_userRewardPerToken"
+  let k_userReward = "k_userReward"
+
+  # Staked balance of user
+  let k_balance = "k_balance" # Amount of v-Shares per user
+  let k_average_rate = "k_average_rate" # Average rate at which user bought v-Shares
+  let k_withdraw_limit = "k_withdraw_limit" # Amount of tokens user can withdraw per withdraw window
+  let k_last_withdraw_date = "k_last_withdraw_date" # Last date when user have stated withdraw
+  let k_withdraw_in_period = "k_withdraw_in_period" # Amount of tokens user have withdrawn in period
+
+  # Initialization status
+  let k_initialized = "k_initialized"
+
+  # Coordinator
+  let k_coordinatorAddress = "k_coordinatorAddress"
+  let k_amm = "k_amm"
+  let k_governance_asset = "k_gov_asset"
+  let k_quote_asset = "k_quote_asset" 
+  let k_admin_address = "k_admin_address"
+  let k_manager_address = "k_manager_address"
+  let k_collateral_address = "k_collateral_address"
+
+  func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
+
+  ##### Coordinator constants #####
+  func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
+  func isWhitelist(_address: String) = getBoolean(coordinator(), k_amm.toCompositeKey(_address)).valueOrElse(false)
+  func governanceAsset() = fromBase58String(coordinator().getStringValue(k_governance_asset))
+  func adminAddress() = addressFromString(coordinator().getString(k_admin_address).valueOrErrorMessage("Admin address not set"))
+  func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
+  func managerAddress() = addressFromString(coordinator().getStringValue(k_manager_address)).valueOrErrorMessage("Manager not set")
+  # func collateralAddress() = addressFromString(coordinator().getStringValue(k_collateral_address)).valueOrErrorMessage("Collateral Manager not set")
+
+  ##### Core constants #####
+
+  let DECIMAL_UNIT = 1 * (10 * 10 * 10 * 10 * 10 * 10 * 10 * 10) # 10 ** 8
+  let DURATION = 7 * 60 * 60 * 24 # 7 days = 1 week
+  let NO_ADDRESS = ""
+  let NO_STAKER = 0
+
+  ##### Helper functions #####
+  func usdnFromDecimals(_amount: Int)  = _amount / 100
+  func usdnToDecimals(_amount: Int)    = _amount * 100
+
+  func divd(_x: Int, _y: Int) = fraction(_x, DECIMAL_UNIT, _y, HALFEVEN)
+  func muld(_x: Int, _y: Int) = fraction(_x, _y, DECIMAL_UNIT, HALFEVEN)
+  func abs(_x: Int) = if (_x > 0) then _x else -_x
+  func minv(_x: Int, _y: Int) = if (_x > _y) then _y else _x
+
+
+  ##### Fundamental constants
+  let WITHDRAW_PERIOD = 86400 * 1000 # 1 day in milliseconds
+  let WITHDRAW_PER_PERIOD = divd(1 * DECIMAL_UNIT, 4 * DECIMAL_UNIT) # 25% per 24h
+
+  ##### Accessor functions #####
+  func int(k: String) = this.getInteger(k).valueOrErrorMessage("no value for " + k)
+  func int0(k: String) = this.getInteger(k).valueOrElse(0)
+  func int1(k: String) = this.getInteger(k).valueOrElse(DECIMAL_UNIT)
+
+  func totalSupply() = int0(k_totalSupply)
+  
+  func rate() = int1(k_rate)
+  func balanceOf(_staker: String) = int0(k_balance.toCompositeKey(_staker))
+  func averageRate(_staker: String) = int0(k_average_rate.toCompositeKey(_staker))
+  func withdrawLimit(_staker: String) = int0(k_withdraw_limit.toCompositeKey(_staker))
+  func withdrawnInPeriod(_staker: String) = int0(k_withdraw_in_period.toCompositeKey(_staker))
+  func lastWithdrawnDate(_staker: String) = int0(k_last_withdraw_date.toCompositeKey(_staker))
+  func freeBalance() = int0(k_freeBalance)
+  func lockedBalance() = int0(k_lockedBalance)
+  func rewardPerTokenStored() = int0(k_rewardPerTokenStored)
+  func lastUpdateTime() = int0(k_lastUpdateTime)
+  func rewardRate() = int0(k_rewardRate)
+  func periodFinish() = int0(k_periodFinish)
+  func rewardBalance() = int0(k_rewardBalance)
+  func rewards(_staker: String) = int0(k_userReward.toCompositeKey(_staker))
+  func userRewardPerTokenPaid(_staker: String) = int0(k_userRewardPerToken.toCompositeKey(_staker))
+
+  func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
+
+  func currentTimestamp() = lastBlock.timestamp
+  func currentTimestampSec() = currentTimestamp() / 1000
+
+  func getWithdrawLimitLeft(_staker: String) = {
+    let currentDate = currentTimestamp()
+    let lastWithdrawDate = lastWithdrawnDate(_staker)
+    
+    let (newLastWithdrawnDate, withdrawLimitLeft) = 
+      if (currentDate - lastWithdrawDate > WITHDRAW_PERIOD) then {
+        (currentDate, withdrawLimit(_staker))
+      } else {
+        (lastWithdrawDate, withdrawLimit(_staker) - withdrawnInPeriod(_staker))
+      }
+    
+    (newLastWithdrawnDate, withdrawLimitLeft)
+  }
+
+  func computeNewRate(_amountOfQuoteAsset: Int) = {
+    let newRate = if (totalSupply() > 0) then { 
+      (freeBalance() + _amountOfQuoteAsset).divd(totalSupply())
+    } else {
+      DECIMAL_UNIT
+    }
+
+    newRate
+  }
+
+  func lastTimeRewardApplicable() = {
+    minv(currentTimestampSec(), periodFinish())
+  }
+
+  func rewardPerToken(_balanceDelta: Int) = {
+    if (totalSupply() + _balanceDelta == 0) then {
+      rewardPerTokenStored()
+    } else {
+      let timeInterval = lastTimeRewardApplicable() - lastUpdateTime()
+      let actualTimeInterval = if (timeInterval < 0) then 0 else timeInterval
+      let diff = divd(rewardRate() * actualTimeInterval, totalSupply() + _balanceDelta)
+      rewardPerTokenStored() + diff
+    }
+  }
+
+  func earned(_staker: String, _balanceDelta: Int) = {
+    let rewardDelta = rewardPerToken(_balanceDelta) - userRewardPerTokenPaid(_staker)
+    muld((balanceOf(_staker) + _balanceDelta), rewardDelta) + rewards(_staker)
+  }
+
+  func updateReward(_staker: String, _balanceDelta: Int) = {
+    let newRewardPerTokenStored = rewardPerToken(_balanceDelta)
+    let newLastUpdateTime = currentTimestampSec()
+    let (stakerEarned, stakerRewardPerTokenPaid) = if (_staker != "") then {
+      (
+        earned(_staker, _balanceDelta),
+        newRewardPerTokenStored
+      )
+    } else {
+      (0, 0)
+    }
+
+    (
+      newRewardPerTokenStored,
+      newLastUpdateTime,
+      stakerEarned,
+      stakerRewardPerTokenPaid
+    )
+  }
+
+  ##### Update functions #####
+  func updateUserBalance(_user: String, _change: Int) = {
+    [
+      IntegerEntry(k_balance.toCompositeKey(_user), balanceOf(_user) + _change)
+    ]
+  }
+
+  func setUserWithdrawLimit(_user: String, _rate: Int) = {
+    [
+      IntegerEntry(k_withdraw_limit.toCompositeKey(_user), _rate)
+    ]
+  }
+
+  func setUserAverageRate(_user: String, _rate: Int) = {
+    [
+      IntegerEntry(k_average_rate.toCompositeKey(_user), _rate)
+    ]
+  }
+
+  func updateFreeBalance(_change: Int) = {
+    let balance = freeBalance()
+    if (balance + _change >= 0) then {
+      [
+        IntegerEntry(k_freeBalance, balance + _change)
+      ]
+    } else {
+      throw("Vault: can not update free balance. Balance: " + balance.toString() + " change: " + _change.toString())
+    }
+  }
+
+  func updateLockedBalance(_change: Int) = {
+    let balance = lockedBalance()
+    if (balance + _change >= 0) then {
+      [
+        IntegerEntry(k_lockedBalance, balance + _change)
+      ]
+    } else {
+      throw("Vault: can not update locked balance. Balance: " + balance.toString() + " change: " + _change.toString())
+    }
+  }
+
+  func updateTotalSupply(_change: Int) = {
+    [
+      IntegerEntry(k_totalSupply, totalSupply() + _change)
+    ]
+  }
+
+  func updateRate(_rate: Int) = {
+    [
+      IntegerEntry(k_rate, _rate)
+    ]
+  }
+
+  func setUserWithdrawParams(_user: String, _lastWithdrawDate: Int, _withdrawn: Int) = {
+    [
+      IntegerEntry(k_last_withdraw_date.toCompositeKey(_user), _lastWithdrawDate),
+      IntegerEntry(k_withdraw_in_period.toCompositeKey(_user), _withdrawn)
+    ]
+  }
+
+  func updateRewardBalance(_delta: Int) = {
+    [
+      IntegerEntry(k_rewardBalance, rewardBalance() + _delta)
+    ]
+  }
+
+  func updateRewardRate(_rewardRate: Int) = {
+    [
+      IntegerEntry(k_rewardRate, _rewardRate)
+    ]
+  }
+
+  func updateTime(
+    _lastUpdateTime: Int,
+    _periodFinish: Int
+  ) = {
+    [
+      IntegerEntry(k_lastUpdateTime, _lastUpdateTime),
+      IntegerEntry(k_periodFinish, _periodFinish)
+    ]
+  }
+
+  func updateRewardPerTokenStored(_rewardPerTokenStored: Int) = {
+    [
+      IntegerEntry(k_rewardPerTokenStored, _rewardPerTokenStored)
+    ]
+  }
+
+  func updateUserRewards(
+    _staker: String,
+    _reward: Int,
+    _userRewardPerToken: Int
+  ) = {
+    [
+      IntegerEntry(k_userReward.toCompositeKey(_staker), _reward),
+      IntegerEntry(k_userRewardPerToken.toCompositeKey(_staker), _userRewardPerToken)
+    ]
+  }
+
+  @Callable(i)
+  func initialize(
+    _coordinator: String
+  ) = {
+    if (initialized() || i.caller != this) then {
+      throw("Unable to initialize")
+    } else {
+      [
+        StringEntry(k_coordinatorAddress, addressFromString(_coordinator).valueOrErrorMessage("Invalid coordinator address").toString()),
+        BooleanEntry(k_initialized, true)
+      ]
+    }
+  }
+  
+  @Callable(i)
+  func stake() = {
+    let _staker = i.caller.toString()
+    let _amount = i.payments[0].amount.usdnToDecimals()
+    if (
+      i.payments[0].assetId != quoteAsset() 
+      || i.payments.size() != 1
+      || !initialized()
+    ) then {
+      throw("Invalid call to stake")
+    } else {
+      let (
+        newRewardPerTokenStored,
+        newLastUpdateTime,
+        stakerEarned,
+        stakerRewardPerTokenPaid
+      ) = updateReward(_staker, 0)
+
+      # Do not change the rate, just issue v-Shares and be done with its
+      let currentRate = rate()
+      let prevAverageRate = averageRate(_staker)
+      let vAmount = _amount.divd(currentRate)
+      let newAverageRate = divd(
+        vAmount.muld(currentRate) + balanceOf(_staker).muld(prevAverageRate), 
+        vAmount + balanceOf(_staker)
+      )
+
+      let newTotalBalance = vAmount + balanceOf(_staker)
+      let newWithdrawLimit = newTotalBalance.muld(WITHDRAW_PER_PERIOD)
+
+      strict stake = invoke(
+        managerAddress(),
+        "deposit",
+        [],
+        [AttachedPayment(quoteAsset(), _amount.usdnFromDecimals())]
+      )
+
+      updateUserRewards(_staker, stakerEarned, stakerRewardPerTokenPaid)
+      ++
+      updateRewardPerTokenStored(newRewardPerTokenStored)
+      ++
+      updateTime(newLastUpdateTime, periodFinish())
+      ++
+      updateFreeBalance(_amount)
+      ++
+      updateUserBalance(_staker, vAmount)
+      ++
+      setUserAverageRate(_staker, newAverageRate)
+      ++
+      setUserWithdrawLimit(_staker, newWithdrawLimit)
+      ++
+      updateTotalSupply(vAmount)
+    }
+  }
+
+  @Callable(i)
+  func unStake(_amount: Int) = {
+    let _staker = i.caller.toString()
+    let amountOfQuoteAsset = _amount.usdnToDecimals()
+    if ( 
+      i.payments != []
+      || amountOfQuoteAsset <= 0
+      || !initialized()
+    ) then {
+      throw("Invalid call to unStake")
+    } else {      
+      let (
+        newRewardPerTokenStored,
+        newLastUpdateTime,
+        stakerEarned,
+        stakerRewardPerTokenPaid
+      ) = updateReward(_staker, 0)
+
+      # Now we determine how much we can withdraw currently
+      let (newLastWithdrawnDate, withdrawLimitLeft) = getWithdrawLimitLeft(_staker)
+      
+      # Get the amount of v-Shares user want to withdraw
+      let vAmount = amountOfQuoteAsset.divd(rate())
+      if (vAmount > withdrawLimitLeft) then {
+        throw("Invalid call to unStake: withdraw over limit")
+      } else {
+        let newWithdrawnInPeriod = withdrawnInPeriod(_staker) + vAmount
+        if (amountOfQuoteAsset > freeBalance()) then {
+          throw("Invalid call to unStake: balance too low") # Should never happen
+        } else {
+          strict unstake = invoke(
+            managerAddress(),
+            "withdraw",
+            [quoteAsset().toBase58String(),  amountOfQuoteAsset.usdnFromDecimals()],
+            []
+          )
+
+          updateUserRewards(_staker, stakerEarned, stakerRewardPerTokenPaid)
+          ++
+          updateRewardPerTokenStored(newRewardPerTokenStored)
+          ++
+          updateTime(newLastUpdateTime, periodFinish())
+          ++
+          updateFreeBalance(-amountOfQuoteAsset)
+          ++
+          updateUserBalance(_staker, -vAmount)
+          ++
+          updateTotalSupply(-vAmount)
+          ++
+          setUserWithdrawParams(_staker, newLastWithdrawnDate, newWithdrawnInPeriod)
+          ++
+          [
+            ScriptTransfer(i.caller, amountOfQuoteAsset.usdnFromDecimals(), quoteAsset())
+          ]
+        }
+      }
+    }
+  }
+
+  @Callable(i)
+  func withdrawRewards() = {
+    let _staker = i.caller.toString()
+    let (
+      newRewardPerTokenStored,
+      newLastUpdateTime,
+      stakerEarned,
+      stakerRewardPerTokenPaid
+    ) = updateReward(_staker, 0)
+    if (stakerEarned <= 0 || !initialized()) then {
+      throw("No reward: Vault")
+    } else {
+      updateUserRewards(_staker, 0, stakerRewardPerTokenPaid)
+      ++
+      updateRewardPerTokenStored(newRewardPerTokenStored)
+      ++
+      updateTime(newLastUpdateTime, periodFinish())
+      ++
+      updateRewardBalance(-stakerEarned)
+      ++
+      [
+        ScriptTransfer(i.caller, stakerEarned, governanceAsset())
+      ]
+    }
+  }
+
+  @Callable(i)
+  func addFree() = {
+    let _amount = i.payments[0].amount.usdnToDecimals()
+    if (
+      i.payments[0].assetId != quoteAsset()
+      || i.payments.size() != 1
+      || !initialized()
+      || !(
+        isWhitelist(i.caller.toString()) 
+        || i.caller == adminAddress()
+      )
+    ) then {
+      throw("Invalid addFree params")
+    } else {
+      let newRate = computeNewRate(_amount)
+
+      strict stake = invoke(
+        managerAddress(),
+        "deposit",
+        [],
+        [AttachedPayment(quoteAsset(), _amount.usdnFromDecimals())]
+      )
+
+      updateFreeBalance(_amount)
+      ++
+      updateRate(newRate)
+    }
+  }
+
+  @Callable(i)
+  func addLocked() = {
+    let _amount = i.payments[0].amount.usdnToDecimals()
+    if (
+      i.payments[0].assetId != quoteAsset()
+      || i.payments.size() != 1
+      || !initialized()
+      || !(
+        isWhitelist(i.caller.toString()) 
+        || i.caller == adminAddress()
+      )
+    ) then {
+      throw("Invalid addLocked params")
+    } else {
+      strict unstake = invoke(
+        managerAddress(),
+        "deposit",
+        [],
+        [AttachedPayment(quoteAsset(), _amount.usdnFromDecimals())]
+      )
+      updateLockedBalance(_amount)
+    }
+  }
+
+  @Callable(i)
+  func exchangeFreeAndLocked(_amount: Int) = {
+    # Positive amount means withdraw from free and add to locked
+    # And vice - versa
+    if (
+      !initialized()
+      || !isWhitelist(i.caller.toString())
+    ) then {
+      throw("Invalid exchangeFreeAndLocked params")
+    } else {
+      let amountOfQuoteAsset = _amount.usdnToDecimals()
+
+      let newRate = computeNewRate(-amountOfQuoteAsset)
+      
+      updateLockedBalance(amountOfQuoteAsset)
+      ++
+      updateFreeBalance(-amountOfQuoteAsset)
+      ++
+      updateRate(newRate)
+    }
+  }
+
+  @Callable(i)
+  func withdrawLocked(_amount: Int) = {
+    if (
+      !initialized()
+      || _amount <= 0
+      || !(
+        isWhitelist(i.caller.toString())
+      )
+    ) then {
+      throw("Invalid withdrawLocked params")
+    } else {
+      let amountOfQuoteAsset = _amount.usdnToDecimals()
+
+      strict unstake = invoke(
+        managerAddress(),
+        "withdraw",
+        [quoteAsset().toBase58String(),  amountOfQuoteAsset.usdnFromDecimals()],
+        []
+      )
+
+      updateLockedBalance(-amountOfQuoteAsset)
+      ++
+      [
+        ScriptTransfer(i.caller, amountOfQuoteAsset.usdnFromDecimals(), quoteAsset())
+      ]
+    }
+  }
+
+  # New rewards added to contract
+  @Callable(i)
+  func addRewards() = {
+    if (
+      i.payments[0].assetId != governanceAsset()
+      || i.payments.size() != 1
+      || !initialized()
+    ) then {
+      throw("Invalid addRewards params")
+    } else {
+      let _reward = i.payments[0].amount
+
+      let newRewardPerTokenStored = updateReward(NO_ADDRESS, NO_STAKER)._1
+
+      let timestamp = currentTimestampSec()
+      let newRewardRate = if (timestamp > periodFinish()) then {
+        # there is no reward during the interval after the end of the previous period and before new rewards arrive
+        # rewardRate = 2/1 = 2
+        _reward / DURATION
+      } else {
+        let remainingTime = periodFinish() - timestamp
+        let leftover = rewardRate() * remainingTime
+        (_reward + leftover) / DURATION
+      }
+      
+      updateRewardRate(newRewardRate)
+      ++
+      updateRewardPerTokenStored(newRewardPerTokenStored)
+      ++
+      updateRewardBalance(_reward)
+      ++
+      updateTime(
+        timestamp,
+        timestamp + DURATION
+      )
+    }
+  }
+
+  @Callable(i)
+  func ackRewards() = {
+    strict profitResp = invoke(
+      managerAddress(),
+      "claimProfit",
+      [quoteAsset().toBase58String()],
+      []
+    )
+
+    let profit = match profitResp {
+      case p: Int => p.usdnToDecimals()
+      case _ => throw("Invalid claimProfit response")
+    }
+
+    strict result = if (profit > 0) then {
+      let newRate = computeNewRate(profit)
+
+      strict stake = invoke(
+        managerAddress(),
+        "deposit",
+        [],
+        [AttachedPayment(quoteAsset(), profit.usdnFromDecimals())]
+      )
+
+      updateFreeBalance(profit)
+      ++
+      updateRate(newRate)
+    } else {
+      []
+    }
+
+    result
+  }
+
+  @Callable(i)
+  func view_reward(_staker: String) = {
+    let balance = balanceOf(_staker)
+    let depositedAmount = averageRate(_staker).muld(balance)
+    let currentAmount = rate().muld(balance)
+    let earnedQuote = currentAmount - depositedAmount
+    throw(earnedQuote.toString())
+  }
+
+  @Callable(i)
+  func view_stakingReward(_staker: String) = {
+    let stakerEarned = updateReward(_staker, 0)._3
+    throw(stakerEarned.usdnFromDecimals().toString())
+  }
+
+  @Callable(i)
+  func view_withdrawLimit(_staker: String) = {
+    let withdrawLimitLeft = getWithdrawLimitLeft(_staker)._2
+    let limitInUsdn = withdrawLimitLeft.muld(rate()).usdnFromDecimals()
+
+    throw(limitInUsdn.toString())
+  }
+
+  @Verifier(tx)
+  func verify() = {
+    let coordinatorStr = this.getString(k_coordinatorAddress)
+    if (coordinatorStr.isDefined()) then {
+      let admin = addressFromStringValue(coordinatorStr.value()).getString(k_admin_address)
+      if (admin.isDefined()) then {
+        admin.value().addressFromStringValue().getBoolean("status_" + this.toString() + "_" + tx.id.toBase58String() ).valueOrElse(false)
+      } else { 
+        # Admin is not defined in coordinator, set admin first
+        throw("unable to verify: admin not set in coordinator")
+      }
+    } else {
+      # Coordinator not set, use native verify
+      sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)
+    }
+  }

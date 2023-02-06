@@ -57,8 +57,8 @@ describe("vAMM should not be able to go more than 40% off index price", async fu
 
   it("Allows closing long position", async function () {
     await Promise.all([
-      amm.as(longer).decreasePosition(2000, 3, 0),
-      amm.as(longer).decreasePosition(2000, 3, 0),
+      amm.as(longer).closePosition(6000 / 55),
+      amm.as(longer).closePosition(6000 / 55),
     ]);
     await amm.as(longer).closePosition();
   });
@@ -80,8 +80,8 @@ describe("vAMM should not be able to go more than 40% off index price", async fu
 
   it("Allows closing short position", async function () {
     await Promise.all([
-      amm.as(shorter).decreasePosition(2000, 3, 0),
-      amm.as(shorter).decreasePosition(2000, 3, 0),
+      amm.as(shorter).closePosition(7000 / 55),
+      amm.as(shorter).closePosition(7000 / 55),
     ]);
     await amm.as(shorter).closePosition();
   });

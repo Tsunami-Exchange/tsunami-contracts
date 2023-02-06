@@ -15,15 +15,15 @@ console.log(pnc)
 
 */
 
-const cost = 0.74 * 10_000_000
-const y1 = 7_000_000 * 0.045 * 80 / 2
-const y2 = 3_000_000 * 0.01 * 80 /2
+const cost = 0.74 * 10_000_000;
+const y1 = (7_000_000 * 0.045 * 80) / 2;
+const y2 = (3_000_000 * 0.01 * 80) / 2;
 
-console.log(`cost=${cost}`)
-console.log(`y1 = ${y1} spend=${7_000_000 * 0.74}`)
-console.log(`y2 = ${y2} spend=${3_000_000 * 0.74}`)
-console.log(y1 + y2 - cost)
+console.log(`cost=${cost}`);
+console.log(`y1 = ${y1} spend=${7_000_000 * 0.74}`);
+console.log(`y2 = ${y2} spend=${3_000_000 * 0.74}`);
+console.log(y1 + y2 - cost);
 
-14_600_000
+14_600_000;
 
-3_733_333
+3_733_333;

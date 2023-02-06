@@ -51,12 +51,6 @@ describe("vAMM should work with multi-collateral", async function () {
     amm = _amm;
   });
 
-  it("Can add insurance funds", async function () {
-    let addInsuranceFundsTx = await e.insurance.deposit(30);
-
-    console.log("Added insurance funds by " + addInsuranceFundsTx.id);
-  });
-
   it("Can open position", async function () {
     await amm
       .as(longer)
@@ -65,14 +59,14 @@ describe("vAMM should work with multi-collateral", async function () {
 
     const { size, margin, openNotional } = await amm.getPositionInfo(longer);
 
-    expect(size).to.be.eq(539840);
-    expect(margin).to.be.eq(9900000);
-    expect(openNotional).to.be.eq(29700000);
+    expect(size).to.be.eq(543336);
+    expect(margin).to.be.eq(9964129);
+    expect(openNotional).to.be.eq(29892387);
 
     const { totalSize, totalLong, totalShort } = await amm.totalPositionInfo();
 
-    expect(totalSize).to.be.eq(539840);
-    expect(totalLong).to.be.eq(539840);
+    expect(totalSize).to.be.eq(543336);
+    expect(totalLong).to.be.eq(543336);
     expect(totalShort).to.be.eq(0);
   });
 
@@ -98,30 +92,14 @@ describe("vAMM should work with multi-collateral", async function () {
 
     const { size, margin, openNotional } = await amm.getPositionInfo(longer);
 
-    expect(size).to.be.eq(809640);
-    expect(margin).to.be.eq(14850000);
-    expect(openNotional).to.be.eq(44550000);
+    expect(size).to.be.eq(814882);
+    expect(margin).to.be.eq(14946194);
+    expect(openNotional).to.be.eq(44838582);
 
     const { totalSize, totalLong, totalShort } = await amm.totalPositionInfo();
 
-    expect(totalSize).to.be.eq(809640);
-    expect(totalLong).to.be.eq(809640);
-    expect(totalShort).to.be.eq(0);
-  });
-
-  it("Can decrease position", async function () {
-    await amm.as(longer).decreasePosition(3, 3, 0.15);
-
-    const { size, margin, openNotional } = await amm.getPositionInfo(longer);
-
-    expect(size).to.be.eq(646135);
-    expect(margin).to.be.eq(14850007);
-    expect(openNotional).to.be.eq(35550007);
-
-    const { totalSize, totalLong, totalShort } = await amm.totalPositionInfo();
-
-    expect(totalSize).to.be.eq(646135);
-    expect(totalLong).to.be.eq(646135);
+    expect(totalSize).to.be.eq(814882);
+    expect(totalLong).to.be.eq(814882);
     expect(totalShort).to.be.eq(0);
   });
 
@@ -130,9 +108,9 @@ describe("vAMM should work with multi-collateral", async function () {
 
     const { size, margin, openNotional } = await amm.getPositionInfo(longer);
 
-    expect(size).to.be.eq(646135);
-    expect(margin).to.be.eq(17820007);
-    expect(openNotional).to.be.eq(35550007);
+    expect(size).to.be.eq(814882);
+    expect(margin).to.be.eq(17946194);
+    expect(openNotional).to.be.eq(44838582);
   });
 
   it("Can NOT add margin in USDC (Different Asset)", async function () {
@@ -147,15 +125,11 @@ describe("vAMM should work with multi-collateral", async function () {
   it("Can remove margin", async function () {
     await amm.as(longer).removeMargin(2);
 
-    //const {amount, assetId} = await amm.getBorrow(longer)
-    //expect(amount).to.be.equal(8 * decimals)
-    //expect(assetId).to.be.equal(e.assets.usdt)
-
     const { size, margin, openNotional } = await amm.getPositionInfo(longer);
 
-    expect(size).to.be.eq(646135);
-    expect(margin).to.be.eq(15820007);
-    expect(openNotional).to.be.eq(35550007);
+    expect(size).to.be.eq(814882);
+    expect(margin).to.be.eq(15946194);
+    expect(openNotional).to.be.eq(44838582);
   });
 
   it("Can not remove too much margin", async function () {
@@ -189,6 +163,8 @@ describe("vAMM should work with multi-collateral", async function () {
   });
 
   it("Can close long position", async function () {
+    let info = await amm.getPositionActualData(longer);
+    console.log(JSON.stringify(info));
     await amm.as(longer).closePosition();
   });
 
@@ -199,5 +175,260 @@ describe("vAMM should work with multi-collateral", async function () {
   it("Validate that insurance is untouched", async function () {
     let balance = await e.insurance.getBalance();
     expect(balance).to.be.greaterThanOrEqual(30);
+  });
+});
+
+describe("vAMM should work with multi-collateral and borrowing maker USDN to settle on-chain trades", async function () {
+  this.timeout(600000);
+
+  let e, amm, longer1, longer2, longer3, maker;
+
+  before(async function () {
+    await setupAccounts({
+      admin: 1 * wvs,
+      longer1: 0.1 * wvs,
+      longer2: 0.1 * wvs,
+      longer3: 0.1 * wvs,
+      maker: 0.1 * wvs,
+    });
+
+    longer1 = accounts.longer1;
+    longer2 = accounts.longer2;
+    longer3 = accounts.longer3;
+    maker = accounts.maker;
+
+    e = new Environment(accounts.admin);
+    await e.deploy();
+    let [_amm] = await Promise.all([
+      e.deployAmm(100000, 55),
+      e.fundAccountsUsdt({
+        [longer1]: 3000,
+        [longer2]: 3000,
+        [longer3]: 3000,
+      }),
+      e.fundAccounts({
+        [maker]: 500,
+      }),
+    ]);
+
+    amm = _amm;
+  });
+
+  it("Can supply funds as maker", async function () {
+    await e.vault.as(maker).stake(500);
+  });
+
+  it("Can realize on-chain PnL using borrowed funds from maker", async function () {
+    await amm
+      .as(longer1)
+      .withAssetId(e.assets.usdt)
+      .increasePosition(1000, DIR_LONG, 3, 0);
+
+    await amm
+      .as(longer2)
+      .withAssetId(e.assets.usdt)
+      .increasePosition(1000, DIR_LONG, 3, 0);
+
+    await amm
+      .as(longer3)
+      .withAssetId(e.assets.usdt)
+      .increasePosition(1000, DIR_LONG, 3, 0);
+
+    let info = await amm.getPositionActualData(longer1);
+    console.log(JSON.stringify(info));
+
+    await amm.as(longer1).closePosition();
+  });
+
+  it("Can realize on-chain negative PnL (loss) returning funds to maker", async function () {
+    let info = await amm.getPositionActualData(longer2);
+    console.log(JSON.stringify(info));
+
+    await amm.as(longer2).closePosition();
+  });
+
+  it("Can realize large amount of on-chain negative PnL (loss) returning funds to maker", async function () {
+    let info = await amm.getPositionActualData(longer3);
+    console.log(JSON.stringify(info));
+
+    await amm.as(longer3).closePosition();
+  });
+
+  it("Check that maker is in profit", async function () {
+    let stakedUSDN = await e.vault.usdnBalanceOf(maker);
+    let realUSDN = await e.manager.usdnBalance();
+
+    console.log(
+      JSON.stringify({
+        stakedUSDN,
+        realUSDN,
+      })
+    );
+
+    expect(stakedUSDN).to.be.greaterThan(510);
+    expect(realUSDN).to.be.greaterThan(510);
+  });
+});
+
+describe("vAMM should work with multi-collateral and borrowing maker USDN to settle off-chain trades", async function () {
+  this.timeout(600000);
+
+  let e, amm, longer1, longer2, longer3, maker;
+
+  before(async function () {
+    await setupAccounts({
+      admin: 1 * wvs,
+      longer1: 0.1 * wvs,
+      longer2: 0.1 * wvs,
+      longer3: 0.1 * wvs,
+      maker: 0.1 * wvs,
+    });
+
+    longer1 = accounts.longer1;
+    longer2 = accounts.longer2;
+    longer3 = accounts.longer3;
+    maker = accounts.maker;
+
+    e = new Environment(accounts.admin);
+    await e.deploy();
+    let [_amm] = await Promise.all([
+      e.deployAmm(100000, 55),
+      e.fundAccountsUsdt({
+        [longer1]: 3000,
+        [longer2]: 3000,
+        [longer3]: 3000,
+      }),
+      e.fundAccounts({
+        [maker]: 500,
+      }),
+    ]);
+
+    amm = _amm;
+  });
+
+  it("Can supply funds as maker", async function () {
+    await e.vault.as(maker).stake(500);
+  });
+
+  it("Can realize on-chain PnL using borrowed funds from maker", async function () {
+    await amm
+      .as(longer1)
+      .withAssetId(e.assets.usdt)
+      .increasePosition(1000, DIR_LONG, 3, 0);
+
+    await amm
+      .as(longer2)
+      .withAssetId(e.assets.usdt)
+      .increasePosition(1000, DIR_LONG, 3, 0);
+
+    await amm
+      .as(longer3)
+      .withAssetId(e.assets.usdt)
+      .increasePosition(1000, DIR_LONG, 3, 0);
+
+    let info = await amm.getPositionActualData(longer1);
+    console.log(JSON.stringify(info));
+
+    {
+      let freeUSDN = await e.vault.freeBalance();
+      let lockedUSDN = await e.vault.lockedBalance();
+      let realUSDN = await e.manager.usdnBalance();
+      let borrowedUSDN = await e.vault.freeBorrowedBalance();
+
+      console.log(
+        JSON.stringify({
+          freeUSDN,
+          lockedUSDN,
+          borrowedUSDN,
+          realUSDN,
+        })
+      );
+    }
+
+    await amm.as(longer1).closePosition();
+  });
+
+  it("Can realize on-chain negative PnL (loss) returning funds to maker", async function () {
+    let info = await amm.getPositionActualData(longer2);
+    console.log(JSON.stringify(info));
+
+    {
+      let freeUSDN = await e.vault.freeBalance();
+      let lockedUSDN = await e.vault.lockedBalance();
+      let realUSDN = await e.manager.usdnBalance();
+      let borrowedUSDN = await e.vault.freeBorrowedBalance();
+
+      console.log(
+        JSON.stringify({
+          freeUSDN,
+          lockedUSDN,
+          borrowedUSDN,
+          realUSDN,
+        })
+      );
+    }
+
+    await amm.as(longer2).closePosition();
+  });
+
+  it("Can compensate large amount of on-chain negative PnL (loss) by off-chain price raise", async function () {
+    {
+      let freeUSDN = await e.vault.freeBalance();
+      let lockedUSDN = await e.vault.lockedBalance();
+      let realUSDN = await e.manager.usdnBalance();
+      let borrowedUSDN = await e.vault.freeBorrowedBalance();
+
+      console.log(
+        `Before adjust=` +
+          JSON.stringify({
+            freeUSDN,
+            lockedUSDN,
+            borrowedUSDN,
+            realUSDN,
+          })
+      );
+    }
+
+    await amm.setOraclePrice(61.7);
+    await amm.syncTerminalPriceToOracle();
+
+    let info = await amm.getPositionActualData(longer3);
+    console.log(JSON.stringify(info));
+
+    {
+      let freeUSDN = await e.vault.freeBalance();
+      let lockedUSDN = await e.vault.lockedBalance();
+      let realUSDN = await e.manager.usdnBalance();
+      let borrowedUSDN = await e.vault.freeBorrowedBalance();
+
+      console.log(
+        JSON.stringify({
+          freeUSDN,
+          lockedUSDN,
+          borrowedUSDN,
+          realUSDN,
+        })
+      );
+    }
+
+    await amm.as(longer3).closePosition();
+  });
+
+  it("Check that maker is in profit", async function () {
+    let freeUSDN = await e.vault.freeBalance();
+    let lockedUSDN = await e.vault.lockedBalance();
+    let realUSDN = await e.manager.usdnBalance();
+    let borrowedUSDN = await e.vault.freeBorrowedBalance();
+
+    console.log(
+      JSON.stringify({
+        freeUSDN,
+        lockedUSDN,
+        borrowedUSDN,
+        realUSDN,
+      })
+    );
+
+    expect(realUSDN).to.be.greaterThan(183);
   });
 });

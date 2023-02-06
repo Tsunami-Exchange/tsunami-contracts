@@ -67,12 +67,12 @@ describe("vAMM should be able to handle large price impacts", async function () 
   });
 
   it("Can not reduce long position with large price impact", async function () {
-    return expect(amm.as(longer).decreasePosition(4000, 3, 50)).to.eventually.be
-      .rejected;
+    return expect(amm.as(longer).closePosition((4000 * 3) / 55, 0, true)).to
+      .eventually.be.rejected;
   });
 
   it("Alow long position with large price impact to be gradually reduced", async function () {
-    await amm.as(longer).decreasePosition(2300, 3, 50);
+    await amm.as(longer).closePosition((2300 * 3) / 55, 0, true);
     await amm.as(longer).closePosition();
   });
 
@@ -84,12 +84,12 @@ describe("vAMM should be able to handle large price impacts", async function () 
   });
 
   it("Can not reduce short position with large price impact", async function () {
-    expect(amm.as(shorter).decreasePosition(4000, 3, 50)).to.eventually.be
-      .rejected;
+    expect(amm.as(shorter).closePosition((4000 * 3) / 55, 0, true)).to
+      .eventually.be.rejected;
   });
 
   it("Allow short position with large price impact to be gradually reduced", async function () {
-    await amm.as(shorter).decreasePosition(2300, 3, 50);
+    await amm.as(shorter).closePosition((3000 * 3) / 55, 0, true);
     await amm.as(shorter).closePosition();
   });
 });

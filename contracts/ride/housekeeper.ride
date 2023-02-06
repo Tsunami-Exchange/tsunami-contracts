@@ -9,9 +9,9 @@
   let k_coordinatorAddress = "k_coordinatorAddress"
   let k_staking_address = "k_staking_address"
   let k_farming_address = "k_farming_address"
+  let k_vault_address = "k_vault_address"
   let k_governance_asset = "k_gov_asset"
   let k_quote_asset = "k_quote_asset" 
-  let k_admin_public_key = "k_admin_public_key" 
   let k_admin_address = "k_admin_address"  
 
   
@@ -20,11 +20,11 @@
   ##### Coordinator constants #####
   func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
   func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
-  func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
   func governanceAsset() = fromBase58String(coordinator().getStringValue(k_governance_asset))
   func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
   func stakingAddress() = addressFromString(coordinator().getStringValue(k_staking_address)).valueOrErrorMessage("Staking not set")
-  func farmingAddress() = addressFromString(coordinator().getStringValue(k_farming_address)).valueOrErrorMessage("Staking not set")
+  func farmingAddress() = addressFromString(coordinator().getStringValue(k_farming_address)).valueOrErrorMessage("Farming not set")
+  func vaultAddress() = addressFromString(coordinator().getStringValue(k_vault_address)).valueOrErrorMessage("Vault not set") 
 
   func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
 
@@ -32,11 +32,11 @@
   func initialize(
     _coordinator: String
   ) = {
-    if (initialized()) then {
-      throw("Already initialized")
+    if (initialized() || i.caller != this) then {
+      throw("Unable to initialize")
     } else {
       [
-        StringEntry(k_coordinatorAddress, _coordinator),
+        StringEntry(k_coordinatorAddress, addressFromStringValue(_coordinator).toString()),
         BooleanEntry(k_initialized, true)
       ]
     }
@@ -60,6 +60,13 @@
       []
     )
 
+    strict doAckRewardsVault = invoke(
+      vaultAddress(),
+      "ackRewards",
+      [],
+      []
+    )
+
     let amms = _payFunding.strToList()
     func compute(_acc: List[StringEntry], _amm: String) = {
       strict doPayFunding = invoke(
@@ -76,4 +83,18 @@
 
 
   @Verifier(tx)
-  func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], adminPublicKey())
+  func verify() = {
+    let coordinatorStr = this.getString(k_coordinatorAddress)
+    if (coordinatorStr.isDefined()) then {
+      let admin = addressFromStringValue(coordinatorStr.value()).getString(k_admin_address)
+      if (admin.isDefined()) then {
+        admin.value().addressFromStringValue().getBoolean("status_" + this.toString() + "_" + tx.id.toBase58String() ).valueOrElse(false)
+      } else { 
+        # Admin is not defined in coordinator, set admin first
+        throw("unable to verify: admin not set in coordinator")
+      }
+    } else {
+      # Coordinator not set, use native verify
+      sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)
+    }
+  }

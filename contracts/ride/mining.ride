@@ -15,6 +15,7 @@
   let k_traderAverageNotionalInPeriod = "k_traderAverageNotionalInPeriod"
   let k_ammRewardRate = "k_ammRewardRate"
   let k_assetMaxAmountPerPeriod = "k_assetMaxAmountPerPeriod"
+  let k_assetLastUpdated = "k_assetLastUpdated"
   let k_rewardAssetIds = "k_rewardAssetIds"
   let k_amms = "k_amms"
   let k_claimedAssetAndPeriod = "k_claimedAssetAndPeriod"
@@ -32,7 +33,6 @@
   let k_coordinatorAddress = "k_coordinatorAddress"
   let k_governance_asset = "k_gov_asset"
   let k_quote_asset = "k_quote_asset" 
-  let k_admin_public_key = "k_admin_public_key"
   let k_admin_address = "k_admin_address" 
   let k_amm = "k_amm"                               
 
@@ -43,6 +43,14 @@
   let MS_IN_WEEK = 1000 * 604800
   let MS_IN_DAY = 1000 * 86400
   let NO_DISCOUNT = DECIMAL_UNIT / 100 # 10 ** 6
+  let WEEK_COUNT = [
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+    11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+    21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+    31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+    41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
+    51
+  ]
 
   ##### Helper functions #####
   func listToStr(_list: List[String]) = {
@@ -67,7 +75,6 @@
 
   ##### Coordinator constants #####
   func coordinator() = addressFromString(that.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
-  func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
   func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
   func isWhitelist(_address: String) = getBoolean(coordinator(), k_amm.toCompositeKey(_address)).valueOrElse(false)
 
@@ -127,6 +134,14 @@
 
   func getAssetMaxAmountPerPeriodKey(_assetId: String) = {
     k_assetMaxAmountPerPeriod + "_" + _assetId
+  }
+
+  func getAssetMaxAmountPerDefinedPeriodKey(_assetId: String, _period: Int) = {
+    k_assetMaxAmountPerPeriod + "_" + _assetId + "_" + _period.toString()
+  }
+
+  func getAssetLastUpdatedKey(_assetId: String) = {
+    k_assetLastUpdated + "_" + _assetId
   }
 
   func getClaimedTraderAssetPeriodKey(_trader: String, _assetId: String, _period: Int) = {
@@ -227,6 +242,11 @@
     int0(key)
   }
 
+  func getAssetMaxAmountPerDefinedPeriod(_assetId: String, _period: Int) = {
+    let key = getAssetMaxAmountPerDefinedPeriodKey(_assetId, _period)
+    this.getInteger(key).valueOrElse(getAssetMaxAmountPerPeriod(_assetId))
+  }
+
   func getTotalClaimedForTraderAndAsset(_trader: String, _assetId: String) = {
     let key = getTotalClaimedForTraderAndAssetKey(_trader, _assetId)
     int0(key)
@@ -248,7 +268,7 @@
         let key = getAmmMaxAmountPerPeriodKey(_amm, _assetId)
         int0(key)
     } else {
-      let maxAmountOfAsset = getAssetMaxAmountPerPeriod(_assetId)
+      let maxAmountOfAsset = getAssetMaxAmountPerDefinedPeriod(_assetId, _weekId)
       let maxAmountOfAssetToDistribute = totalFeesInPeriod.divd(totalAssetFeesInPeriod).muld(maxAmountOfAsset)
 
       maxAmountOfAssetToDistribute
@@ -465,12 +485,12 @@
     _coordinator: String,
     _oracle: String
   ) = {
-    if (initialized()) then {
-      throw("Already initialized")
+    if (initialized() || i.caller != this) then {
+      throw("Unable to initialize")
     } else {
       [
-        StringEntry(k_coordinatorAddress, _coordinator),
-        StringEntry(k_oracleAddress, _oracle),
+        StringEntry(k_coordinatorAddress, addressFromStringValue(_coordinator).toString()),
+        StringEntry(k_oracleAddress, addressFromStringValue(_oracle).toString()),
         BooleanEntry(k_initialized, true)
       ]
     }
@@ -563,11 +583,37 @@
     } else {
       let amms = getAmms()
       let rewardAssetIds = getRewardAssetIds()
+      let weekId = getWeekId(TIME)
 
       let newRewardAssetIds = if (rewardAssetIds.containsElement(_assetId)) then rewardAssetIds else rewardAssetIds :+ _assetId
+      let previousMaxAmountPerPeriod = getAssetMaxAmountPerPeriod(_assetId)
 
+      let fix = if (previousMaxAmountPerPeriod > 0) then {
+        let key = getAssetLastUpdatedKey(_assetId)
+        let prevUpdatedPeriod = this.getInteger(key).valueOrElse(2736)
+
+        func doFixAssetAmountAtPeriod(_acc: List[IntegerEntry], _increment: Int) = {
+          let fixWeekId = prevUpdatedPeriod + _increment
+          if (fixWeekId < weekId) then {
+            _acc :+ IntegerEntry(
+              getAssetMaxAmountPerDefinedPeriodKey(_assetId, fixWeekId),
+              previousMaxAmountPerPeriod
+            )
+          } else {
+            _acc
+          }
+        }
+        # Fix amount for all previous periods
+        FOLD<52>(WEEK_COUNT, [], doFixAssetAmountAtPeriod)
+      } else {
+        []
+      }
+
+      fix
+      ++
       [
         IntegerEntry(getAssetMaxAmountPerPeriodKey(_assetId), _maxAmountPerPeriod),
+        IntegerEntry(getAssetLastUpdatedKey(_assetId), weekId),
         StringEntry(k_rewardAssetIds, listToStr(newRewardAssetIds))
       ]
     }
@@ -677,4 +723,18 @@
   }
 
   @Verifier(tx)
-  func verify() = sigVerify(tx.bodyBytes, tx.proofs[0], adminPublicKey())
+  func verify() = {
+    let coordinatorStr = this.getString(k_coordinatorAddress)
+    if (coordinatorStr.isDefined()) then {
+      let admin = addressFromStringValue(coordinatorStr.value()).getString(k_admin_address)
+      if (admin.isDefined()) then {
+        admin.value().addressFromStringValue().getBoolean("status_" + this.toString() + "_" + tx.id.toBase58String() ).valueOrElse(false)
+      } else { 
+        # Admin is not defined in coordinator, set admin first
+        throw("unable to verify: admin not set in coordinator")
+      }
+    } else {
+      # Coordinator not set, use native verify
+      sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)
+    }
+  }

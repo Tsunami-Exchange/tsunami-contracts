@@ -6,6 +6,7 @@ process.on("unhandledRejection", (error) => {
 });
 
 const wvs = 10 ** 8;
+const decimals = 10 ** 6;
 const DIR_LONG = 1;
 const DIR_SHORT = 2;
 
@@ -16,6 +17,11 @@ describe("vAMM should be able to liquidate underwater long position", async func
   this.timeout(600000);
 
   let e, amm, longer, shorter, liquidator;
+
+  const usdnBalance = async (seed) => {
+    const raw = await assetBalance(e.assets.neutrino, address(seed));
+    return Number.parseFloat((raw / decimals).toFixed(4));
+  };
 
   before(async function () {
     await setupAccounts({
@@ -36,13 +42,7 @@ describe("vAMM should be able to liquidate underwater long position", async func
       [shorter]: 50000,
     });
 
-    amm = await e.deployAmm(100000, 55);
-  });
-
-  it("Can add insurance funds", async function () {
-    let addInsuranceFundsTx = await e.insurance.deposit(7200);
-
-    console.log("Added insurance funds by " + addInsuranceFundsTx.id);
+    amm = await e.deployAmm(100_000_000, 1.23);
   });
 
   it("Can open long position", async function () {
@@ -51,48 +51,19 @@ describe("vAMM should be able to liquidate underwater long position", async func
       .as(longer)
       .withAssetId(e.assets.usdt)
       .increasePosition(1000, DIR_LONG, 3, 50);
-    const insuranceBalance = await e.insurance.getBalance();
-    console.log(`Insurance balance = ${JSON.stringify(insuranceBalance)}`);
   });
 
-  it("Can open multiple short positions (to liquidate long)", async function () {
-    console.log(
-      `AMM Market Price before big short is: ${await amm.getMarketPrice()}`
-    );
-
-    await Promise.all([
-      amm
-        .as(shorter)
-        .withAssetId(e.assets.usdt)
-        .increasePosition(2000, DIR_SHORT, 3, 1),
-      amm
-        .as(shorter)
-        .withAssetId(e.assets.usdt)
-        .increasePosition(2000, DIR_SHORT, 3, 1),
-      amm
-        .as(shorter)
-        .withAssetId(e.assets.usdt)
-        .increasePosition(2200, DIR_SHORT, 3, 1),
-    ]);
-
-    const insuranceBalance = await e.insurance.getBalance();
-    console.log(`Insurance balance = ${JSON.stringify(insuranceBalance)}`);
+  it("Can shift price to liquidate long", async function () {
+    await amm.setOraclePrice(0.85);
+    await amm.syncTerminalPriceToOracle();
 
     let longerActualData = await amm.getPositionActualData(longer);
     console.log(`longerActualData=${JSON.stringify(longerActualData)}`);
 
-    console.log(
-      `AMM Market Price after big short is: ${await amm.getMarketPrice()}`
-    );
-  });
-
-  it("Can not liquidate long position in manipulated market", async function () {
-    expect(amm.as(liquidator).liquidate(longer)).to.eventually.be.rejected;
+    console.log(`AMM Market Price is: ${await amm.getMarketPrice()}`);
   });
 
   it("Can partially liquidate long position", async function () {
-    await amm.syncOraclePriceWithMarketPrice();
-
     await amm.as(liquidator).liquidate(longer);
 
     console.log(
@@ -115,20 +86,7 @@ describe("vAMM should be able to liquidate underwater long position", async func
     console.log(`longerActualData=${JSON.stringify(longerActualData)}`);
     expect(longerActualData.marginRatio).to.be.greaterThanOrEqual(0.08);
 
-    const insuranceBalance = await e.insurance.getBalance();
-    console.log(`Insurance balance = ${JSON.stringify(insuranceBalance)}`);
-  });
-
-  it("Can close short position", async function () {
-    //let insuranceBefore = await e.insurance.getBalance()
-    await amm.as(shorter).decreasePosition(2000, 3, 1);
-    await amm.as(shorter).decreasePosition(2000, 3, 1);
-    await amm.as(shorter).closePosition();
-
-    const insuranceBalance = await e.insurance.getBalance();
-    console.log(`Insurance balance = ${JSON.stringify(insuranceBalance)}`);
-    //let insuranceAfter = await e.insurance.getBalance()
-
-    //expect(insuranceBefore).to.be.eq(insuranceAfter)
+    let balanceOfLiq = await usdnBalance(liquidator);
+    expect(balanceOfLiq).to.be.closeTo(7.25, 0.1);
   });
 });

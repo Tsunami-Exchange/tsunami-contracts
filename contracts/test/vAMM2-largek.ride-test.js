@@ -36,7 +36,7 @@ describe("vAMM should work with large K", async function () {
       [shorter]: 1_000_000,
     });
 
-    amm = await e.deployAmm(10_000_000, 0.02);
+    amm = await e.deployAmm(10_000_000, 3.6);
   });
 
   it("Can add insurance funds", async function () {
