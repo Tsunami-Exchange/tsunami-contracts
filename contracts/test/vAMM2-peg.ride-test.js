@@ -23,22 +23,27 @@ describe("vAMM should be able to adjust peg (for long)", async function () {
       longer: 0.1 * wvs,
       shorter: 0.1 * wvs,
       liquidator: 0.1 * wvs,
+      maker: 0.1 * wvs,
     });
 
     longer = accounts.longer;
     shorter = accounts.shorter;
     liquidator = accounts.liquidator;
+    maker = accounts.maker;
 
     e = new Environment(accounts.admin);
     await e.deploy();
     await e.fundAccounts({
       [longer]: 5000,
       [shorter]: 100,
+      [maker]: 10000,
     });
 
     amm = await e.deployAmm(100000, 55, {
       maxPriceImpact: 0.15, // 15%
     });
+
+    await e.vault.as(maker).stake(10000);
   });
 
   it("Should have 0 cost to adjust peg to terminal price", async function () {
@@ -141,22 +146,27 @@ describe("vAMM should be able to adjust peg (for short)", async function () {
       longer: 0.1 * wvs,
       shorter: 0.1 * wvs,
       liquidator: 0.1 * wvs,
+      maker: 0.1 * wvs,
     });
 
     longer = accounts.longer;
     shorter = accounts.shorter;
     liquidator = accounts.liquidator;
+    maker = accounts.maker;
 
     e = new Environment(accounts.admin);
     await e.deploy();
     await e.fundAccounts({
       [longer]: 100,
       [shorter]: 5000,
+      [maker]: 10000,
     });
 
     amm = await e.deployAmm(100000, 55, {
       maxPriceImpact: 0.15, // 15%
     });
+
+    await e.vault.as(maker).stake(10000);
   });
 
   it("Should have 0 cost to adjust peg to terminal price", async function () {

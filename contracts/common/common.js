@@ -5,7 +5,6 @@ let {
   clearScript,
   shouldUpgrade,
 } = require("../common/driver");
-let { wait } = require("../common/utils");
 
 const wvs = 10 ** 8;
 const decimals = 10 ** 6;
@@ -252,6 +251,18 @@ class Environment {
       console.log(`USDN Token: ${this.assets.neutrino}`);
       console.log(`USDN Staking: ${this.addresses.neutrinoStaking}`);
     }
+    let p0 = await broadcast(
+      transfer(
+        {
+          assetId: this.assets.neutrino,
+          recipient: address(this.seeds.admin),
+          amount: 0.0001 * decimals,
+        },
+        this.seeds.assetHolder
+      )
+    );
+
+    console.log(`Fund admin from assetHolder in: ${p0.id}`);
 
     let p1 = deploy(
       "coordinator.ride",
@@ -367,6 +378,7 @@ class Environment {
     console.log(`Seed oracle in ${seedOracleTx.id}`);
 
     await Promise.all([
+      p0,
       p1,
       p4,
       p5,
@@ -759,6 +771,27 @@ class Environment {
     }
 
     await Promise.all(initTxs);
+
+    // Add 0.0001 to locked in vault
+    {
+      const fundVaultTx = await invoke(
+        {
+          dApp: address(this.seeds.vault),
+          functionName: "addLocked",
+          arguments: [],
+          payment: [
+            {
+              assetId: this.assets.neutrino,
+              amount: 0.0001 * decimals,
+            },
+          ],
+        },
+        this.seeds.admin
+      );
+
+      broadcast(fundVaultTx);
+      console.log("Vault funded in " + fundVaultTx.id);
+    }
 
     this.miner = new Miner(this);
     this.orders = new Orders(this);

@@ -44,28 +44,44 @@
 
   @Callable(i)
   func performHousekeeping(
+    _vault: Boolean,
+    _farming: Boolean,
+    _staking: Boolean,
     _payFunding: String
   ) = {
-    strict doAckRewardsStaking = invoke(
-      stakingAddress(),
-      "ackRewards",
-      [],
-      []
-    )
 
-    strict doAckRewardsFarming = invoke(
-      farmingAddress(),
-      "ackRewards",
-      [],
+    strict doAckRewardsStaking = if (_staking) then {
+       invoke(
+        stakingAddress(),
+        "ackRewards",
+        [],
+        []
+      )
+    } else {
       []
-    )
+    }
 
-    strict doAckRewardsVault = invoke(
-      vaultAddress(),
-      "ackRewards",
-      [],
+    strict doAckRewardsFarming = if (_farming) then { 
+      invoke(
+        farmingAddress(),
+        "ackRewards",
+        [],
+        []
+      ) 
+    } else {
       []
-    )
+    }
+
+    strict doAckRewardsVault = if (_vault) then {  
+      invoke(
+        vaultAddress(),
+        "ackRewards",
+        [],
+        []
+      )
+    } else {
+      []
+    }
 
     let amms = _payFunding.strToList()
     func compute(_acc: List[StringEntry], _amm: String) = {
