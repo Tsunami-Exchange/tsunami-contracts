@@ -207,27 +207,40 @@
     ]
   }
 
-  func addRemoveOrderId(_orderId: Int, _amm: String, _trader: String, _add: Boolean) = {
-    let orderIds = traderAmmOrdersIds(_amm, _trader)
-    let orderIdsNew = if (_add) then {
-      orderIds :+ _orderId.toString()
-    } else {
-      orderIds.removeByIndex(
-        orderIds.indexOf(_orderId.toString())
-          .valueOrErrorMessage("No order with id: " + _orderId.toString())
-      )
-    }
-    let orderIdsNewStr = makeString(orderIdsNew, ",")
-
+  func updateOrderIdStr(_orderIdsNewStr: String, _amm: String, _trader: String) = {
     [
-      StringEntry(traderOrderIdsKey(_amm, _trader), orderIdsNewStr)
+      StringEntry(traderOrderIdsKey(_amm, _trader), _orderIdsNewStr)
     ]
   }
 
+  func addRemoveOrderIdList(_orderIds: List[String], _orderId: Int, _amm: String, _trader: String, _add: Boolean) = {
+    let orderIdsNew = if (_add) then {
+      _orderIds :+ _orderId.toString()
+    } else {
+      _orderIds.removeByIndex(
+        _orderIds.indexOf(_orderId.toString())
+          .valueOrErrorMessage("No order with id: " + _orderId.toString())
+      )
+    }
+    orderIdsNew
+  }
+
+  func addRemoveOrderId(_orderId: Int, _amm: String, _trader: String, _add: Boolean) = {
+    let orderIds = traderAmmOrdersIds(_amm, _trader)
+    let orderIdsNew = addRemoveOrderIdList(orderIds, _orderId, _amm, _trader, _add)
+    let orderIdsNewStr = makeString(orderIdsNew, ",")
+
+    updateOrderIdStr(orderIdsNewStr, _amm, _trader)
+  }
+
   func updateTraderOrderCount(_amm: String, _trader: String, _count: Int) = {
-    [
-      IntegerEntry(traderOrderCountKey(_amm, _trader), _count)
-    ]
+    if (_count < 0) then { 
+      throw("Invalid order count: " + _count.toString()) 
+    } else {
+      [
+        IntegerEntry(traderOrderCountKey(_amm, _trader), _count)
+      ]
+    }
   }
 
   func updateLastOrderId(_lastOrderId: Int) = {
@@ -251,9 +264,8 @@
   @Callable(i)
   func cleanUpStaleOrders(_amm: String, _trader: String) = {
     let orders = traderAmmOrdersIds(_amm, _trader)
-    let orderCount = getTraderOrderCount(_amm, _trader)
     
-    func cleanUpOne(_acc: (Int, List[BooleanEntry|StringEntry]), _orderId: String) = {
+    func cleanUpOne(_acc: (List[String], List[BooleanEntry]), _orderId: String) = {
       let orderIdInt = _orderId.parseInt().valueOrErrorMessage("Invalid order id")
       let (
         _x1, 
@@ -277,22 +289,22 @@
       }
 
       if ((_type == STOP || _type == TAKE) && currentPositionId != _positionId) then {
-        let change = 
-          markCancelOrder(orderIdInt)
-          ++
-          addRemoveOrderId(orderIdInt, _amm, _trader, false)
+        let change = markCancelOrder(orderIdInt)
+        let newOrderList = addRemoveOrderIdList(_acc._1, orderIdInt, _amm, _trader, false)
 
-        (_acc._1 + 1, _acc._2 ++ change)
+        (newOrderList, _acc._2 ++ change)
       } else {
         _acc
       }
     }
     
-    let result = FOLD<5>(orders, (0, []), cleanUpOne)
+    let (newOrders, cancelActions) = FOLD<7>(orders, (orders, []), cleanUpOne)
 
-    result._2
+    cancelActions
     ++
-    updateTraderOrderCount(_amm, _trader, orderCount - result._1)
+    updateTraderOrderCount(_amm, _trader, newOrders.size())
+    ++
+    updateOrderIdStr(makeString(newOrders, ","), _amm, _trader)
   }
 
   @Callable(i)
@@ -436,7 +448,7 @@
           []
         }
 
-        strict doCreateTakeOrder = if (_takeTriggerPrice > 0) then {
+        strict doCreateTakeOrder  = if (_takeTriggerPrice > 0) then {
           strict doCreateTakeOrder = invoke(
             this,
             "internalCreateOrder",

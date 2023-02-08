@@ -2803,6 +2803,8 @@ class Orders {
   }
 
   async executeOrder(_order) {
+    await this.e.setTime(new Date().getTime() + 1);
+    //
     let tx = await invoke(
       {
         dApp: address(this.e.seeds.orders),

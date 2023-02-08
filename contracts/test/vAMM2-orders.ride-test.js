@@ -868,6 +868,31 @@ describe("Should be able to use a helper", async function () {
       );
 
     console.log(x.id);
+
+    let cnt = await e.orders.getOrderCount(address(shorter), amm.address);
+    expect(cnt).to.be.equal(2);
+  });
+
+  it("Can create order with helper", async function () {
+    await amm.as(shorter).closePosition(); // so both old orders should be cancelled on new opening
+    let x = await e.orders
+      .as(shorter)
+      .increasePositionWithStopLoss(
+        amm.address,
+        1000,
+        DIR_SHORT,
+        3,
+        50,
+        "",
+        55,
+        0,
+        50,
+        0
+      );
+
+    console.log(x.id);
+    let cnt = await e.orders.getOrderCount(address(shorter), amm.address);
+    expect(cnt).to.be.equal(2); // should clean up both stale orders
   });
 });
 
