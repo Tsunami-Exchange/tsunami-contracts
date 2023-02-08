@@ -128,13 +128,9 @@ func s(_x: Int) = _x.toString() + ","
 
 func divd(_x: Int, _y: Int) = fraction(_x, DECIMAL_UNIT, _y, HALFEVEN)
 func muld(_x: Int, _y: Int) = fraction(_x, _y, DECIMAL_UNIT, HALFEVEN)
-func sqrtd(_x: Int) = sqrt(_x, DECIMAL_NUMBERS, DECIMAL_NUMBERS, HALFEVEN)
-func powd(_x: Int, _y: Int) = pow(_x, DECIMAL_NUMBERS, _y, DECIMAL_NUMBERS, DECIMAL_NUMBERS, HALFEVEN)
 
 func bdivd(_x: BigInt, _y: BigInt) = fraction(_x, DECIMAL_UNIT.toBigInt(), _y, HALFEVEN)
 func bmuld(_x: BigInt, _y: BigInt) = fraction(_x, _y, DECIMAL_UNIT.toBigInt(), HALFEVEN)
-func bsqrtd(_x: BigInt) = sqrt(_x, DECIMAL_NUMBERS, DECIMAL_NUMBERS, HALFEVEN)
-func bpowd(_x: BigInt, _y: BigInt) = pow(_x, DECIMAL_NUMBERS, _y, DECIMAL_NUMBERS, DECIMAL_NUMBERS, HALFEVEN)
 
 func abs(_x: Int) = if (_x > 0) then _x else -_x
 func vmax(_x: Int, _y: Int) = if (_x >= _y) then _x else _y

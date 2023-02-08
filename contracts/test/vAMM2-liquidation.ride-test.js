@@ -88,7 +88,7 @@ describe("vAMM should be able to liquidate underwater long position", async func
   });
 });
 
-describe.only("vAMM should be able to liquidate underwater long position with bad debt + short position", async function () {
+describe("vAMM should be able to liquidate underwater long position with bad debt + short position", async function () {
   this.timeout(600000);
 
   let e, amm, longer, shorter, liquidator, maker;
