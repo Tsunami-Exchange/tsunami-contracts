@@ -101,14 +101,14 @@
     let currentDate = currentTimestamp()
     let lastWithdrawDate = lastWithdrawnDate(_staker)
     
-    let (newLastWithdrawnDate, withdrawLimitLeft) = 
+    let (newLastWithdrawnDate, withdrawLimitLeft, alreadyWithdrawnInPeriod) = 
       if (currentDate - lastWithdrawDate > WITHDRAW_PERIOD) then {
-        (currentDate, withdrawLimit(_staker))
+        (currentDate, withdrawLimit(_staker), 0)
       } else {
-        (lastWithdrawDate, withdrawLimit(_staker) - withdrawnInPeriod(_staker))
+        (lastWithdrawDate, withdrawLimit(_staker) - withdrawnInPeriod(_staker), withdrawnInPeriod(_staker))
       }
     
-    (newLastWithdrawnDate, withdrawLimitLeft)
+    (newLastWithdrawnDate, withdrawLimitLeft, alreadyWithdrawnInPeriod)
   }
 
   func computeNewRate(_amountOfQuoteAsset: Int) = {
@@ -348,14 +348,14 @@
       ) = updateReward(_staker, 0)
 
       # Now we determine how much we can withdraw currently
-      let (newLastWithdrawnDate, withdrawLimitLeft) = getWithdrawLimitLeft(_staker)
+      let (newLastWithdrawnDate, withdrawLimitLeft, alreadyWithdrawnInPeriod) = getWithdrawLimitLeft(_staker)
       
       # Get the amount of v-Shares user want to withdraw
       let vAmount = amountOfQuoteAsset.divd(rate())
       if (vAmount > withdrawLimitLeft) then {
         throw("Invalid call to unStake: withdraw over limit")
       } else {
-        let newWithdrawnInPeriod = withdrawnInPeriod(_staker) + vAmount
+        let newWithdrawnInPeriod = alreadyWithdrawnInPeriod + vAmount
         if (amountOfQuoteAsset > freeBalance()) then {
           throw("Invalid call to unStake: balance too low") # Should never happen
         } else {

@@ -60,6 +60,22 @@ const upgrade = async (filename, address, fee, adminSeed) => {
     adminSeed
   );
 
+  const approveTx = data(
+    {
+      data: [
+        {
+          key: `status_${address}_${issTx.id}`,
+          type: "boolean",
+          value: true,
+        },
+      ],
+    },
+    adminSeed
+  );
+
+  await broadcast(approveTx);
+  await waitForTx(approveTx.id);
+
   await broadcast(issTx);
   await waitForTx(issTx.id);
 
