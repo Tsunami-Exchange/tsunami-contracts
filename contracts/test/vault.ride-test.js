@@ -200,3 +200,137 @@ describe("Vault should allow", async function () {
     expect(limit.amount).to.be.closeTo(staker1Usdn / 4, 0.1);
   });
 });
+
+describe.only("Vault should allow full withdrawal", async function () {
+  this.timeout(600000);
+
+  let e, staker1, staker2, rewardPayer, amm;
+
+  const usdnBalance = async (seed) => {
+    const raw = await assetBalance(e.assets.neutrino, address(seed));
+    return Number.parseFloat((raw / decimals).toFixed(4));
+  };
+
+  before(async function () {
+    await setupAccounts({
+      admin: 1 * wvs,
+      staker1: 0.1 * wvs,
+      staker2: 0.1 * wvs,
+      rewardPayer: 0.1 * wvs,
+      amm: 0.1 * wvs,
+    });
+
+    staker1 = accounts.staker1;
+    staker2 = accounts.staker2;
+    amm = accounts.amm;
+    rewardPayer = accounts.rewardPayer;
+
+    e = new Environment(accounts.admin);
+    await e.deploy();
+
+    await Promise.all([
+      e.fundAccounts({ [rewardPayer]: 50000 }),
+      e.supplyUsdn(10000, address(staker1)),
+      e.supplyUsdn(10000, address(staker2)),
+      e.setTime(now),
+    ]);
+  });
+
+  it("Can stake and fully withdraw", async function () {
+    await e.vault.as(staker1).stake(1000);
+    {
+      let stakedUSDN = await e.vault.usdnBalanceOf(staker1);
+      let limit = await e.vault.getWithdrawLimit(staker1);
+      console.log(`stakedUSDN=${stakedUSDN}`);
+      console.log(`limit=${limit.amount}`);
+      expect(limit.amount).to.be.equal(250);
+    }
+
+    await e.vault.as(staker1).unStake(150);
+    {
+      let stakedUSDN = await e.vault.usdnBalanceOf(staker1);
+      let limit = await e.vault.getWithdrawLimit(staker1);
+      console.log(`stakedUSDN=${stakedUSDN}`);
+      console.log(`limit=${limit.amount}`);
+      expect(limit.amount).to.be.equal(100);
+    }
+
+    let now = new Date().getTime();
+
+    now = now + 24 * hour + 0.1 * hour;
+    await e.setTime(now);
+    await e.vault.as(staker1).unStake(75);
+    {
+      let stakedUSDN = await e.vault.usdnBalanceOf(staker1);
+      let limit = await e.vault.getWithdrawLimit(staker1);
+      console.log(`stakedUSDN=${stakedUSDN}`);
+      console.log(`limit=${limit.amount}`);
+      expect(limit.amount).to.be.equal(175);
+    }
+
+    await e.vault.as(staker1).unStake(75);
+    {
+      let stakedUSDN = await e.vault.usdnBalanceOf(staker1);
+      let limit = await e.vault.getWithdrawLimit(staker1);
+      console.log(`stakedUSDN=${stakedUSDN}`);
+      console.log(`limit=${limit.amount}`);
+      expect(limit.amount).to.be.equal(100);
+    }
+
+    now = now + 24 * hour + 0.1 * hour;
+    await e.setTime(now);
+    await e.vault.as(staker1).unStake(150);
+    {
+      let stakedUSDN = await e.vault.usdnBalanceOf(staker1);
+      let limit = await e.vault.getWithdrawLimit(staker1);
+      console.log(`stakedUSDN=${stakedUSDN}`);
+      console.log(`limit=${limit.amount}`);
+      expect(limit.amount).to.be.equal(100);
+    }
+
+    now = now + 24 * hour + 0.1 * hour;
+    await e.setTime(now);
+    await e.vault.as(staker1).unStake(150);
+    {
+      let stakedUSDN = await e.vault.usdnBalanceOf(staker1);
+      let limit = await e.vault.getWithdrawLimit(staker1);
+      console.log(`stakedUSDN=${stakedUSDN}`);
+      console.log(`limit=${limit.amount}`);
+      expect(limit.amount).to.be.equal(100);
+    }
+
+    now = now + 24 * hour + 0.1 * hour;
+    await e.setTime(now);
+    await e.vault.as(staker1).unStake(150);
+    {
+      let stakedUSDN = await e.vault.usdnBalanceOf(staker1);
+      let limit = await e.vault.getWithdrawLimit(staker1);
+      console.log(`stakedUSDN=${stakedUSDN}`);
+      console.log(`limit=${limit.amount}`);
+      expect(limit.amount).to.be.equal(100);
+    }
+
+    now = now + 24 * hour + 0.1 * hour;
+    await e.setTime(now);
+    await e.vault.as(staker1).unStake(150);
+    {
+      let stakedUSDN = await e.vault.usdnBalanceOf(staker1);
+      let limit = await e.vault.getWithdrawLimit(staker1);
+      console.log(`stakedUSDN=${stakedUSDN}`);
+      console.log(`limit=${limit.amount}`);
+      expect(limit.amount).to.be.equal(100);
+    }
+
+    now = now + 24 * hour + 0.1 * hour;
+    await e.setTime(now);
+    await e.vault.as(staker1).unStake(99.9);
+    {
+      let stakedUSDN = await e.vault.usdnBalanceOf(staker1);
+      let limit = await e.vault.getWithdrawLimit(staker1);
+      console.log(`stakedUSDN=${stakedUSDN}`);
+      console.log(`limit=${limit.amount}`);
+      expect(stakedUSDN).to.be.equal(0.1);
+      expect(limit.amount).to.be.equal(150.1);
+    }
+  });
+});
