@@ -163,9 +163,13 @@
 
   ##### Update functions #####
   func updateUserBalance(_user: String, _change: Int) = {
-    [
-      IntegerEntry(k_balance.toCompositeKey(_user), balanceOf(_user) + _change)
-    ]
+    if( balanceOf(_user) + _change >= 0) then {
+      [
+        IntegerEntry(k_balance.toCompositeKey(_user), balanceOf(_user) + _change)
+      ]
+    } else {
+      throw("Vault: can not update user balance. Balance: " + balanceOf(_user).toString() + " change: " + _change.toString())
+    }
   }
 
   func setUserWithdrawLimit(_user: String, _rate: Int) = {
