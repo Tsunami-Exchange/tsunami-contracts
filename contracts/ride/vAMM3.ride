@@ -1412,6 +1412,10 @@ func doBurnArtifact(_burnArtifact: Boolean, i: Invocation) = {
 
 ##### Callable functions #####
 
+# Pauses the contract. During the pause, no actions can be taken except for unpausing the contract. 
+# The purpose of pausing the contract may be to perform maintenance work or to immediately stop the market.
+#
+# @notice admin only
 @Callable(i)
 func pause() = {
   if (i.caller != adminAddress()) then {
@@ -1423,6 +1427,9 @@ func pause() = {
   }
 }
 
+# Unpauses contract.
+#
+# @notice admin only
 @Callable(i)
 func unpause() = {
   if (i.caller != adminAddress()) then {
@@ -1434,6 +1441,11 @@ func unpause() = {
   }
 }
 
+# Sets the market to close-only mode. During close-only mode, positions can only be reduced 
+# (closed or liquidated). The purpose of setting the market to close-only mode 
+# is to gradually close a market for a given pair.
+#
+# @notice admin only
 @Callable(i)
 func setCloseOnly() = {
   if (i.caller != adminAddress()) then {
@@ -1445,6 +1457,9 @@ func setCloseOnly() = {
   }
 }
 
+# Unset close-only mode on a contract.
+#
+# @notice admin only
 @Callable(i)
 func unsetCloseOnly() = {
   if (i.caller != adminAddress()) then {
@@ -1456,6 +1471,10 @@ func unsetCloseOnly() = {
   }
 }
 
+# Adds specified amount of liquidity to the market.
+# 
+# @param _quoteAssetAmount Amount of liquidity to add (in quote asset, 6 decimals)
+# @notice admin only
 @Callable(i)
 func addLiquidity(_quoteAssetAmount: Int) = {
   if (
@@ -1499,6 +1518,10 @@ func addLiquidity(_quoteAssetAmount: Int) = {
   }
 }
 
+# Removes specified amount of liquidity to the market.
+#
+# @param _quoteAssetAmount Amount of liquidity to remove (in quote asset, 6 decimals)
+# @notice admin only
 @Callable(i)
 func removeLiquidity(_quoteAssetAmount: Int) = {
   if (
@@ -1542,6 +1565,23 @@ func removeLiquidity(_quoteAssetAmount: Int) = {
   }
 }
 
+# Changes the settings of the contract.
+#
+# @param _initMarginRatio The initial margin ratio for the contract.
+# @param _mmr The maintenance margin ratio for the contract.
+# @param _liquidationFeeRatio The liquidation fee ratio for the contract.
+# @param _fundingPeriod The funding period for the contract.
+# @param _fee The fee for the contract.
+# @param _spreadLimit The spread limit for the contract.
+# @param _maxPriceImpact The maximum price impact for the contract.
+# @param _partialLiquidationRatio The partial liquidation ratio for the contract.
+# @param _maxPriceSpread The maximum oracle / market price spread for the contract.
+# @param _maxOpenNotional The maximum open notional in one direction for the contract.
+# @param _feeToStakersPercent The fee to stakers percent for the contract.
+# @param _maxOracleDelay The maximum oracle delay (blocks) for the contract.
+# @param _rolloverFee The rollover fee for the contract.
+#
+# @notice admin only
 @Callable(i)
 func changeSettings(
   _initMarginRatio: Int,
@@ -1658,6 +1698,16 @@ func initialize(
   }
 }
 
+# Allows traders to open or increase their position by placing a trade in a specific direction 
+# (long or short) with a specified leverage.
+#
+# @param _direction The direction in which the position should be increased. (1 for LONG, 2 for SHORT)
+# @param _leverage The leverage to be used for the position increase. (in 6 decimals)
+# @param _minBaseAssetAmount The minimum expected base asset amount to get. (in 6 decimals)
+# @param _refLink The referral link if any (or empty string)
+# @payment required Initial margin (in quote asset)
+# @payment optional NFT artifact for fee reduction
+# @notice if position already opened fully realizes funding and rollover fee
 @Callable(i)
 func increasePosition(
   _direction: Int,
@@ -1866,6 +1916,10 @@ func increasePosition(
   }
 }
 
+# Adds margin to a position
+# 
+# @payment required Added margin (in quote asset) 
+# @notice fully realizes rollover fee, funding stays unrealized
 @Callable(i)
 func addMargin() = {
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
@@ -1940,6 +1994,12 @@ func addMargin() = {
   }
 }
 
+# Remove margin from a position
+# 
+# @notice 
+# @param _amount removed margin (in quote asset)
+# @notice fully realizes funding and rollover fee
+# @notice will throw "Too much margin removed" if after removal position margin ratio is below initial margin ratio
 @Callable(i)
 func removeMargin(
   _amount: Int
@@ -2020,6 +2080,12 @@ func removeMargin(
   }
 }
 
+# Function to close a position with a specified size, minimum quote asset amount, and add to margin option.
+# 
+# @param _size The size of the position to close. If less then current position size position will be closed partially.
+# @param _minQuoteAssetAmount The minimum expected amount of the quote asset.
+# @param _addToMargin if true, do not withdraw funds from position, instead add them to margin (reduce position size, keep margin).
+# @notice will not close position with bad debt (they can ony be liquidated)
 @Callable(i)
 func closePosition(_size: Int, _minQuoteAssetAmount: Int, _addToMargin: Boolean) = {
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
@@ -2145,6 +2211,9 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int, _addToMargin: Boolean)
   }   
 }
 
+# Function to liquidate a trader's position.
+#
+# @param _trader The address of the trader to be liquidated.
 @Callable(i)
 func liquidate(_trader: String) = {
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
@@ -2282,6 +2351,7 @@ func liquidate(_trader: String) = {
   }
 }
 
+# Function to pay (exchange) funding. This method can be called by anyone, but usually is called by an exchange's keeper bot.
 @Callable(i)
 func payFunding() = {
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
@@ -2307,6 +2377,10 @@ func payFunding() = {
   }
 }
 
+# Function to sync exchange terminal price to index price (Oracle price). 
+# This method can be called by anyone, but usually is called by an exchange's keeper bot.
+# Additionally it's called automatically prior to any interaction with exchange to ensure
+# that every call relies to actual AMM state 
 @Callable(i)  
 func syncTerminalPriceToOracle() = {
   let _qtAstR = qtAstR()
@@ -2348,6 +2422,8 @@ func syncTerminalPriceToOracle() = {
   appendTwap(divd(_qtAstR.muld(newQuoteAssetWeight), _bsAstR.muld(newBaseAssetWeight)))
 }
 
+# Function to ensure that this contract can only be called once in transaction, preventing front-running
+# @notice may only be called by contract itself
 @Callable(i)  
 func ensureCalledOnce() = {
   if (i.caller != this) then {
@@ -2366,6 +2442,14 @@ func ensureCalledOnce() = {
 
 # View callable functions exposed for UI and debug
 
+# View function. Return full information about position in it's throws message.
+# 1 - remaining effective margin (with funding, rollover and PnL) in 6 decimals
+# 2 - funding payment in 6 decimals
+# 3 - margin ratio in 6 decimals
+# 4 - unrealized PnL in 6 decimals
+# 5 - bad debt in 6 decimals
+#
+# @param _trader Address of trader
 @Callable(i)
 func view_calcRemainMarginWithFundingPayment(_trader: String) = {
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
@@ -2395,6 +2479,10 @@ func view_calcRemainMarginWithFundingPayment(_trader: String) = {
   )
 }
 
+# View function. Return info about the cost to LP's (positive or negative) to sync to current price in it's throws message.
+# 1 - PnL of LP's in 6 decimals.
+# 
+# @param _price Price to sync to in 6 decimals
 @Callable(i)
 func view_getPegAdjustCost(_price: Int) = {
   let _qtAstR = qtAstR()
@@ -2404,6 +2492,7 @@ func view_getPegAdjustCost(_price: Int) = {
   throw(result._3.toString())
 }
 
+# View function. Return current price, AMM is synced to in it's throws message.
 @Callable(i)
 func view_getTerminalAmmPrice() = {
   let (terminalQuoteAssetReserve, terminalBaseAssetReserve) = getTerminalAmmState()
@@ -2411,6 +2500,11 @@ func view_getTerminalAmmPrice() = {
   throw(price.toString())
 }
 
+# View function. Return information about funding state of AMM in it's throws message.
+# 1 - long funding in 6 decimals
+# 2 - short funding in 6 decimals
+# 3 - TWAP 15 minutes of spot price used for funding computation in 6 decimals
+# 4 - index price used for funding computation in 6 decimals
 @Callable(i)
 func view_getFunding() = {
   let underlyingPrice = getOraclePrice()
@@ -2422,6 +2516,8 @@ func view_getFunding() = {
 
 # View callable functions exposed for another d-Apps
 
+# Compute function. Returns current spot price in a way that can be used in dApp-to-dApp calls.
+# Returns current spot price in 6 decimals.
 @Callable(i)
 func computeSpotPrice() = {
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
@@ -2430,6 +2526,11 @@ func computeSpotPrice() = {
   ([], result)
 }
 
+# Compute function. Returns current spot price in a way that can be used in dApp-to-dApp calls.
+# Returns current spot price in 6 decimals.
+#
+# @param _trader Address of trader
+# @param _artifactId Id of NFT Artifact for fee reduction
 @Callable(i)
 func computeFeeForTraderWithArtifact(_trader: String, _artifactId: String) = {
   let result = getForTraderWithArtifact(_trader, _artifactId)
@@ -2437,19 +2538,19 @@ func computeFeeForTraderWithArtifact(_trader: String, _artifactId: String) = {
   ([], result)
 }
 
-  @Verifier(tx)
-  func verify() = {
-    let coordinatorStr = this.getString(k_coordinatorAddress)
-    if (coordinatorStr.isDefined()) then {
-      let admin = addressFromStringValue(coordinatorStr.value()).getString(k_admin_address)
-      if (admin.isDefined()) then {
-        admin.value().addressFromStringValue().getBoolean("status_" + this.toString() + "_" + tx.id.toBase58String() ).valueOrElse(false)
-      } else { 
-        # Admin is not defined in coordinator, set admin first
-        throw("unable to verify: admin not set in coordinator")
-      }
-    } else {
-      # Coordinator not set, use native verify
-      sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)
+@Verifier(tx)
+func verify() = {
+  let coordinatorStr = this.getString(k_coordinatorAddress)
+  if (coordinatorStr.isDefined()) then {
+    let admin = addressFromStringValue(coordinatorStr.value()).getString(k_admin_address)
+    if (admin.isDefined()) then {
+      admin.value().addressFromStringValue().getBoolean("status_" + this.toString() + "_" + tx.id.toBase58String() ).valueOrElse(false)
+    } else { 
+      # Admin is not defined in coordinator, set admin first
+      throw("unable to verify: admin not set in coordinator")
     }
+  } else {
+    # Coordinator not set, use native verify
+    sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)
   }
+}

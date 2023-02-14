@@ -339,6 +339,18 @@
     }
   }
 
+  # Function that creates an order.
+  # 
+  # @param _amm Market address.
+  # @param _type The type of order (e.g. limit, take, stop). STOP = 1, TAKE = 2
+  # @param _triggerPrice The price at which the order is triggered. Never 0. In 6 decimals.
+  # @param _limitPrice The maximum price the user is willing to pay. May be 0. In 6 decimals.
+  # @param _amountIn The amount of the asset to be used. For STOP and TAKE orders it's in base asset. In 6 decimals.
+  # @param _leverage The leverage used in the trade. Only for LIMIT orders.
+  # @param _side The direction of the trade (e.g. LONG or SHORT). LONG = 1, SHORT = 2.
+  # @param _refLink A referral link for the order.
+  #
+  # @notice limit orders are not supported right now
   @Callable(i)
   func createOrder(
     _amm: String,
@@ -387,6 +399,17 @@
     }
   }
 
+  # Function to open new position and add a stop loss / take profit order
+  # 
+  # @param _amm Market address
+  # @param _direction The direction of the trade (e.g. LONG or SHORT). LONG = 1, SHORT = 2.
+  # @param _leverage The leverage to be used for the trade
+  # @param _minBaseAssetAmount The minimum amount of base asset bought required to open position
+  # @param _refLink The reference link if any
+  # @param _stopTriggerPrice The price at which the stop loss order is triggered
+  # @param _stopLimitPrice The limit price for the stop loss order
+  # @param _takeTriggerPrice The price at which the take profit order is triggered
+  # @param _takeLimitPrice The limit price for the take profit order
   @Callable(i)
   func increasePositionWithStopLoss(
     _amm: String,
@@ -563,6 +586,10 @@
     }
   }
 
+  # Function cancels an existing order.
+  # 
+  # @param _orderId The ID of the order to be cancelled.
+  # @notice can only cancel you own order.
   @Callable(i)
   func cancelOrder(_orderId: Int) = {
     let (
@@ -616,6 +643,10 @@
     }
   }
 
+  # Function executes an existing order (if it's executable). Can be called by anyone, but usually called by keeper bots.
+  # 
+  # @param _orderId The ID of the order to be executed.
+  # @notice can only cancel you own order.
   @Callable(i)
   func executeOrder(_orderId: Int) = {
     let (
@@ -756,6 +787,9 @@
 
   # View functions for UI/Bots
 
+  # View Function. Checks if order cn be executed. 
+  # 
+  # @param _orderId The ID of the order to be checked for execution possibility.
   @Callable(i)
   func view_canExecuteOrder(_orderId: Int) = {
     strict s = invoke(this, "executeOrder", [_orderId], [])
