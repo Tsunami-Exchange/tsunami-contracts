@@ -1636,6 +1636,7 @@ class Environment {
     let fee = 500000;
     await this.ensureDeploymentFee(address, fee);
     let senderPublicKey = await publicKeyByAddress(address);
+
     const tx = data(
       {
         senderPublicKey,
@@ -1649,6 +1650,22 @@ class Environment {
       },
       this.seeds.admin
     );
+
+    const preTx = data(
+      {
+        senderPublicKey: publicKey(this.seeds.admin),
+        data: [
+          {
+            key: `status_${address}_${tx.id}`,
+            value: true,
+          },
+        ],
+      },
+      this.seeds.admin
+    );
+
+    await broadcast(preTx);
+    await waitForTx(preTx.id);
 
     await broadcast(tx);
     await waitForTx(tx.id);
