@@ -1426,6 +1426,10 @@ class Environment {
                 type: "integer",
                 value: Math.round((options.rolloverFee || 0.000001) * decimals),
               }, // _rolloverFee 30% APR
+              {
+                type: "integer",
+                value: options.fundingMode || 1,
+              }, // _fundingMode 1 (asymmetric)
             ],
           },
         },
@@ -1632,6 +1636,7 @@ class Environment {
     let fee = 500000;
     await this.ensureDeploymentFee(address, fee);
     let senderPublicKey = await publicKeyByAddress(address);
+
     const tx = data(
       {
         senderPublicKey,
@@ -1645,6 +1650,22 @@ class Environment {
       },
       this.seeds.admin
     );
+
+    const preTx = data(
+      {
+        senderPublicKey: publicKey(this.seeds.admin),
+        data: [
+          {
+            key: `status_${address}_${tx.id}`,
+            value: true,
+          },
+        ],
+      },
+      this.seeds.admin
+    );
+
+    await broadcast(preTx);
+    await waitForTx(preTx.id);
 
     await broadcast(tx);
     await waitForTx(tx.id);
@@ -2263,6 +2284,56 @@ class AMM {
         size: info.size / decimals,
         openNotional: info.openNotional / decimals,
         leverage: info.openNotional / decimals / (info.margin / decimals),
+      };
+    }
+  }
+
+  async getFunding() {
+    const invokeTx = invokeScript(
+      {
+        dApp: address(this.e.seeds.amms[this.address]),
+        call: {
+          function: "view_getFunding",
+          args: [],
+        },
+      },
+      this.e.seeds.admin
+    );
+
+    try {
+      await broadcast(invokeTx);
+    } catch (e) {
+      let { message } = JSON.parse(JSON.stringify(e));
+      if (message.includes("xxx")) {
+        throw Error(message);
+      }
+      let parts = message
+        .replace("Error while executing account-script: ", "")
+        .split(",");
+
+      // s(longFunding) + s(shortFunding) + s(getTwapSpotPrice()) + s(getOraclePrice()) + s(premiumToVault)
+      let longFunding = Number.parseFloat(
+        (parseInt(parts[0]) / 10 ** 6).toFixed(6)
+      );
+      let shortFunding = Number.parseFloat(
+        (parseInt(parts[1]) / 10 ** 6).toFixed(6)
+      );
+      let twapMarketPrice = Number.parseFloat(
+        (parseInt(parts[2]) / 10 ** 6).toFixed(6)
+      );
+      let indexPrice = Number.parseFloat(
+        (parseInt(parts[3]) / 10 ** 6).toFixed(6)
+      );
+      let premiumToVault = Number.parseFloat(
+        (parseInt(parts[4]) / 10 ** 6).toFixed(6)
+      );
+
+      return {
+        longFunding,
+        shortFunding,
+        twapMarketPrice,
+        indexPrice,
+        premiumToVault,
       };
     }
   }
