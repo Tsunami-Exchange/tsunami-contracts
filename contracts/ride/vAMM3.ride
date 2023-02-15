@@ -33,7 +33,7 @@ let k_closeOnly = "k_closeOnly"                           # If all AMM operation
 
 # Exchange settings
 let k_fee = "k_fee"                                       # Exchange fee. Default is 1%. 1/2 goes to stakers, 1/2 goes to insurance fund
-let k_rolloverFee = "k_rollover_fee"                     # Rollover fee per minute. Default 35% per year.
+let k_rolloverFee = "k_rollover_fee"                      # Rollover fee per minute. Default 35% per year.
 let k_fundingPeriod = "k_fundingPeriod"                   # Funding period. By default funding is paid once per hour
 let k_initMarginRatio = "k_initMarginRatio"               # Initial margin ratio. Controls how much leverage can be applied when position is created
 let k_maintenanceMarginRatio = "k_mmr"                    # Maintenance margin ratio (MMR). When MR < MMR position can be liquidated
@@ -45,6 +45,7 @@ let k_maxPriceSpread = "k_maxPriceSpread"                 # max spread between I
 let k_maxOpenNotional = "k_maxOpenNotional"               # max open notional in market
 let k_feeToStakersPercent = "k_feeToStakersPercent"       # percent of fee to stakers (rest goes to vault)
 let k_maxOracleDelay = "k_maxOracleDelay"                 # max delay in oracle data
+let k_fundingMode = "k_fundingMode"                       # funding mode. maybe symmetric or asymmetric
 
 # TWAP data
 let k_lastDataStr = "k_lastDataStr"                       # List of last 15 TWAP computations (best case - we have a value for each of last 15 mins)
@@ -121,6 +122,8 @@ let MINUTES_IN_YEAR   = 525600 * DECIMAL_UNIT
 let ONE_DAY           = 86400 * DECIMAL_UNIT
 let PNL_OPTION_SPOT   = 1
 let PNL_OPTION_ORACLE = 2
+let FUNDING_ASYMMETRIC = 1
+let FUNDING_SYMMETRIC  = 2
 
 ##### Helper functions #####
 
@@ -190,6 +193,7 @@ func totalLongPositionSize() = int(k_totalLongPositionSize)
 func lastSequence() = intOr(k_sequence, 0)
 func feeToStakersPercent() = int(k_feeToStakersPercent)
 func maxOracleDelay() = int(k_maxOracleDelay)
+func fundingMode() = intOr(k_fundingMode, FUNDING_ASYMMETRIC)
 
 func lastTimestamp() = lastBlock.timestamp
 
@@ -1087,24 +1091,48 @@ func getFunding() = {
     || totalLongPositionSize() == 0
     || isMarketClosed()
   ) then {
-    (0, 0)
+    (0, 0, 0)
   } else {
     if (premium < 0) then {
       # underlyingPrice > spotTwapPrice, need to push spotTwapPrice UP, short pays the longs
       # how much to take from shorts this funding period
       let shortPremiumFraction = divd(muld(premium, fundingPeriodDecimal()), ONE_DAY)
 
-      # how much longs will get from shorts total this funding period
-      let longPremiumFraction = divd(muld(shortPremiumFraction, totalShortPositionSize()), totalLongPositionSize())
-      (shortPremiumFraction, longPremiumFraction)
+      if (fundingMode() == FUNDING_ASYMMETRIC) then {
+        let longPremiumFraction = divd(muld(shortPremiumFraction, totalShortPositionSize()), totalLongPositionSize())
+
+        (shortPremiumFraction, longPremiumFraction, 0)
+      } else {
+        let shortTotalPremiumFraction = abs(muld(shortPremiumFraction, totalShortPositionSize()))
+
+        # how much longs will get (total)
+        let longTotalPremiumFraction = abs(muld(shortPremiumFraction, totalLongPositionSize()))
+
+        # how much LP's will get 
+        let premiumToVault = shortTotalPremiumFraction - longTotalPremiumFraction
+
+        (shortPremiumFraction, shortPremiumFraction, premiumToVault)
+      }
     } else {
       # underlyingPrice < spotTwapPrice, need to push spotTwapPrice DOWN, longs pays the shorts
       # how much to take from longs this funding period
       let longPremiumFraction = divd(muld(premium, fundingPeriodDecimal()), ONE_DAY)
 
-      # how much shorts will get from longs total this funding period
-      let shortPremiumFraction = divd(muld(longPremiumFraction, totalLongPositionSize()), totalShortPositionSize())
-      (shortPremiumFraction, longPremiumFraction)
+      if (fundingMode() == FUNDING_ASYMMETRIC) then {
+        let shortPremiumFraction = divd(muld(longPremiumFraction, totalLongPositionSize()), totalShortPositionSize())
+
+        (shortPremiumFraction, longPremiumFraction, 0)
+      } else {
+        let longTotalPremiumFraction = abs(muld(longPremiumFraction, totalLongPositionSize()))
+
+        # how much short will get (total)
+        let shortTotalPremiumFraction = abs(muld(longPremiumFraction, totalShortPositionSize()))
+        
+        # how much LP's will get 
+        let premiumToVault = longTotalPremiumFraction - shortTotalPremiumFraction
+
+        (longPremiumFraction, longPremiumFraction, premiumToVault)
+      }
     }
   }
 }
@@ -1189,7 +1217,8 @@ func updateSettings(
   _maxOpenNotional: Int,
   _feeToStakersPercent: Int,
   _maxOracleDelay: Int,
-  _rolloverFee: Int
+  _rolloverFee: Int,
+  _fundingMode: Int
 ) = {
   [
     IntegerEntry(k_initMarginRatio, _initMarginRatio),
@@ -1204,7 +1233,8 @@ func updateSettings(
     IntegerEntry(k_maxOpenNotional, _maxOpenNotional),
     IntegerEntry(k_feeToStakersPercent, _feeToStakersPercent),
     IntegerEntry(k_maxOracleDelay, _feeToStakersPercent),
-    IntegerEntry(k_rolloverFee, _rolloverFee)
+    IntegerEntry(k_rolloverFee, _rolloverFee),
+    IntegerEntry(k_fundingMode, _fundingMode)
   ]
 }
 
@@ -1580,6 +1610,7 @@ func removeLiquidity(_quoteAssetAmount: Int) = {
 # @param _feeToStakersPercent The fee to stakers percent for the contract.
 # @param _maxOracleDelay The maximum oracle delay (blocks) for the contract.
 # @param _rolloverFee The rollover fee for the contract.
+# @param _fundingMode Symmetric or asymmetric funding.
 #
 # @notice admin only
 @Callable(i)
@@ -1596,9 +1627,27 @@ func changeSettings(
   _maxOpenNotional: Int,
   _feeToStakersPercent: Int,
   _maxOracleDelay: Int,
-  _rolloverFee: Int
+  _rolloverFee: Int,
+  _fundingMode: Int
 ) = {
-  if (i.caller != adminAddress()) then {
+  if (
+    _fundingPeriod <= 0
+    || _initMarginRatio <= 0
+    || _mmr <= 0
+    || _liquidationFeeRatio <= 0
+    || _fee <= 0
+    || _spreadLimit <= 0
+    || _maxPriceImpact <= 0
+    || _partialLiquidationRatio <= 0
+    || _maxPriceSpread <= 0
+    || _maxOpenNotional <= 0
+    || _feeToStakersPercent <= 0 || _feeToStakersPercent > DECIMAL_UNIT
+    || _maxOracleDelay <= 0
+    || _rolloverFee <= 0
+    || (_fundingMode != FUNDING_SYMMETRIC && _fundingMode != FUNDING_ASYMMETRIC)
+    || !initialized()
+    || i.caller != adminAddress()
+  ) then {
     throw("Invalid changeSettings params")
   } else {
     updateSettings(
@@ -1614,7 +1663,8 @@ func changeSettings(
       _maxOpenNotional,
       _feeToStakersPercent,
       _maxOracleDelay,
-      _rolloverFee
+      _rolloverFee,
+      _fundingMode
     )
   }
 }
@@ -1638,7 +1688,8 @@ func initialize(
   _maxOpenNotional: Int,
   _feeToStakersPercent: Int,
   _maxOracleDelay: Int,
-  _rolloverFee: Int
+  _rolloverFee: Int,
+  _fundingMode: Int
 ) = {
   if (
     _qtAstR <= 0
@@ -1656,6 +1707,7 @@ func initialize(
     || _feeToStakersPercent <= 0 || _feeToStakersPercent > DECIMAL_UNIT
     || _maxOracleDelay <= 0
     || _rolloverFee <= 0
+    || (_fundingMode != FUNDING_SYMMETRIC && _fundingMode != FUNDING_ASYMMETRIC)
     || initialized()
     || i.caller != this
   ) then {
@@ -1676,7 +1728,8 @@ func initialize(
       _maxOpenNotional,
       _feeToStakersPercent,
       _maxOracleDelay,
-      _rolloverFee
+      _rolloverFee,
+      _fundingMode
     )
     ++
     updateFunding(
@@ -2365,7 +2418,19 @@ func payFunding() = {
     throw("Invalid funding block timestamp: " + lastTimestamp().toString() + " < " + fundingBlockTimestamp.toString())
   } else {
     let underlyingPrice = getOraclePrice()
-    let (shortPremiumFraction, longPremiumFraction) = getFunding()
+    let (shortPremiumFraction, longPremiumFraction, premiumToVault) = getFunding()
+
+    strict doPayFundingToVault = if (premiumToVault > 0) then {
+      strict doPayFundingToVault = invoke(
+        vaultAddress(),
+        "exchangeFreeAndLocked",
+        [-premiumToVault], # Negative, because it is directed towards vault, not towards traders
+        []
+      )
+      []
+    } else {
+      []
+    }
     
     updateFunding(
       fundingBlockTimestamp + fundingPeriodSeconds(),
@@ -2508,10 +2573,10 @@ func view_getTerminalAmmPrice() = {
 @Callable(i)
 func view_getFunding() = {
   let underlyingPrice = getOraclePrice()
-  let (shortPremiumFraction, longPremiumFraction) = getFunding()
+  let (shortPremiumFraction, longPremiumFraction, premiumToVault) = getFunding()
   let longFunding = divd(longPremiumFraction, underlyingPrice)
   let shortFunding = divd(shortPremiumFraction, underlyingPrice)
-  throw(s(longFunding) + s(shortFunding) + s(getTwapSpotPrice()) + s(getOraclePrice()))
+  throw(s(longFunding) + s(shortFunding) + s(getTwapSpotPrice()) + s(getOraclePrice()) + s(premiumToVault))
 }
 
 # View callable functions exposed for another d-Apps
