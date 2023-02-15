@@ -127,6 +127,10 @@
 
   ##### Callable functions #####
 
+  # This function creates a referral link for the caller. 
+  # It takes the transaction ID and caller public key as inputs and uses them to 
+  # generate a unique short link. It then stores the short link in the blockchain along 
+  # with the caller's address. If the short link already exists, an error is thrown.
   @Callable(i)
   func createReferralLink() = {
     let raw = toBase58String(i.transactionId) + toBase58String(i.callerPublicKey)
@@ -145,6 +149,14 @@
     }
   }
 
+  # This callable function allows users to accept payments with a referral link. 
+  # It checks if the user is a referral or first time user, and if so, sends a fee to the 
+  # referrer and marks the user as active. If the user is not a referral or first time user, 
+  # the full payment is sent back.
+  # 
+  # @param _trader Trader using referral link
+  # @param _refLink Referral link for trader
+  # @notice Can only be called by AMM 
   @Callable(i)
   func acceptPaymentWithLink(_trader: String, _refLink: String) = {
     let _rawAmount = i.payments[0].amount
@@ -239,6 +251,12 @@
     }
   }
 
+  # This function is used to accept payments from traders.
+  # It checks if the trader is already someone's referral or is interacting with 
+  # the platform for the first time. If the trader is an existing referral, 
+  # it pays the referrer a fee in exchange for the quote asset. 
+  # If the trader is not a referral, it sends the full payment back to the caller.
+  # This trader will no become anyone's referral after first interaction with platform.
   @Callable(i)
   func acceptPayment(_trader: String) = {
     let _rawAmount = i.payments[0].amount
@@ -289,6 +307,11 @@
     }
   }
 
+  # This function allows the caller to claim rewards earned from referrals. 
+  # It first calculates the total rewards earned by the caller and subtracts 
+  # the total rewards already claimed. If the difference is greater than zero, 
+  # the caller's rewards are updated in the ledger and the caller is transferred 
+  # the amount of rewards they can claim. Otherwise, an error is thrown.
   @Callable(i)
   func claimRewards() = {
     let referrer = i.caller.toString()
