@@ -2494,6 +2494,8 @@ func view_getTerminalAmmPrice() = {
 # 4 - index price used for funding computation in 6 decimals
 @Callable(i)
 func view_getFunding() = {
+  strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
+  
   let underlyingPrice = getOraclePrice()
   let (shortPremiumFraction, longPremiumFraction, premiumToVault) = getFunding()
   let longFunding = divd(longPremiumFraction, underlyingPrice)
