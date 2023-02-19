@@ -107,7 +107,6 @@ let FEE_REDUCTION_TOKEN_TYPE = "fee_reduction"
 
 let DIR_LONG          = 1
 let DIR_SHORT         = 2
-let TWAP_INTERVAL     = 15
 let SECONDS           = 1000
 let DECIMAL_NUMBERS   = 6
 let DECIMAL_UNIT      = 1 * (10 * 10 * 10 * 10 * 10 * 10)
@@ -130,18 +129,6 @@ func bmuld(_x: BigInt, _y: BigInt) = fraction(_x, _y, DECIMAL_UNIT.toBigInt(), H
 
 func abs(_x: Int) = if (_x > 0) then _x else -_x
 func vmax(_x: Int, _y: Int) = if (_x >= _y) then _x else _y
-
-func listToStr(_list: List[String]) = 
-  if (_list.size() == 0) then "" else makeString(_list, ",")
-
-func strToList(_str: String) = if (_str == "") then [] else _str.split(",")
-
-func pushToQueue(_list: List[String], _maxSize: Int, _value: String) = 
-  if (_list.size() > _maxSize) then {
-    _list.removeByIndex(0) :+ _value
-  } else {
-    _list :+ _value
-  }
 
 ##### Accessor functions #####
 func int(k: String) = this.getInteger(k).valueOrErrorMessage("no value for " + k)
@@ -1045,8 +1032,8 @@ func getSyncTerminalPrice(_terminalPrice: Int, _qtAstR: Int, _bsAstR: Int) = {
 
 func getFunding() = {
   let underlyingPrice = getOraclePrice()
-  let spotTwapPrice = getSpotPrice()
-  let premium = spotTwapPrice - underlyingPrice
+  let spotPrice = getSpotPrice()
+  let premium = spotPrice - underlyingPrice
   
   if (
     totalShortPositionSize() == 0 
@@ -1056,7 +1043,7 @@ func getFunding() = {
     (0, 0, 0)
   } else {
     if (premium < 0) then {
-      # underlyingPrice > spotTwapPrice, need to push spotTwapPrice UP, short pays the longs
+      # underlyingPrice > spotPrice, need to push spotPrice UP, short pays the longs
       # how much to take from shorts this funding period
       let shortPremiumFraction = divd(muld(premium, fundingPeriodDecimal()), ONE_DAY)
 
@@ -1076,7 +1063,7 @@ func getFunding() = {
         (shortPremiumFraction, shortPremiumFraction, premiumToVault)
       }
     } else {
-      # underlyingPrice < spotTwapPrice, need to push spotTwapPrice DOWN, longs pays the shorts
+      # underlyingPrice < spotPrice, need to push spotPrice DOWN, longs pays the shorts
       # how much to take from longs this funding period
       let longPremiumFraction = divd(muld(premium, fundingPeriodDecimal()), ONE_DAY)
 
@@ -2490,7 +2477,7 @@ func view_getTerminalAmmPrice() = {
 # View function. Return information about funding state of AMM in it's throws message.
 # 1 - long funding in 6 decimals
 # 2 - short funding in 6 decimals
-# 3 - TWAP 15 minutes of spot price used for funding computation in 6 decimals
+# 3 -  spot price used for funding computation in 6 decimals
 # 4 - index price used for funding computation in 6 decimals
 @Callable(i)
 func view_getFunding() = {
