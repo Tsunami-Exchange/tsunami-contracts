@@ -365,20 +365,6 @@
       )
   }
 
-  @Callable(i)
-  func migrateLiquidity() = {
-    let amount = rewardBalance().usdnFromDecimals()
-
-    strict stake = invoke(
-      managerAddress(),
-      "deposit",
-      [],
-      [AttachedPayment(quoteAsset(),amount)]
-    )
-
-    []
-  }
-
   @Verifier(tx)
   func verify() = {
     let coordinatorStr = this.getString(k_coordinatorAddress)

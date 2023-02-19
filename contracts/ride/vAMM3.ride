@@ -47,13 +47,6 @@ let k_feeToStakersPercent = "k_feeToStakersPercent"       # percent of fee to st
 let k_maxOracleDelay = "k_maxOracleDelay"                 # max delay in oracle data
 let k_fundingMode = "k_fundingMode"                       # funding mode. maybe symmetric or asymmetric
 
-# TWAP data
-let k_lastDataStr = "k_lastDataStr"                       # List of last 15 TWAP computations (best case - we have a value for each of last 15 mins)
-let k_lastMinuteId = "k_lastMinuteId"                     # ID of last minute, when price measurements was taken
-let k_twapDataLastCumulativePrice = "k_twapDataLastCumulativePrice" # Last cumulative price data (previousPrice * minutesPriceLasted)
-let k_twapDataLastPrice = "k_twapDataLastPrice"           # Last price value
-let k_twapDataPreviousMinuteId = "k_twapDataPreviousMinuteId" # Previous minute id for current twap data
-
 # Funding state
 let k_latestLongCumulativePremiumFraction = "k_latestLongPremiumFraction" # Latest Cumulative Premium Fraction. (Part of Premium paid this funding period). Premium = MarkPrice - IndexPrice
 let k_latestShortCumulativePremiumFraction = "k_latestShortPremiumFraction" # Latest Cumulative Premium Fraction. (Part of Premium paid this funding period). Premium = MarkPrice - IndexPrice
@@ -969,37 +962,6 @@ func internalClosePosition(
   }
 }
 
-# Computes TWAP spot price
-func getTwapSpotPrice() = {
-  let minuteId = lastTimestamp() / 1000 / 60
-  let startMinuteId = minuteId - TWAP_INTERVAL
-  let listStr = this.getString(k_lastDataStr).valueOrElse("")
-  let list = listStr.split(",")
-  func filterFn(accumulator: List[Int], next: String) = {
-    if (next.parseInt().valueOrErrorMessage("getTwapSpotPrice: invalid int: " + listStr) <= startMinuteId) then {
-      accumulator :+ next.parseIntValue()
-    } else {
-      accumulator
-    }
-  }
-  let listF = FOLD<20>(list, [], filterFn)
-  let maxIndex = if (listF.size() > 0) then {
-    max(listF)
-  } else {
-    list.getElement(0).parseInt().valueOrErrorMessage("getTwapSpotPrice: invalid int: " + listStr)
-  }
-  let lastMinuteId = this.getInteger(k_lastMinuteId).valueOrElse(0)
-  let endLastCumulativePrice = this.getInteger(k_twapDataLastCumulativePrice + "_" + lastMinuteId.toString()).valueOrElse(0)
-  let endLastPrice = this.getInteger(k_twapDataLastPrice + "_" + lastMinuteId.toString()).valueOrElse(0)
-  let nowCumulativePrice = endLastCumulativePrice + (minuteId - lastMinuteId) * endLastPrice
-  
-  let startLastCumulativePrice = this.getInteger(k_twapDataLastCumulativePrice + "_" + maxIndex.toString()).valueOrElse(0)
-  let startLastPrice = this.getInteger(k_twapDataLastPrice + "_" + maxIndex.toString()).valueOrElse(0)
-  let startCumulativePrice = startLastCumulativePrice + (startMinuteId - maxIndex) * startLastPrice
-  
-  (nowCumulativePrice - startCumulativePrice) / TWAP_INTERVAL
-}
-
 func getTerminalAmmState() = {
   let _positionSize = totalPositionSize()
   if (_positionSize == 0) then {
@@ -1083,7 +1045,7 @@ func getSyncTerminalPrice(_terminalPrice: Int, _qtAstR: Int, _bsAstR: Int) = {
 
 func getFunding() = {
   let underlyingPrice = getOraclePrice()
-  let spotTwapPrice = getTwapSpotPrice()
+  let spotTwapPrice = getSpotPrice()
   let premium = spotTwapPrice - underlyingPrice
   
   if (
@@ -1300,44 +1262,6 @@ func updatePosition(
   ]
 }
 
-func appendTwap(_price: Int) = {
-  let minuteId = lastTimestamp() / 1000 / 60
-  let previousMinuteId = this.getInteger(k_lastMinuteId).valueOrElse(0)
-  if (minuteId < previousMinuteId) then {
-    throw("TWAP out-of-order")
-  } else {
-    let lastMinuteId = if (previousMinuteId == 0) then minuteId else previousMinuteId
-    if (minuteId > previousMinuteId) then {
-      let prevCumulativePrice = this.getInteger(k_twapDataLastCumulativePrice + "_" + previousMinuteId.toString()).valueOrElse(0)
-      let prevPrice = this.getInteger(k_twapDataLastPrice + "_" + previousMinuteId.toString()).valueOrElse(_price)
-      let lastCumulativePrice = prevCumulativePrice + (minuteId - lastMinuteId) * prevPrice
-
-      # Push new minute to list of last minutes with recorded TWAP info
-      let list = this.getString(k_lastDataStr).valueOrElse("").strToList().pushToQueue(TWAP_INTERVAL, minuteId.toString())
-
-      # Append new measurement to list of TWAP's
-      [
-        IntegerEntry(k_twapDataLastCumulativePrice.toCompositeKey(minuteId.toString()), lastCumulativePrice),
-        IntegerEntry(k_twapDataLastPrice.toCompositeKey(minuteId.toString()), _price),
-        IntegerEntry(k_twapDataPreviousMinuteId.toCompositeKey(minuteId.toString()), previousMinuteId),
-        IntegerEntry(k_lastMinuteId, minuteId),
-        StringEntry(k_lastDataStr, listToStr(list))
-      ]
-    } else {
-      let twapDataPreviousMinuteId = this.getInteger(k_twapDataPreviousMinuteId.toCompositeKey(minuteId.toString())).valueOrElse(0)
-      let prevCumulativePrice = this.getInteger(k_twapDataLastCumulativePrice.toCompositeKey(twapDataPreviousMinuteId.toString())).valueOrElse(0)
-      let prevPrice = this.getInteger(k_twapDataLastPrice.toCompositeKey(twapDataPreviousMinuteId.toString())).valueOrElse(_price)
-      let lastCumulativePrice = prevCumulativePrice + (minuteId - twapDataPreviousMinuteId) * prevPrice
-      
-      # Override LastCumulativePrice and LastPrice to keep latest measurement
-      [
-        IntegerEntry(k_twapDataLastCumulativePrice.toCompositeKey(minuteId.toString()), lastCumulativePrice),
-        IntegerEntry(k_twapDataLastPrice.toCompositeKey(minuteId.toString()), _price)
-      ]
-    }
-  }
-}
-
 func updateAmmReserves(
   _qtAstR: Int,
   _bsAstR: Int
@@ -1382,7 +1306,7 @@ func updateAmm(
       IntegerEntry(k_totalShortPositionSize, _totalShortPositionSize),
       IntegerEntry(k_openInterestLong, _totalLongOpenNotional),
       IntegerEntry(k_openInterestShort, _totalShortOpenNotional)
-    ] ++ appendTwap(divd(_qtAstR.muld(_qtAstW), _bsAstR.muld(_bsAstW)))
+    ]
   }
 }
 
@@ -2483,8 +2407,6 @@ func syncTerminalPriceToOracle() = {
   updateBalance(cbalance() + marginToVaultAdj)
   ++
   updateAmmWeights(newQuoteAssetWeight, newBaseAssetWeight)
-  ++
-  appendTwap(divd(_qtAstR.muld(newQuoteAssetWeight), _bsAstR.muld(newBaseAssetWeight)))
 }
 
 # Function to ensure that this contract can only be called once in transaction, preventing front-running
@@ -2576,7 +2498,7 @@ func view_getFunding() = {
   let (shortPremiumFraction, longPremiumFraction, premiumToVault) = getFunding()
   let longFunding = divd(longPremiumFraction, underlyingPrice)
   let shortFunding = divd(shortPremiumFraction, underlyingPrice)
-  throw(s(longFunding) + s(shortFunding) + s(getTwapSpotPrice()) + s(getOraclePrice()) + s(premiumToVault))
+  throw(s(longFunding) + s(shortFunding) + s(getSpotPrice()) + s(getOraclePrice()) + s(premiumToVault))
 }
 
 # View callable functions exposed for another d-Apps
