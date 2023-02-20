@@ -22,7 +22,6 @@ let k_positionMargin = "k_positionMargin"             # Trader position margin (
 let k_positionOpenNotional = "k_positionOpenNotional" # Trader position open notional - how much quote asset they have borrowed
 let k_positionLastUpdatedCumulativePremiumFraction = "k_positionFraction"        # Trader position last updated cumulative premium fraction
 let k_positionSequence = "k_positionSequence"         # When position was closed
-let k_positionAsset = "k_positionAsset"               # Asset of position
 let k_positionFee = "k_positionFee"                   # Fee for current position
 let k_positionLastUpdatedTimestamp = "k_positionTimestamp" # Trader position last updated timestamp
 
@@ -220,16 +219,6 @@ func getPosition(_trader: String) = {
       )
       case _ => (0, 0, 0, 0, 0)
     }
-}
-
-# Returns info on position's asset
-#
-func getPositionAsset(_trader: String) = {
-  let positionAssetOpt = this.getString(k_positionAsset.toCompositeKey(_trader))
-  match (positionAssetOpt) {
-    case positionAsset: String => positionAsset
-    case _ => quoteAsset().toBase58String()
-  }
 }
 
 # Returns info on positions's fee closing fee, including 
@@ -1104,20 +1093,6 @@ func getAdjustedFee(_artifactId: String, _baseFeeDiscount: Int) = {
   (adjustedFee, burnArtifact)
 }
 
-
-func isSameAssetOrNoPosition(_trader: String, _assetId: String) = {
-    let oldPositionSize = getPosition(_trader)._1
-    if (oldPositionSize == 0) then {
-      true
-    } else {
-      getPositionAsset(_trader) == _assetId
-    }
-}
-
-func isSameAsset(_trader: String, _assetId: String) = {
-    getPositionAsset(_trader) == _assetId
-}
-
 func getForTraderWithArtifact(_trader: String, _artifactId: String) = {
   strict doGetFeeDiscount = invoke(
     minerAddress(),
@@ -1305,7 +1280,6 @@ func deletePosition(
     DeleteEntry(k_positionMargin.toCompositeKey(_address)),
     DeleteEntry(k_positionOpenNotional.toCompositeKey(_address)),
     DeleteEntry(k_positionLastUpdatedCumulativePremiumFraction.toCompositeKey(_address)),
-    DeleteEntry(k_positionAsset.toCompositeKey(_address)),
     DeleteEntry(k_positionFee.toCompositeKey(_address)),
     DeleteEntry(k_positionLastUpdatedTimestamp.toCompositeKey(_address))
   ]
@@ -1692,7 +1666,6 @@ func increasePosition(
     || _rawAmount <= 0
     || !initialized()
     || !isQuoteAsset
-    || !isSameAssetOrNoPosition(_trader, _assetIdStr)
     || !requireMoreMarginRatio(divd(DECIMAL_UNIT, _leverage), initMarginRatio(), true)
     || paused()
     || closeOnly()
@@ -1897,7 +1870,6 @@ func addMargin() = {
   if (
     !isQuoteAsset
     || !requireOpenPosition(i.caller.toString())
-    || !isSameAsset(_trader, _assetIdStr)
     || !initialized()
     || paused()
     || closeOnly()
@@ -2477,7 +2449,7 @@ func view_getTerminalAmmPrice() = {
 # View function. Return information about funding state of AMM in it's throws message.
 # 1 - long funding in 6 decimals
 # 2 - short funding in 6 decimals
-# 3 -  spot price used for funding computation in 6 decimals
+# 3 - spot price used for funding computation in 6 decimals
 # 4 - index price used for funding computation in 6 decimals
 @Callable(i)
 func view_getFunding() = {
