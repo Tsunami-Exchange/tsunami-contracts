@@ -31,7 +31,7 @@ let k_paused = "k_paused"                                 # If all AMM operation
 let k_closeOnly = "k_closeOnly"                           # If all AMM operations are close - only
 
 # Exchange settings
-let k_fee = "k_fee"                                       # Exchange fee. Default is 1%. 1/2 goes to stakers, 1/2 goes to insurance fund
+let k_fee = "k_fee"                                       # Exchange fee. Default is 0.012%. 1/3 goes to stakers, 2/3 goes to vault
 let k_rolloverFee = "k_rollover_fee"                      # Rollover fee per minute. Default 35% per year.
 let k_fundingPeriod = "k_fundingPeriod"                   # Funding period. By default funding is paid once per hour
 let k_initMarginRatio = "k_initMarginRatio"               # Initial margin ratio. Controls how much leverage can be applied when position is created
@@ -57,7 +57,7 @@ let k_shortFundingRate = "k_shortFundingRate"                     # Funding rate
 let k_quoteAssetReserve = "k_qtAstR"                      # Quote Asset Reserve (AMM)
 let k_baseAssetReserve = "k_bsAstR"                       # Base Asset Reserve (AMM)
 let k_quoteAssetWeight = "k_qtAstW"                       # Quote Asset Weight
-let k_baseAssetWeight = "k_bsAstW"                        # Base Asset Weight
+let k_baseAssetWeight = "k_bsAstW"                        # Base Asset Weight (always 1, TODO: Remove)
 let k_totalPositionSize = "k_totalPositionSize"           # Total trader position size (in Base asset)
 let k_totalLongPositionSize = "k_totalLongPositionSize"   # Total LONG trader position size (in Base asset)
 let k_totalShortPositionSize = "k_totalShortPositionSize" # Total SHORT trader position size (in Base asset)
@@ -75,12 +75,10 @@ let k_coordinatorAddress = "k_coordinatorAddress"         # Address of Coordinat
 let k_vault_address = "k_vault_address"           # Address of vault contract
 let k_admin_address = "k_admin_address"           # Address of admin account           
 let k_quote_asset = "k_quote_asset"               # Address of quote asset (USDN in our case)
-let k_quote_staking = "k_quote_staking"           # Address of quote asset staking contract (USDN staking in our case)
 let k_staking_address = "k_staking_address"       # Address that should receive staking benefits
 let k_miner_address = "k_miner_address"           # Liquidity mining contract address
 let k_orders_address = "k_orders_address"         # Order executor contract address
 let k_referral_address = "k_referral_address"     # Referral contract address
-let k_exchange_address = "k_exchange_address"     # Exchange manager address
 let k_nft_manager_address = "k_nft_manager_address" # NFT manager address
 
 func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
@@ -89,7 +87,6 @@ func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
 func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
 func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
 func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
-func quoteAssetStaking() = addressFromString(coordinator().getStringValue(k_quote_staking)).valueOrErrorMessage("Quote asset staking not set")
 func stakingAddress() = addressFromString(coordinator().getStringValue(k_staking_address)).valueOrErrorMessage("Staking not set")
 func vaultAddress() = addressFromString(coordinator().getStringValue(k_vault_address)).valueOrErrorMessage("Vault not set") 
 func minerAddress() = addressFromString(coordinator().getStringValue(k_miner_address)).valueOrErrorMessage("Miner not set")
@@ -2091,7 +2088,19 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int, _addToMargin: Boolean)
         []
       )
 
-      let (feeToStakers, feeToVault) = distributeFee(realizedFee)
+      strict referrerFeeAny = invoke(
+        referralAddress(),
+        "acceptPayment",
+        [_trader],
+        [AttachedPayment(quoteAsset(), realizedFee)]
+      )
+
+      let referrerFee = match(referrerFeeAny) {
+        case x: Int => x
+        case _ => throw("Invalid referrerFee")
+      }
+
+      let (feeToStakers, feeToVault) = distributeFee(realizedFee - referrerFee)
 
       strict depositVault = invoke(
         vaultAddress(),
@@ -2375,10 +2384,11 @@ func ensureCalledOnce() = {
   if (i.caller != this) then {
     throw("Invalid saveCurrentTxId parameters")
   } else {
+    let txId = i.transactionId.toBase58String()
     let lastTx = this.getString(k_lastTx).valueOrElse("")
-    if (lastTx != i.transactionId.toBase58String()) then {
+    if (lastTx != txId) then {
       [
-        StringEntry(k_lastTx, lastTx)
+        StringEntry(k_lastTx, txId)
       ]
     } else {
       throw("Can not call vAMM methods twice in one tx")

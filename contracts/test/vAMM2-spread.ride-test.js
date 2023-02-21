@@ -41,11 +41,10 @@ describe("vAMM should not be able to go more than 40% off index price", async fu
 
   it("Open long positions until impact", async function () {
     console.log(`AMM Market Price is: ${await amm.getMarketPrice()}`);
-    await Promise.all([
-      amm.as(longer).increasePosition(2000, DIR_LONG, 3, 0),
-      amm.as(longer).increasePosition(2000, DIR_LONG, 3, 0),
-      amm.as(longer).increasePosition(2000, DIR_LONG, 3, 0),
-    ]);
+
+    await amm.as(longer).increasePosition(2000, DIR_LONG, 3, 0);
+    await amm.as(longer).increasePosition(2000, DIR_LONG, 3, 0);
+    await amm.as(longer).increasePosition(2000, DIR_LONG, 3, 0);
 
     console.log(`AMM Market Price is: ${await amm.getMarketPrice()}`);
   });
@@ -56,20 +55,19 @@ describe("vAMM should not be able to go more than 40% off index price", async fu
   });
 
   it("Allows closing long position", async function () {
-    await Promise.all([
-      amm.as(longer).closePosition(6000 / 55),
-      amm.as(longer).closePosition(6000 / 55),
-    ]);
+    await amm.as(longer).closePosition(6000 / 55);
+    await amm.as(longer).closePosition(6000 / 55);
+
     await amm.as(longer).closePosition();
   });
 
   it("Open short positions until impact", async function () {
     console.log(`AMM Market Price is: ${await amm.getMarketPrice()}`);
-    await Promise.all([
-      amm.as(shorter).increasePosition(2000, DIR_SHORT, 3, 0),
-      amm.as(shorter).increasePosition(2000, DIR_SHORT, 3, 0),
-      amm.as(shorter).increasePosition(2000, DIR_SHORT, 3, 0),
-    ]);
+
+    await amm.as(shorter).increasePosition(2000, DIR_SHORT, 3, 0);
+    await amm.as(shorter).increasePosition(2000, DIR_SHORT, 3, 0);
+    await amm.as(shorter).increasePosition(2000, DIR_SHORT, 3, 0);
+
     console.log(`AMM Market Price is: ${await amm.getMarketPrice()}`);
   });
 
@@ -79,10 +77,9 @@ describe("vAMM should not be able to go more than 40% off index price", async fu
   });
 
   it("Allows closing short position", async function () {
-    await Promise.all([
-      amm.as(shorter).closePosition(7000 / 55),
-      amm.as(shorter).closePosition(7000 / 55),
-    ]);
+    await amm.as(shorter).closePosition(7000 / 55);
+    await amm.as(shorter).closePosition(7000 / 55);
+
     await amm.as(shorter).closePosition();
   });
 });

@@ -9,8 +9,9 @@
 let k_insurance_address = "k_insurance_address"   # Address of insurance contract (deprecated)
 let k_vault_address = "k_vault_address"           # Address of vault contract
 let k_admin_address = "k_admin_address"           # Address of admin account           
-let k_quote_asset = "k_quote_asset"               # Address of quote asset (USDN in our case)
-let k_quote_staking = "k_quote_staking"           # Address of quote asset staking contract (USDN staking in our case)
+let k_quote_asset = "k_quote_asset"               # Address of quote asset
+let k_reward_asset = "k_reward_asset"             # Address of reward asset (asset that will be used to pay stakers)
+let k_swap_address = "k_swap_address"             # Address of swap proxy (exchange proxy)
 let k_staking_address = "k_staking_address"       # Address that should receive staking benefits
 let k_farming_address = "k_farming_address"       # Address that is used to farm more TSN
 let k_prizes_address = "k_prizes_address"         # Address that is used to distribute prizes
@@ -137,14 +138,30 @@ func setNftManager(
 })
 
 @Callable(i)
-func setQuoteAsset(
-  _assetId: String,
-  _stakingAddress: String
+func setSwap(
+  _swap: String
 ) = isAdmin(i).valueOrElse({
-  let stakingAddress = getAddressIfValid(_stakingAddress)
+  let address = getAddressIfValid(_swap)
   [
-    StringEntry(k_quote_asset, _assetId),
-    StringEntry(k_quote_staking, _stakingAddress)
+    StringEntry(k_swap_address, address)
+  ]
+})
+
+@Callable(i)
+func setQuoteAsset(
+  _assetId: String
+) = isAdmin(i).valueOrElse({
+  [
+    StringEntry(k_quote_asset, _assetId)
+  ]
+})
+
+@Callable(i)
+func setRewardAsset(
+  _assetId: String
+) = isAdmin(i).valueOrElse({
+  [
+    StringEntry(k_reward_asset, _assetId)
   ]
 })
 

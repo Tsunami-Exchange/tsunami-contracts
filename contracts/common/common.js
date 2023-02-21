@@ -14,6 +14,7 @@ class Environment {
     this.seeds = {};
     this.assets = {};
     this.addresses = {};
+    this.now = new Date().getTime();
 
     this.seeds.admin = admin;
 
@@ -121,8 +122,9 @@ class Environment {
       housekeeper: 0.05 * wvs,
       prizes: 0.05 * wvs,
       nfts: 0.05 * wvs,
-      collateral: 0.05 * wvs,
       vault: 0.05 * wvs,
+      viresAssetManager: 0.05 * wvs,
+      swap: 0.05 * wvs,
     });
 
     this.seeds.coordinator = accounts.coordinator;
@@ -138,6 +140,8 @@ class Environment {
     this.seeds.nfts = accounts.nfts;
     this.seeds.collateral = accounts.collateral;
     this.seeds.vault = accounts.vault;
+    this.seeds.viresAssetManager = accounts.viresAssetManager;
+    this.seeds.swap = accounts.swap;
 
     if (this.isLocal) {
       await setupAccounts({
@@ -342,19 +346,27 @@ class Environment {
       this.isLocal,
       address(this.seeds.timer)
     );
-    let p13 = deploy(
-      "collateral.ride",
-      3400000,
-      this.seeds.collateral,
-      "Collateral Manager",
-      this.isLocal,
-      address(this.seeds.timer)
-    );
     let p14 = deploy(
       "vault.ride",
       3400000,
       this.seeds.vault,
       "Vault",
+      this.isLocal,
+      address(this.seeds.timer)
+    );
+    let p15 = deploy(
+      "viresAssetManager.ride",
+      3400000,
+      this.seeds.viresAssetManager,
+      "Vires Asset Manager",
+      this.isLocal,
+      address(this.seeds.timer)
+    );
+    let p16 = deploy(
+      "swap.ride",
+      3400000,
+      this.seeds.swap,
+      "Swap",
       this.isLocal,
       address(this.seeds.timer)
     );
@@ -389,8 +401,9 @@ class Environment {
       p10,
       p11,
       p12,
-      p13,
       p14,
+      p15,
+      p16,
       seedOracleTx,
     ]);
 
@@ -457,12 +470,23 @@ class Environment {
         {
           dApp: address(this.seeds.coordinator),
           functionName: "setQuoteAsset",
-          arguments: [this.assets.neutrino, this.addresses.neutrinoStaking],
+          arguments: [this.assets.neutrino],
         },
         this.seeds.admin
       );
 
       console.log(`setQuoteAsset in ${setQuoteAssetTx.id}`);
+
+      const setRewardAssetTx = await invoke(
+        {
+          dApp: address(this.seeds.coordinator),
+          functionName: "setRewardAsset",
+          arguments: [this.assets.neutrino],
+        },
+        this.seeds.admin
+      );
+
+      console.log(`setRewardAsset in ${setRewardAssetTx.id}`);
 
       const setGovAssetTx = await invoke(
         {
@@ -559,6 +583,15 @@ class Environment {
         this.seeds.admin
       );
 
+      const setSwapTx = await invoke(
+        {
+          dApp: address(this.seeds.coordinator),
+          functionName: "setSwap",
+          arguments: [address(this.seeds.swap)],
+        },
+        this.seeds.admin
+      );
+
       console.log(`setVaultAddress in ${setExchangeManagerTx.id}`);
 
       initTxs.push(waitForTx(setQuoteAssetTx.id));
@@ -575,6 +608,8 @@ class Environment {
       initTxs.push(waitForTx(setCollateralManagerTx.id));
       initTxs.push(waitForTx(setExchangeManagerTx.id));
       initTxs.push(waitForTx(setVaultTx.id));
+      initTxs.push(waitForTx(setSwapTx.id));
+      initTxs.push(waitForTx(setRewardAssetTx.id));
     }
 
     // Init staking
@@ -634,7 +669,7 @@ class Environment {
           arguments: [
             address(this.seeds.coordinator),
             0.2 * decimals, // 20% of fee goes to referrer
-            address(this.seeds.puzzleSwap),
+            //address(this.seeds.puzzleSwap),
           ],
         },
         this.seeds.referral
@@ -652,7 +687,7 @@ class Environment {
           functionName: "initialize",
           arguments: [
             address(this.seeds.coordinator),
-            address(this.seeds.puzzleSwap),
+            //address(this.seeds.puzzleSwap),
           ],
         },
         this.seeds.farming
@@ -672,9 +707,11 @@ class Environment {
           functionName: "initialize",
           arguments: [
             address(this.seeds.coordinator),
-            address(this.seeds.vires),
             this.assets.neutrino,
-            address(this.seeds.vires),
+            address(this.seeds.viresAssetManager),
+            //address(this.seeds.vires),
+            //this.assets.neutrino,
+            //address(this.seeds.vires),
           ],
         },
         this.seeds.manager
@@ -682,6 +719,48 @@ class Environment {
 
       initTxs.push(waitForTx(initManagerTx.id));
       console.log("Manager initialized in " + initManagerTx.id);
+    }
+
+    // Init vires asset manager
+    {
+      const initViresManagerTx = await invoke(
+        {
+          dApp: address(this.seeds.viresAssetManager),
+          functionName: "initialize",
+          arguments: [
+            address(this.seeds.coordinator),
+            address(this.seeds.vires),
+            this.assets.neutrino,
+            address(this.seeds.vires),
+          ],
+        },
+        this.seeds.viresAssetManager
+      );
+
+      initTxs.push(waitForTx(initViresManagerTx.id));
+      console.log(
+        "Vires Asset Manager initialized in " + initViresManagerTx.id
+      );
+    }
+
+    // Init swap
+    {
+      const initSwapTx = await invoke(
+        {
+          dApp: address(this.seeds.swap),
+          functionName: "initialize",
+          arguments: [
+            address(this.seeds.coordinator),
+            `${this.assets.neutrino}`,
+            `${this.assets.tsn}`,
+            `${address(this.seeds.puzzleSwap)}`,
+          ],
+        },
+        this.seeds.swap
+      );
+
+      initTxs.push(waitForTx(initSwapTx.id));
+      console.log("Swap initialized in " + initSwapTx.id);
     }
 
     // Init housekeeper
@@ -735,26 +814,6 @@ class Environment {
       console.log("NFT Manager initialized in " + initNFTManagerTx.id);
     }
 
-    // Init Collateral Manager
-    {
-      const initCollateralManagerTx = await invoke(
-        {
-          dApp: address(this.seeds.collateral),
-          functionName: "initialize",
-          arguments: [
-            address(this.seeds.coordinator),
-            `${this.assets.usdt},${this.assets.usdc}`,
-          ],
-        },
-        this.seeds.collateral
-      );
-
-      initTxs.push(waitForTx(initCollateralManagerTx.id));
-      console.log(
-        "NFT Collateral manager initialized in " + initCollateralManagerTx.id
-      );
-    }
-
     // Init Vault
     {
       const initVaultTx = await invoke(
@@ -805,6 +864,7 @@ class Environment {
     this.manager = new Manager(this);
     this.vires = new Vires(this);
 
+    this.now = new Date().getTime();
     console.log(`Environment deployed`);
   }
 
@@ -1443,6 +1503,7 @@ class Environment {
     }
 
     const amm = new AMM(this, address(ammSeed));
+    this.now = new Date().getTime();
     return amm;
   }
 
@@ -1551,7 +1612,14 @@ class Environment {
     );
   }
 
+  async advanceTime(_delta) {
+    await this.setTime(this.now + _delta);
+  }
+
   async setTime(_timestamp) {
+    console.log(`Moving time ${this.now} -> ${_timestamp}`);
+    this.now = _timestamp;
+
     if (!this.isLocal) {
       throw "Can set time only in local env";
     }
@@ -1930,7 +1998,7 @@ class AMM {
   }
 
   async closePosition(_amount, _minQuoteAssetAmount = 0, _addToMargin = false) {
-    await this.e.setTime(new Date().getTime() + 1);
+    await this.e.advanceTime(1);
 
     if (!_amount) {
       let trader = address(this.sender);

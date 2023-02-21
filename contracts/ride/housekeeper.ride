@@ -10,21 +10,17 @@
   let k_staking_address = "k_staking_address"
   let k_farming_address = "k_farming_address"
   let k_vault_address = "k_vault_address"
-  let k_governance_asset = "k_gov_asset"
-  let k_quote_asset = "k_quote_asset" 
   let k_admin_address = "k_admin_address"  
 
   
   func strToList(_str: String) = if (_str == "") then [] else _str.split(",") 
 
   ##### Coordinator constants #####
-  func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
-  func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
-  func governanceAsset() = fromBase58String(coordinator().getStringValue(k_governance_asset))
-  func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
-  func stakingAddress() = addressFromString(coordinator().getStringValue(k_staking_address)).valueOrErrorMessage("Staking not set")
-  func farmingAddress() = addressFromString(coordinator().getStringValue(k_farming_address)).valueOrErrorMessage("Farming not set")
-  func vaultAddress() = addressFromString(coordinator().getStringValue(k_vault_address)).valueOrErrorMessage("Vault not set") 
+  func coordinator() = addressFromString(this.getString(k_coordinatorAddress).valueOrErrorMessage("Coordinator not set HC")).valueOrErrorMessage("Coordinator address invalid")
+  func adminAddress() = addressFromString(coordinator().getString(k_admin_address).valueOrErrorMessage("Admin address not set"))
+  func stakingAddress() = addressFromString(coordinator().getString(k_staking_address).valueOrErrorMessage("Staking address not set")).valueOrErrorMessage("Staking address invalid")
+  func farmingAddress() = addressFromString(coordinator().getString(k_farming_address).valueOrErrorMessage("Farming address not set")).valueOrErrorMessage("Farming address invalid")
+  func vaultAddress() = addressFromString(coordinator().getString(k_vault_address).valueOrErrorMessage("Vault address not set")).valueOrErrorMessage("Vault address invalid")
 
   func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
 

@@ -32,7 +32,6 @@
   # Coordinator
   let k_coordinatorAddress = "k_coordinatorAddress"
   let k_governance_asset = "k_gov_asset"
-  let k_quote_asset = "k_quote_asset" 
   let k_admin_address = "k_admin_address" 
   let k_amm = "k_amm"                               
 
@@ -74,8 +73,8 @@
   let that = this
 
   ##### Coordinator constants #####
-  func coordinator() = addressFromString(that.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
-  func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
+  func coordinator() = addressFromString(this.getString(k_coordinatorAddress).valueOrErrorMessage("Coordinator not set")).valueOrErrorMessage("Coordinator address invalid")
+  func adminAddress() = addressFromString(coordinator().getString(k_admin_address).valueOrErrorMessage("Admin address not set"))
   func isWhitelist(_address: String) = getBoolean(coordinator(), k_amm.toCompositeKey(_address)).valueOrElse(false)
 
   ##### Accessor functions #####

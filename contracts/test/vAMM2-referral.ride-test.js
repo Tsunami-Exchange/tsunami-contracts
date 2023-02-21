@@ -12,6 +12,7 @@ const DIR_SHORT = 2;
 const { expect } = require("chai");
 const { Environment } = require("../common/common");
 
+// 17935
 const computeFee = (payment, leverage, fee) => {
   let amount = payment / (fee * leverage + 1);
   return payment - amount;
@@ -62,12 +63,16 @@ describe("vAMM should work with referral program", async function () {
     let fee = computeFee(5, 3, 0.0012);
     let refFee = fee * 0.2;
 
+    console.log(`Expected fee=${fee} refFee=${refFee}`);
+
     expect(longerReferrer).to.be.eq(address(referrer));
     expect(referrerEarned).to.be.closeTo(refFee, 0.00001); // 20% of 1% fee of $5
 
-    await amm.as(longer).closePosition();
+    console.log(`First check OK`);
 
-    expect(longerReferrer).to.be.eq(address(referrer));
+    await amm.as(longer).closePosition();
+    referrerEarned = await e.referral.getEarned(address(referrer));
+
     expect(referrerEarned).to.be.closeTo(2 * refFee, 0.00001); // 20% of 1% fee of $5
   });
 
