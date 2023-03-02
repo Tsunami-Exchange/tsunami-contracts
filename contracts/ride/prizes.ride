@@ -52,6 +52,13 @@
     }
   }
 
+  # This callable function allows a user to claim a prize given a nonce, recipient, 
+  # asset ID, amount, and signature. It verifies the signature using the rewarder public key, 
+  # checks that the caller is the recipient, and that the signature has not already been spent. 
+  # It then splits the asset ID and amount into separate lists and creates a list of ScriptTransfers 
+  # to transfer the assets to the recipient address. If the type is "mint", it invokes the NFT Manager 
+  # contract to mint the asset to the recipient. Finally, it adds a BooleanEntry to the list indicating
+  #  that the signature has been spent.
   @Callable(i)
   func claimPrize(
     _nonce: String,

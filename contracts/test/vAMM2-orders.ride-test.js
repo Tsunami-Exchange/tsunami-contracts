@@ -157,7 +157,8 @@ describe("Should execute TAKE profit orders on LONG position", async function ()
   });
 
   it("Can not execute take profit order on different position", async function () {
-    await amm.as(longer).increasePosition(1000, DIR_LONG, 3, 50);
+    let tx1 = await amm.as(longer).increasePosition(1000, DIR_LONG, 3, 50);
+    console.log(`tx1=${tx1.id}`);
 
     let [orderId] = await e.orders
       .as(longer)
@@ -171,8 +172,10 @@ describe("Should execute TAKE profit orders on LONG position", async function ()
         DIR_SHORT
       );
 
-    await amm.as(longer).closePosition();
-    await amm.as(longer).increasePosition(1000, DIR_LONG, 3, 50);
+    let tx2 = await amm.as(longer).closePosition();
+    console.log(`tx2=${tx2.id}`);
+    let tx3 = await amm.as(longer).increasePosition(1000, DIR_LONG, 3, 50);
+    console.log(`tx3=${tx3.id}`);
 
     return expect(e.orders.as(executor).executeOrder(orderId)).to.be.eventually
       .rejected;
@@ -638,10 +641,10 @@ describe("Should execute STOP loss orders on SHORT position", async function () 
   });
 });
 
-describe.skip("LIMIT order should be able to", async function () {
+describe("LIMIT order should be able to", async function () {
   this.timeout(600000);
 
-  let e, amm, longer, user, shorter, executor, lp;
+  let e, amm, user, executor, lp;
   let _orderId;
 
   before(async function () {
@@ -654,8 +657,6 @@ describe.skip("LIMIT order should be able to", async function () {
       executor: 0.2 * wvs,
     });
 
-    longer = accounts.longer;
-    shorter = accounts.shorter;
     executor = accounts.executor;
     user = accounts.user;
     lp = accounts.lp;
@@ -663,8 +664,6 @@ describe.skip("LIMIT order should be able to", async function () {
     e = new Environment(accounts.admin);
     await e.deploy();
     await e.fundAccounts({
-      [longer]: 50000,
-      [shorter]: 50000,
       [user]: 50000,
       [lp]: 100000,
     });
@@ -676,7 +675,7 @@ describe.skip("LIMIT order should be able to", async function () {
 
   it("open a new LONG position", async function () {
     let [orderId] = await e.orders
-      .as(longer)
+      .as(user)
       .createOrder(amm.address, LIMIT, 57.0, 0, 1000, 3, DIR_LONG, 1000);
 
     {
@@ -697,7 +696,31 @@ describe.skip("LIMIT order should be able to", async function () {
 
     await e.orders.as(executor).executeOrder(orderId);
 
-    await amm.as(longer).closePosition();
+    await amm.as(user).closePosition();
+  });
+
+  it("can cancel an order and get back the money", async function () {
+    let [orderId] = await e.orders
+      .as(user)
+      .createOrder(amm.address, LIMIT, 57.0, 0, 1000, 3, DIR_LONG, 1000);
+
+    await amm.setOraclePrice(57.15);
+    await amm.syncTerminalPriceToOracle();
+
+    {
+      let [can] = await e.orders.canExecute(orderId);
+      expect(can).to.be.true;
+    }
+
+    let tx = await e.orders.as(user).cancelOrder(orderId);
+    console.log(`xxxxx=${tx.id}`);
+    await expect(e.orders.as(executor).executeOrder(orderId)).to.be.eventually
+      .rejected; // Can not execute after cancel
+
+    expect(tx.stateChanges.transfers[0].amount / 10 ** 6).to.be.closeTo(
+      1000,
+      0.001
+    );
   });
 
   it("open a new SHORT position", async function () {
@@ -705,8 +728,8 @@ describe.skip("LIMIT order should be able to", async function () {
     await amm.syncTerminalPriceToOracle();
 
     let [orderId] = await e.orders
-      .as(shorter)
-      .createOrder(amm.address, LIMIT, 53.0, 0, 1000, 3, DIR_LONG, 1000);
+      .as(user)
+      .createOrder(amm.address, LIMIT, 53.0, 0, 1000, 3, DIR_SHORT, 1000);
 
     {
       let [can] = await e.orders.canExecute(orderId);
@@ -726,92 +749,68 @@ describe.skip("LIMIT order should be able to", async function () {
 
     await e.orders.as(executor).executeOrder(orderId);
 
-    await amm.as(shorter).closePosition();
+    await amm.as(user).closePosition();
   });
 
-  it("reduce a LONG position", async function () {
-    await amm.setOraclePrice(55.0);
-    await amm.syncTerminalPriceToOracle();
-
-    await amm.as(longer).increasePosition(1000, DIR_LONG, 3);
-
-    let [orderId] = await e.orders
-      .as(longer)
-      .createOrder(
-        amm.address,
-        LIMIT,
-        57.0,
-        0,
-        e.orders.FULL_POSITION,
-        3,
-        DIR_SHORT
-      );
-
+  it("open a new LONG and SHORT position", async function () {
     {
-      let [can] = await e.orders.canExecute(orderId);
-      expect(can).to.be.false;
+      await amm.setOraclePrice(55.0);
+      await amm.syncTerminalPriceToOracle();
+
+      let [orderId] = await e.orders
+        .as(user)
+        .createOrder(amm.address, LIMIT, 53.0, 0, 1000, 3, DIR_LONG, 1000);
+
+      {
+        let [can] = await e.orders.canExecute(orderId);
+        expect(can).to.be.false;
+      }
+
+      await expect(e.orders.as(executor).executeOrder(orderId)).to.be.eventually
+        .rejected;
+
+      await amm.setOraclePrice(53.01);
+      await amm.syncTerminalPriceToOracle();
+
+      {
+        let [can] = await e.orders.canExecute(orderId);
+        expect(can).to.be.true;
+      }
+
+      await e.orders.as(executor).executeOrder(orderId);
     }
 
-    await expect(e.orders.as(executor).executeOrder(orderId)).to.be.eventually
-      .rejected;
-
-    await amm.setOraclePrice(57.02);
-    await amm.syncTerminalPriceToOracle();
-    let price = await amm.getMarketPrice();
-
-    console.log(`Price = ${price}`);
+    // ---
 
     {
-      let [can] = await e.orders.canExecute(orderId);
-      expect(can).to.be.true;
+      await amm.setOraclePrice(55.0);
+      await amm.syncTerminalPriceToOracle();
+
+      let [orderId] = await e.orders
+        .as(user)
+        .createOrder(amm.address, LIMIT, 53.0, 0, 1000, 3, DIR_SHORT, 1000);
+
+      {
+        let [can] = await e.orders.canExecute(orderId);
+        expect(can).to.be.false;
+      }
+
+      await expect(e.orders.as(executor).executeOrder(orderId)).to.be.eventually
+        .rejected;
+
+      await amm.setOraclePrice(53.01);
+      await amm.syncTerminalPriceToOracle();
+
+      {
+        let [can] = await e.orders.canExecute(orderId);
+        expect(can).to.be.true;
+      }
+
+      await e.orders.as(executor).executeOrder(orderId);
     }
 
-    await e.orders.as(executor).executeOrder(orderId);
-  });
-
-  it("can not reduce a LONG position with USDN payment", async function () {
-    await amm.setOraclePrice(55.0);
-    await amm.syncTerminalPriceToOracle();
-
-    await amm.as(longer).increasePosition(1000, DIR_LONG, 3);
-
-    let [orderId] = await e.orders
-      .as(longer)
-      .createOrder(
-        amm.address,
-        LIMIT,
-        57.0,
-        0,
-        e.orders.FULL_POSITION,
-        3,
-        DIR_SHORT,
-        1000
-      );
-
-    {
-      let [can] = await e.orders.canExecute(orderId);
-      expect(can).to.be.false;
-    }
-
-    await expect(e.orders.as(executor).executeOrder(orderId)).to.be.eventually
-      .rejected;
-
-    await amm.setOraclePrice(57.02);
-    await amm.syncTerminalPriceToOracle();
-
-    let price = await amm.getMarketPrice();
-
-    console.log(`Price = ${price}`);
-
-    {
-      let [can] = await e.orders.canExecute(orderId);
-      expect(can).to.be.true;
-    }
-
-    await expect(e.orders.as(executor).executeOrder(orderId)).to.be.eventually
-      .rejected;
-
-    await amm.as(longer).closePosition();
+    await amm.as(user).closePosition(0, 0, false, DIR_LONG);
+    await amm.as(user).closePosition(0, 0, false, DIR_SHORT);
   });
 });
 

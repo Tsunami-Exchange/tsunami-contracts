@@ -204,18 +204,23 @@ func latestCumulativePremiumFraction(
 
 # Returns info on traders position
 #
-func getPosition(_trader: String) = {
-  let positionSizeOpt = this.getInteger(k_positionSize.toCompositeKey(_trader))
+func getPosition(_trader: String, _direction: Int) = {
+  let positionKey = _trader + "_" + _direction.toString()
+  let positionSizeOpt = this.getInteger(k_positionSize.toCompositeKey(positionKey))
   match (positionSizeOpt) {
       case positionSize: Int => (
         positionSize,
-        this.getIntegerValue(k_positionMargin.toCompositeKey(_trader)),
-        this.getIntegerValue(k_positionOpenNotional.toCompositeKey(_trader)),
-        this.getIntegerValue(k_positionLastUpdatedCumulativePremiumFraction.toCompositeKey(_trader)),
-        this.getIntegerValue(k_positionLastUpdatedTimestamp.toCompositeKey(_trader))
+        this.getIntegerValue(k_positionMargin.toCompositeKey(positionKey)),
+        this.getIntegerValue(k_positionOpenNotional.toCompositeKey(positionKey)),
+        this.getIntegerValue(k_positionLastUpdatedCumulativePremiumFraction.toCompositeKey(positionKey)),
+        this.getIntegerValue(k_positionLastUpdatedTimestamp.toCompositeKey(positionKey))
       )
       case _ => (0, 0, 0, 0, 0)
     }
+}
+
+func getDirection(_positionSize: Int) = {
+  if (_positionSize < 0) then DIR_SHORT else DIR_LONG
 }
 
 # Returns info on positions's fee closing fee, including 
@@ -231,8 +236,8 @@ func getPositionFee(_trader: String) = {
 
 # Checks that a trader have an open position
 #
-func requireOpenPosition(_trader: String) = {
-    if (getPosition(_trader)._1 == 0) then {
+func requireOpenPosition(_trader: String, _direction: Int) = {
+    if (getPosition(_trader, _direction)._1 == 0) then {
       throw("No open position")
     } else {
       true
@@ -388,6 +393,10 @@ func calcRemainMarginWithFundingPaymentAndRolloverFee(
 ) = {
   let fundingPayment = if (_oldPositionSize != 0) then {
     let _latestCumulativePremiumFraction = latestCumulativePremiumFraction(_oldPositionSize)
+    # For longs: if latestFraction > oldFraction, muld is positive and funding is negative (long pay)
+    # For longs: if latestFraction < oldFraction, muld is negative and funding is positive (long get)
+    # For shorts: if latestFraction > oldFraction, muld is negative and funding is positive (short get)
+    # For shorts: if latestFraction < oldFraction, muld is positive and funding is negative (short pay)
     muld((_latestCumulativePremiumFraction - _oldPositionCumulativePremiumFraction), _oldPositionSize)
   } else {
     0
@@ -679,13 +688,13 @@ func getPositionNotionalAndUnrealizedPnlByValues(
 # position profit/loss (delta between initial position notional and current notional)
 # Accept calculation option - to use spot or index price
 #
-func getPositionNotionalAndUnrealizedPnl(_trader: String, _option: Int) = {
+func getPositionNotionalAndUnrealizedPnl(_trader: String, _direction: Int, _option: Int) = {
   let (
       positionSize,
       positionMargin,
       positionOpenNotional,
       positionLstUpdCPF
-    ) = getPosition(_trader)
+    ) = getPosition(_trader, _direction)
 
     getPositionNotionalAndUnrealizedPnlByValues(
       positionSize,
@@ -706,16 +715,16 @@ func calcMarginRatio(_remainMargin: Int, _badDebt: Int, _positionNotional: Int) 
 
 # Computes position margin ratio
 # Accept calculation option - to use spot or index price
-func getMarginRatioByOption(_trader: String, _option: Int) = {
+func getMarginRatioByOption(_trader: String, _direction: Int, _option: Int) = {
     let (
       positionSize,
       positionMargin,
       pon,
       positionLastUpdatedCPF,
       positionTimestamp
-    ) = getPosition(_trader)
+    ) = getPosition(_trader, _direction)
 
-    let (positionNotional, unrealizedPnl) = getPositionNotionalAndUnrealizedPnl(_trader, _option)
+    let (positionNotional, unrealizedPnl) = getPositionNotionalAndUnrealizedPnl(_trader, _direction, _option)
     let (remainMargin, badDebt) = calcRemainMarginWithFundingPaymentAndRolloverFee(
         positionSize,
         positionMargin,
@@ -728,12 +737,15 @@ func getMarginRatioByOption(_trader: String, _option: Int) = {
 
 # Computes position spot margin ratio
 #
-func getMarginRatio(_trader: String) = getMarginRatioByOption(_trader, PNL_OPTION_SPOT)
+func getMarginRatio(_trader: String, _direction: Int) = getMarginRatioByOption(_trader, _direction, PNL_OPTION_SPOT)
 
 # Computes partial liquidation position size
 #
 func getPartialLiquidationAmount(_trader: String, _positionSize: Int) = {
-    let maximumRatio = vmax(partialLiquidationRatio(), DECIMAL_UNIT - divd(getMarginRatio(_trader), maintenanceMarginRatio()))
+    let maximumRatio = vmax(partialLiquidationRatio(), DECIMAL_UNIT - divd(
+      getMarginRatio(_trader, getDirection(_positionSize)), 
+      maintenanceMarginRatio()
+    ))
     let maxExchangedPositionSize = muld(abs(_positionSize), maximumRatio)
     let swapResult = swapOutput(
       _positionSize > 0,
@@ -752,6 +764,7 @@ func getPartialLiquidationAmount(_trader: String, _positionSize: Int) = {
 
 func internalClosePosition(
   _trader: String,
+  _direction: Int,
   _size: Int, 
   _fee: Int, 
   _minQuoteAssetAmount: Int,
@@ -765,7 +778,7 @@ func internalClosePosition(
     oldPositionOpenNotional,
     oldPositionLstUpdCPF,
     oldPositionTimestamp
-  ) = getPosition(_trader)
+  ) = getPosition(_trader, _direction)
 
   let isLongPosition = oldPositionSize > 0
   let absOldPositionSize = abs(oldPositionSize)
@@ -798,7 +811,8 @@ func internalClosePosition(
       oldPositionNotional, 
       unrealizedPnl
     ) = getPositionNotionalAndUnrealizedPnl(
-      _trader, 
+      _trader,
+      _direction,
       PNL_OPTION_SPOT
     )
 
@@ -872,7 +886,7 @@ func internalClosePosition(
     # When partially closing a position AND removing part of margin to send to trader, position
     # should keep EXACTLY the margin ration it is currently on.
     #
-    let marginRatio = getMarginRatioByOption(_trader, PNL_OPTION_SPOT)
+    let marginRatio = getMarginRatioByOption(_trader, _direction, PNL_OPTION_SPOT)
     let newPositionMarginWithSameRatio = if (oldPositionSize > 0) then {
       muld(newPositionOpenNotional + unrealizedPnlAfter, marginRatio) - unrealizedPnlAfter
     } else {
@@ -1046,6 +1060,11 @@ func getFunding() = {
         # how much LP's will get 
         let premiumToVault = shortTotalPremiumFraction - longTotalPremiumFraction
 
+        # For longs: if latestFraction > oldFraction, muld is positive and funding is negative (long pay)
+        # For longs: if latestFraction < oldFraction, muld is negative and funding is positive (long get)
+        # For shorts: if latestFraction > oldFraction, muld is negative and funding is positive (short get)
+        # For shorts: if latestFraction < oldFraction, muld is positive and funding is negative (short pay)
+
         (shortPremiumFraction, shortPremiumFraction, premiumToVault)
       }
     } else {
@@ -1066,6 +1085,10 @@ func getFunding() = {
         # how much LP's will get 
         let premiumToVault = longTotalPremiumFraction - shortTotalPremiumFraction
 
+        # For longs: if latestFraction > oldFraction, muld is positive and funding is negative (long pay)
+        # For longs: if latestFraction < oldFraction, muld is negative and funding is positive (long get)
+        # For shorts: if latestFraction > oldFraction, muld is negative and funding is positive (short get)
+        # For shorts: if latestFraction < oldFraction, muld is positive and funding is negative (short pay)
         (longPremiumFraction, longPremiumFraction, premiumToVault)
       }
     }
@@ -1177,12 +1200,14 @@ func updateFunding(
 
 func incrementPositionSequenceNumber(
   _isNewPosition: Boolean,
-  _address: String
+  _trader: String,
+  _direction: Int
 ) = {
+  let positionKey = _trader + "_" + _direction.toString()
   if (_isNewPosition) then {
     let currentSequence = lastSequence()
     [
-      IntegerEntry(k_positionSequence.toCompositeKey(_address), currentSequence + 1),
+      IntegerEntry(k_positionSequence.toCompositeKey(positionKey), currentSequence + 1),
       IntegerEntry(k_sequence, currentSequence + 1)
     ]
   } else {
@@ -1192,12 +1217,14 @@ func incrementPositionSequenceNumber(
 
 func updatePositionFee(
   _isNewPosition: Boolean,
-  _address: String,
+  _trader: String,
+  _direction: Int,
   _fee: Int
 ) = {
+  let positionKey = _trader + "_" + _direction.toString()
   if (_isNewPosition) then {
     [
-      IntegerEntry(k_positionFee.toCompositeKey(_address), _fee)
+      IntegerEntry(k_positionFee.toCompositeKey(positionKey), _fee)
     ]
   } else {
     []
@@ -1205,19 +1232,21 @@ func updatePositionFee(
 }
 
 func updatePosition(
-  _address: String,
+  _trader: String,
   _size: Int,
   _margin: Int,
   _openNotional: Int,
   _latestCumulativePremiumFraction: Int,
   _latestTimestamp: Int
 ) = {
+  let direction = getDirection(_size)
+  let positionKey = _trader + "_" + direction.toString()
   [
-    IntegerEntry(k_positionSize.toCompositeKey(_address), _size),
-    IntegerEntry(k_positionMargin.toCompositeKey(_address), _margin),
-    IntegerEntry(k_positionOpenNotional.toCompositeKey(_address), _openNotional),
-    IntegerEntry(k_positionLastUpdatedCumulativePremiumFraction.toCompositeKey(_address), _latestCumulativePremiumFraction),
-    IntegerEntry(k_positionLastUpdatedTimestamp.toCompositeKey(_address), _latestTimestamp)
+    IntegerEntry(k_positionSize.toCompositeKey(positionKey), _size),
+    IntegerEntry(k_positionMargin.toCompositeKey(positionKey), _margin),
+    IntegerEntry(k_positionOpenNotional.toCompositeKey(positionKey), _openNotional),
+    IntegerEntry(k_positionLastUpdatedCumulativePremiumFraction.toCompositeKey(positionKey), _latestCumulativePremiumFraction),
+    IntegerEntry(k_positionLastUpdatedTimestamp.toCompositeKey(positionKey), _latestTimestamp)
   ]
 }
 
@@ -1270,15 +1299,17 @@ func updateAmm(
 }
 
 func deletePosition(
-  _address: String
+  _trader: String,
+  _direction: Int
 ) = {
+  let positionKey = _trader + "_" + _direction.toString()
   [
-    DeleteEntry(k_positionSize.toCompositeKey(_address)),
-    DeleteEntry(k_positionMargin.toCompositeKey(_address)),
-    DeleteEntry(k_positionOpenNotional.toCompositeKey(_address)),
-    DeleteEntry(k_positionLastUpdatedCumulativePremiumFraction.toCompositeKey(_address)),
-    DeleteEntry(k_positionFee.toCompositeKey(_address)),
-    DeleteEntry(k_positionLastUpdatedTimestamp.toCompositeKey(_address))
+    DeleteEntry(k_positionSize.toCompositeKey(positionKey)),
+    DeleteEntry(k_positionMargin.toCompositeKey(positionKey)),
+    DeleteEntry(k_positionOpenNotional.toCompositeKey(positionKey)),
+    DeleteEntry(k_positionLastUpdatedCumulativePremiumFraction.toCompositeKey(positionKey)),
+    DeleteEntry(k_positionFee.toCompositeKey(positionKey)),
+    DeleteEntry(k_positionLastUpdatedTimestamp.toCompositeKey(positionKey))
   ]
 }
 
@@ -1694,7 +1725,7 @@ func increasePosition(
       oldPositionOpenNotional,
       oldPositionLstUpdCPF,
       oldPositionTimestamp
-    ) = getPosition(_trader)
+    ) = getPosition(_trader, _direction)
     let isNewPosition = oldPositionSize == 0
     let isSameDirection = if (oldPositionSize > 0) then {
       _direction == DIR_LONG
@@ -1771,7 +1802,7 @@ func increasePosition(
        }
     } else {
       let openNotional = muld(_amount, _leverage)
-      let (oldPositionNotional, unrealizedPnl) = getPositionNotionalAndUnrealizedPnl(i.caller.toString(), PNL_OPTION_SPOT)
+      let (oldPositionNotional, unrealizedPnl) = getPositionNotionalAndUnrealizedPnl(i.caller.toString(), _direction, PNL_OPTION_SPOT)
       if (oldPositionNotional > openNotional) then {
         throw("Use decreasePosition to decrease position size")
       } else {
@@ -1827,9 +1858,9 @@ func increasePosition(
       newPositionTimestamp
     )
     ++
-    incrementPositionSequenceNumber(isNewPosition, _trader)
+    incrementPositionSequenceNumber(isNewPosition, _trader, _direction)
     ++
-    updatePositionFee(isNewPosition, _trader, adjustedFee)
+    updatePositionFee(isNewPosition, _trader, _direction, adjustedFee)
     ++
     updateAmm(
       quoteAssetReserveAfter,
@@ -1855,7 +1886,7 @@ func increasePosition(
 # @payment required Added margin (in quote asset) 
 # @notice fully realizes rollover fee, funding stays unrealized
 @Callable(i)
-func addMargin() = {
+func addMargin(_direction: Int) = {
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
   strict ensureCalledOnce = invoke(this, "ensureCalledOnce", [], [])
 
@@ -1866,7 +1897,7 @@ func addMargin() = {
   let isQuoteAsset = _assetId == quoteAsset()
   if (
     !isQuoteAsset
-    || !requireOpenPosition(i.caller.toString())
+    || !requireOpenPosition(i.caller.toString(), _direction)
     || !initialized()
     || paused()
     || closeOnly()
@@ -1880,7 +1911,7 @@ func addMargin() = {
       oldPositionOpenNotional,
       oldPositionLstUpdCPF,
       oldPositionTimestamp
-    ) = getPosition(_trader)
+    ) = getPosition(_trader, _direction)
   
     strict stake = invoke(
       vaultAddress(),
@@ -1935,7 +1966,8 @@ func addMargin() = {
 # @notice will throw "Too much margin removed" if after removal position margin ratio is below initial margin ratio
 @Callable(i)
 func removeMargin(
-  _amount: Int
+  _amount: Int,
+  _direction: Int
 ) = {
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
   strict ensureCalledOnce = invoke(this, "ensureCalledOnce", [], [])
@@ -1943,7 +1975,7 @@ func removeMargin(
   let _trader = i.caller.toString()
   if (
     _amount <= 0
-    || !requireOpenPosition(_trader)
+    || !requireOpenPosition(_trader, _direction)
     || !initialized()
     || paused()
     || isMarketClosed()
@@ -1956,7 +1988,7 @@ func removeMargin(
       oldPositionOpenNotional,
       oldPositionLstUpdCPF,
       oldPositionTimestamp
-    ) = getPosition(_trader)
+    ) = getPosition(_trader, _direction)
 
     let (remainMargin, badDebt, fundingPayment, rolloverFee) =
       calcRemainMarginWithFundingPaymentAndRolloverFee(
@@ -2020,7 +2052,7 @@ func removeMargin(
 # @param _addToMargin if true, do not withdraw funds from position, instead add them to margin (reduce position size, keep margin).
 # @notice will not close position with bad debt (they can ony be liquidated)
 @Callable(i)
-func closePosition(_size: Int, _minQuoteAssetAmount: Int, _addToMargin: Boolean) = {
+func closePosition(_size: Int, _direction: Int, _minQuoteAssetAmount: Int, _addToMargin: Boolean) = {
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
   strict ensureCalledOnce = invoke(this, "ensureCalledOnce", [], [])
 
@@ -2028,7 +2060,7 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int, _addToMargin: Boolean)
   let _traderAddress = addressFromString(_trader).valueOrErrorMessage("Invalid caller")
   let positionFee = getPositionFee(_trader)
   if (
-    !requireOpenPosition(_trader)
+    !requireOpenPosition(_trader, _direction)
     || !initialized()
     || paused()
     || _size <= 0
@@ -2037,7 +2069,7 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int, _addToMargin: Boolean)
   ) then {
     throw("Invalid closePosition parameters")
   } else {
-    let oldPositionTimestamp = getPosition(_trader)._5
+    let oldPositionTimestamp = getPosition(_trader, _direction)._5
 
     let (
       newPositionSize,
@@ -2058,6 +2090,7 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int, _addToMargin: Boolean)
       realizedFee
     ) = internalClosePosition(
       _trader,
+      _direction,
       _size,
       positionFee,
       _minQuoteAssetAmount,
@@ -2133,7 +2166,7 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int, _addToMargin: Boolean)
           lastTimestamp()
         )
       } else {
-        deletePosition(_trader)
+        deletePosition(_trader, _direction)
       })
       ++
       updateAmm(
@@ -2160,21 +2193,21 @@ func closePosition(_size: Int, _minQuoteAssetAmount: Int, _addToMargin: Boolean)
 #
 # @param _trader The address of the trader to be liquidated.
 @Callable(i)
-func liquidate(_trader: String) = {
+func liquidate(_trader: String, _direction: Int) = {
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
   # If market (future) price and index price diverge a lot, use index price to compute
   # liquidation margin. That provides additional safety layer for traders
   #
-  let spotMarginRatio = getMarginRatioByOption(_trader, PNL_OPTION_SPOT)
+  let spotMarginRatio = getMarginRatioByOption(_trader, _direction, PNL_OPTION_SPOT)
   let liquidationMarginRatio = if (isOverFluctuationLimit()) then {
-    let oracleMarginRatio = getMarginRatioByOption(_trader, PNL_OPTION_ORACLE)
+    let oracleMarginRatio = getMarginRatioByOption(_trader, _direction, PNL_OPTION_ORACLE)
     vmax(spotMarginRatio, oracleMarginRatio)
   } else {
     spotMarginRatio
   }
   if (
     !requireMoreMarginRatio(liquidationMarginRatio, maintenanceMarginRatio(), false)
-    || !requireOpenPosition(_trader)
+    || !requireOpenPosition(_trader, _direction)
     || !initialized()
     || paused()
     || isMarketClosed()
@@ -2185,7 +2218,7 @@ func liquidate(_trader: String) = {
       && partialLiquidationRatio() > 0
       && partialLiquidationRatio() < DECIMAL_UNIT
     
-    let oldPositionSize = getPosition(_trader)._1
+    let oldPositionSize = getPosition(_trader, _direction)._1
     let positionSizeAbs = abs(oldPositionSize)
     let (liquidationRatio, liquidationSize) = if (isPartialLiquidation) then {
       let liquidationSize = getPartialLiquidationAmount(_trader, oldPositionSize)
@@ -2215,6 +2248,7 @@ func liquidate(_trader: String) = {
       liquidationPenalty
     ) = internalClosePosition(
       _trader,
+      _direction,
       if (isPartialLiquidation) then liquidationSize else positionSizeAbs,
       liquidationFeeRatio(),
       0,
@@ -2276,7 +2310,7 @@ func liquidate(_trader: String) = {
         lastTimestamp()
       )
     } else {
-      deletePosition(_trader)
+      deletePosition(_trader, _direction)
     })
     ++ 
     updateAmm(
@@ -2407,7 +2441,7 @@ func ensureCalledOnce() = {
 #
 # @param _trader Address of trader
 @Callable(i)
-func view_calcRemainMarginWithFundingPayment(_trader: String) = {
+func view_calcRemainMarginWithFundingPayment(_trader: String, _direction: Int) = {
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
   let (
     positionSize,
@@ -2415,8 +2449,8 @@ func view_calcRemainMarginWithFundingPayment(_trader: String) = {
     pon,
     positionLstUpdCPF,
     positionTimestamp
-  ) = getPosition(_trader)
-  let (positionNotional, unrealizedPnl) = getPositionNotionalAndUnrealizedPnl(_trader, PNL_OPTION_SPOT)
+  ) = getPosition(_trader, _direction)
+  let (positionNotional, unrealizedPnl) = getPositionNotionalAndUnrealizedPnl(_trader, _direction, PNL_OPTION_SPOT)
   let (remainMargin, badDebt, fundingPayment, rolloverFee) = calcRemainMarginWithFundingPaymentAndRolloverFee(
       positionSize,
       positionMargin,
@@ -2427,7 +2461,7 @@ func view_calcRemainMarginWithFundingPayment(_trader: String) = {
   throw(
     s(remainMargin) 
     + s(fundingPayment)
-    + s(getMarginRatio(_trader))
+    + s(getMarginRatio(_trader, _direction))
     + s(unrealizedPnl)
     + s(badDebt)
     + s(positionNotional)

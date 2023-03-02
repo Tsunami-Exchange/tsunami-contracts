@@ -1956,12 +1956,16 @@ class AMM {
   }
 
   async addMargin(_amount) {
+    let direction = await this.getPositionDirection(
+      address(this.e.seeds.amms[this.address]),
+      address(this.sender)
+    );
     const addMarginTx = invokeScript(
       {
         dApp: address(this.e.seeds.amms[this.address]),
         call: {
           function: "addMargin",
-          args: [],
+          args: [{ type: "integer", value: direction }],
         },
         payment: [
           {
@@ -1980,12 +1984,19 @@ class AMM {
   }
 
   async removeMargin(_amount) {
+    let direction = await this.getPositionDirection(
+      address(this.e.seeds.amms[this.address]),
+      address(this.sender)
+    );
     const removeMarginTx = invokeScript(
       {
         dApp: address(this.e.seeds.amms[this.address]),
         call: {
           function: "removeMargin",
-          args: [{ type: "integer", value: _amount * decimals }],
+          args: [
+            { type: "integer", value: _amount * decimals },
+            { type: "integer", value: direction },
+          ],
         },
       },
       this.sender
@@ -1997,16 +2008,29 @@ class AMM {
     return removeMarginTx;
   }
 
-  async closePosition(_amount, _minQuoteAssetAmount = 0, _addToMargin = false) {
+  async closePosition(
+    _amount,
+    _minQuoteAssetAmount = 0,
+    _addToMargin = false,
+    direction = 0
+  ) {
+    if (!direction) {
+      direction = await this.getPositionDirection(
+        address(this.e.seeds.amms[this.address]),
+        address(this.sender)
+      );
+    }
+
     await this.e.advanceTime(1);
 
     if (!_amount) {
       let trader = address(this.sender);
       let dApp = address(this.e.seeds.amms[this.address]);
 
-      _amount = await accountDataByKey(`k_positionSize_${trader}`, dApp).then(
-        (x) => x.value
-      );
+      _amount = await accountDataByKey(
+        `k_positionSize_${trader}_${direction}`,
+        dApp
+      ).then((x) => x.value);
       _amount = Math.abs(_amount);
     } else {
       _amount = Math.round(_amount * decimals);
@@ -2018,6 +2042,7 @@ class AMM {
           function: "closePosition",
           args: [
             { type: "integer", value: _amount },
+            { type: "integer", value: direction },
             {
               type: "integer",
               value: Math.round(_minQuoteAssetAmount * decimals),
@@ -2039,12 +2064,18 @@ class AMM {
   }
 
   async liquidate(_trader) {
+    let dApp = address(this.e.seeds.amms[this.address]);
+    let direction = await this.getPositionDirection(dApp, address(_trader));
+
     const liquidatePositionTx = invokeScript(
       {
         dApp: address(this.e.seeds.amms[this.address]),
         call: {
           function: "liquidate",
-          args: [{ type: "string", value: address(_trader) }],
+          args: [
+            { type: "string", value: address(_trader) },
+            { type: "integer", value: direction },
+          ],
         },
       },
       this.sender
@@ -2130,19 +2161,49 @@ class AMM {
     return payFundingTx;
   }
 
+  async getPositionDirection(dApp, trader) {
+    let long = await accountDataByKey(`k_positionSize_${trader}_1`, dApp).then(
+      (x) => x && x.value
+    );
+    let short = await accountDataByKey(`k_positionSize_${trader}_2`, dApp).then(
+      (x) => x && x.value
+    );
+
+    if (long && short) {
+      throw Error(`Both positions are open for ${trader}, specify direction`);
+    }
+
+    if (!long && !short) {
+      throw Error(`No position open for ${trader}`);
+    }
+
+    if (long) {
+      return 1;
+    }
+    if (short) {
+      return 2;
+    }
+  }
+
   async getPositionInfo(_trader) {
     let trader = address(_trader);
     let dApp = address(this.e.seeds.amms[this.address]);
+    let direction = await this.getPositionDirection(dApp, trader);
 
-    let size = await accountDataByKey(`k_positionSize_${trader}`, dApp).then(
-      (x) => x.value
-    );
+    let size = await accountDataByKey(
+      `k_positionSize_${trader}_${direction}`,
+      dApp
+    ).then((x) => x.value);
+    let positionFraction = await accountDataByKey(
+      `k_positionFraction_${trader}_${direction}`,
+      dApp
+    ).then((x) => x.value);
     let margin = await accountDataByKey(
-      `k_positionMargin_${trader}`,
+      `k_positionMargin_${trader}_${direction}`,
       dApp
     ).then((x) => x.value);
     let openNotional = await accountDataByKey(
-      `k_positionOpenNotional_${trader}`,
+      `k_positionOpenNotional_${trader}_${direction}`,
       dApp
     ).then((x) => x.value);
 
@@ -2150,6 +2211,7 @@ class AMM {
       size,
       margin,
       openNotional,
+      positionFraction,
     };
   }
 
@@ -2303,12 +2365,20 @@ class AMM {
   async getPositionActualData(_trader) {
     let trader = address(_trader);
 
+    let direction = await this.getPositionDirection(
+      address(this.e.seeds.amms[this.address]),
+      trader
+    );
+
     const invokeTx = invokeScript(
       {
         dApp: address(this.e.seeds.amms[this.address]),
         call: {
           function: "view_calcRemainMarginWithFundingPayment",
-          args: [{ type: "string", value: trader }],
+          args: [
+            { type: "string", value: trader },
+            { type: "integer", value: direction },
+          ],
         },
       },
       this.e.seeds.admin
@@ -2871,12 +2941,22 @@ class Orders {
     _usdnPayment,
     _refLink = ""
   ) {
+    let positionDirection = 0;
+    if (_type == 1 || _type == 2) {
+      if (_side == 1) {
+        positionDirection = 2;
+      } else {
+        positionDirection = 1;
+      }
+    } else {
+      positionDirection = _side;
+    }
     let triggerPrice = Math.round(_triggerPrice * decimals);
     let limitPrice = Math.round(_limitPrice * decimals);
     let amountIn = 0;
     if (_amountIn == this.FULL_POSITION) {
       let size = await accountDataByKey(
-        `k_positionSize_${address(this.sender)}`,
+        `k_positionSize_${address(this.sender)}_${positionDirection}`,
         _amm
       ).then((x) => x.value);
 
@@ -3005,8 +3085,8 @@ class Orders {
       this.sender
     );
 
-    await waitForTx(tx.id);
-    return tx;
+    let txx = await waitForTx(tx.id);
+    return txx;
   }
 
   async increasePositionWithStopLoss(

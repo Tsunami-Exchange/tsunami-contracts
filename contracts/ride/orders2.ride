@@ -12,7 +12,6 @@
   # AMM
   let k_positionSequence    = "k_positionSequence"
   let k_positionSize        = "k_positionSize"
-  let k_fee                 = "k_fee"
 
   # Orders
   let k_executedOrders      = "k_executedOrders"
@@ -165,15 +164,25 @@
     res.value()
   }
 
-  func getPositionSize(_amm: String, _trader: String) = {
+  func getPositionDirection(_orderSide: Int, _orderType: Int) = {
+    if (_orderType == TAKE || _orderType == STOP) then {
+      if (_orderSide == LONG) then SHORT else LONG
+    } else {
+      _orderSide
+    }
+  }
+
+  func getPositionSize(_amm: String, _trader: String, _direction: Int) = {
     let amm = addressFromStringValue(_amm)
-    let sizeKey = k_positionSize.toCompositeKey(_trader)
+    let positionKey = _trader + "_" + _direction.toString()
+    let sizeKey = k_positionSize.toCompositeKey(positionKey)
     amm.getInteger(sizeKey).valueOrElse(0)
   }
 
-  func getPositionId(_amm: String, _trader: String) = {
+  func getPositionId(_amm: String, _trader: String, _direction: Int) = {
     let amm = addressFromStringValue(_amm)
-    let seqKey = k_positionSequence.toCompositeKey(_trader)
+    let positionKey = _trader + "_" + _direction.toString()
+    let seqKey = k_positionSequence.toCompositeKey(positionKey)
     amm.getInteger(seqKey).valueOrElse(0)
   }
 
@@ -261,9 +270,28 @@
     ]
   }
 
+  func getPositionIds(_amm: String, _trader: String) = {
+    let longPositionSize = getPositionSize(_amm, _trader, LONG)
+    let currentLongPositionId = if (longPositionSize != 0) then {
+      getPositionId(_amm, _trader, LONG)
+    } else {
+      0
+    }
+
+    let shortPositionSize = getPositionSize(_amm, _trader, SHORT)
+    let currentShortPositionId = if (shortPositionSize != 0) then {
+      getPositionId(_amm, _trader, SHORT)
+    } else {
+      0
+    }
+
+    [currentLongPositionId, currentShortPositionId]
+  }
+
   @Callable(i)
   func cleanUpStaleOrders(_amm: String, _trader: String) = {
     let orders = traderAmmOrdersIds(_amm, _trader)
+    let positionIds = getPositionIds(_amm, _trader)
     
     func cleanUpOne(_acc: (List[String], List[BooleanEntry]), _orderId: String) = {
       let orderIdInt = _orderId.parseInt().valueOrErrorMessage("Invalid order id")
@@ -281,14 +309,7 @@
         _x9
       ) = getOrder(orderIdInt)
 
-      let positionSize = getPositionSize(_amm, _trader)
-      let currentPositionId = if (positionSize != 0) then {
-        getPositionId(_amm, _trader)
-      } else {
-        0
-      }
-
-      if ((_type == STOP || _type == TAKE) && currentPositionId != _positionId) then {
+      if ((_type == STOP || _type == TAKE) && positionIds[0] != _positionId && positionIds[1] != _positionId) then {
         let change = markCancelOrder(orderIdInt)
         let newOrderList = addRemoveOrderIdList(_acc._1, orderIdInt, _amm, _trader, false)
 
@@ -424,14 +445,14 @@
   ) = {
     let _trader = i.caller.toString()
     strict cleanUp = invoke(this, "cleanUpStaleOrders", [_amm, _trader], [])
-
+    
     if (
       !initialized()
       || !isWhitelist(_amm)
     ) then {
       throw("Invalid increasePositionWithStopLoss parameters")
     } else {
-      let positionSize = getPositionSize(_amm, _trader)
+      let positionSize = getPositionSize(_amm, _trader, _direction)
       if (positionSize != 0) then {
         throw("Invalid increasePositionWithStopLoss parameters: only new position")
       } else {
@@ -443,7 +464,7 @@
           i.payments
         )
         strict doResetContext = invoke(this, "resetContext", [], [])
-        strict openedPositionSize = getPositionSize(_amm, _trader)
+        strict openedPositionSize = getPositionSize(_amm, _trader, _direction)
         let amountIn = abs(openedPositionSize)
         let stopLossSide = if (openedPositionSize < 0) then LONG else SHORT
 
@@ -522,15 +543,15 @@
       || _amountIn <= 0
       || _leverage < 0
       || !(_side == LONG || _side == SHORT)
-      || !(_type == STOP || _type == TAKE)
+      || !(_type == STOP || _type == TAKE || _type == LIMIT)
       || !(i.caller == this)
     ) then {
       throw("Invalid createOrder parameters")
     } else {
       let orderId = currentOrderId() + 1
-      
+      let positionDirection = getPositionDirection(_side, _type)
       let newTraderOrderCount = getTraderOrderCount(_amm, _trader) + 1
-      let positionSize = getPositionSize(_amm, _trader)
+      let positionSize = getPositionSize(_amm, _trader, positionDirection)
       let _direction = if (
         positionSize == 0
         || (positionSize > 0 && _side == LONG)
@@ -564,23 +585,27 @@
         }
 
         let positionId = if (positionSize != 0) then {
-          getPositionId(_amm, _trader)
+          getPositionId(_amm, _trader, positionDirection)
         } else {
           0
-        }        
+        }
 
-        if (newTraderOrderCount > MAX_TRADER_ORDERS_PER_AMM) then {
-          throw("Invalid createLimitOrder parameters: order count")
+        if ((_type == STOP || _type == TAKE) && positionId == 0) then {
+          throw("STOP and TAKE order should be assigned to position with id != 0")
         } else {
-          saveOrder(
-            orderId, _amm, _trader, _amountIn, _leverage, _type, _triggerPrice, usdnPayment, _side, _refLink, positionId, _limitPrice
-          )
-          ++
-          addRemoveOrderId(orderId, _amm, _trader, true)
-          ++
-          updateTraderOrderCount(_amm, _trader, newTraderOrderCount)
-          ++
-          updateLastOrderId(orderId)
+          if (newTraderOrderCount > MAX_TRADER_ORDERS_PER_AMM) then {
+            throw("Invalid createLimitOrder parameters: order count")
+          } else {
+            saveOrder(
+              orderId, _amm, _trader, _amountIn, _leverage, _type, _triggerPrice, usdnPayment, _side, _refLink, positionId, _limitPrice
+            )
+            ++
+            addRemoveOrderId(orderId, _amm, _trader, true)
+            ++
+            updateTraderOrderCount(_amm, _trader, newTraderOrderCount)
+            ++
+            updateLastOrderId(orderId)
+          }
         }
       }
     }
@@ -664,16 +689,16 @@
     ) = getOrder(_orderId)
 
     strict cleanUp = invoke(this, "cleanUpStaleOrders", [_amm, _trader], [])
-
+    let positionDirection = getPositionDirection(_side, _type)
     if (
       !initialized()
       || !isValid(_orderId)
     ) then {
       throw("Invalid executeOrder parameters")
     } else {
-      let positionSize = getPositionSize(_amm, _trader)
+      let positionSize = getPositionSize(_amm, _trader, positionDirection)
       let currentPositionId = if (positionSize != 0) then {
-        getPositionId(_amm, _trader)
+        getPositionId(_amm, _trader, positionDirection)
       } else {
         0
       }
@@ -695,7 +720,7 @@
           else marketPrice >= _triggerPrice
         
         if (isExecutable) then {
-          ("closePosition", [minv(_amountIn, abs(positionSize)), muld(_limitPrice, abs(positionSize)), false], [])
+          ("closePosition", [minv(_amountIn, abs(positionSize)), positionDirection, muld(_limitPrice, abs(positionSize)), false], [])
         } else {
           throw("Can not execute STOP order: triggerPrice mismatch")
         }
@@ -716,7 +741,7 @@
           else marketPrice <= _triggerPrice
         
         if (isExecutable) then {
-          ("closePosition", [minv(_amountIn, abs(positionSize)), muld(_limitPrice, abs(positionSize)), false], [])
+          ("closePosition", [minv(_amountIn, abs(positionSize)), positionDirection, muld(_limitPrice, abs(positionSize)), false], [])
         } else {
           throw("Can not execute TAKE order: triggerPrice mismatch")
         }
@@ -731,27 +756,15 @@
         }
         let isExecutable = marketPrice >= _triggerPrice - spread && marketPrice <= _triggerPrice + spread
         if (isExecutable) then {
-          let _positionDirection = if (positionSize > 0) 
-            then LONG
-            else if (positionSize < 0) then SHORT
-            else -1
           
-          let direction = if (positionSize == 0)
-            then INCREASE
-            else if (_positionDirection == _side) then INCREASE
-            else DECREASE
+        let amountInWithFee = _amountUsdn - muld(_amountUsdn, getFee(_amm, _trader))
+        ("increasePosition", [
+          _side, 
+          _leverage, 
+          if (_limitPrice == 0) then 0 else divd(amountInWithFee, _limitPrice), 
+          _refLink
+        ], [AttachedPayment(quoteAsset(), _amountUsdn)])
 
-          if (direction == INCREASE) then {
-            let amountInWithFee = _amountUsdn - muld(_amountUsdn, getFee(_amm, _trader))
-            ("increasePosition", [
-              _side, 
-              _leverage, 
-              if (_limitPrice == 0) then 0 else divd(amountInWithFee, _limitPrice), 
-              _refLink
-            ], [AttachedPayment(quoteAsset(), _amountUsdn)])
-          } else {
-            ("closePosition", [_amountIn, muld(_amountIn, _limitPrice), false], [])
-          }
         } else {
           throw("Can not execute LIMIT order: triggerPrice mismatch")
         }

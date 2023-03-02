@@ -97,10 +97,24 @@ describe("vAMM should work with positive funding", async function () {
 
   it("Can open short position", async function () {
     await amm.as(shorter).increasePosition(5, DIR_SHORT, 3, 0.15);
+
+    const { size, margin, openNotional } = await amm.getPositionInfo(shorter);
+    console.log(JSON.stringify({ size, margin, openNotional }));
+
+    expect(size).to.be.eq(-271546);
+    expect(margin).to.be.eq(4982065);
+    expect(openNotional).to.be.eq(14946195);
   });
 
   it("Can increase short position", async function () {
     await amm.as(shorter).increasePosition(1, DIR_SHORT, 3, 0.04);
+
+    const { size, margin, openNotional } = await amm.getPositionInfo(shorter);
+    console.log(JSON.stringify({ size, margin, openNotional }));
+
+    expect(size).to.be.eq(-325865);
+    expect(margin).to.be.eq(5978478);
+    expect(openNotional).to.be.eq(17935434);
   });
 
   it("Can pay funding", async function () {
@@ -109,11 +123,15 @@ describe("vAMM should work with positive funding", async function () {
   });
 
   it("Can close long position", async function () {
-    await amm.as(longer).closePosition();
+    let tx = await amm.as(longer).closePosition();
+
+    expect(tx.stateChanges.transfers[0].amount).to.be.eq(15876342);
   });
 
   it("Can close short position", async function () {
-    await amm.as(shorter).closePosition();
+    let tx = await amm.as(shorter).closePosition();
+
+    expect(tx.stateChanges.transfers[0].amount).to.be.eq(5973063);
   });
 
   it("Can partially close long position", async function () {
@@ -121,11 +139,34 @@ describe("vAMM should work with positive funding", async function () {
     const p1 = await amm.getPositionInfo(longer);
     console.log(`P1=${JSON.stringify(p1)}`);
 
-    await amm.as(longer).closePosition(4, 200);
+    {
+      const { size, margin, openNotional } = await amm.getPositionInfo(longer);
+
+      expect(size).to.be.eq(8116078);
+      expect(margin).to.be.eq(149461937);
+      expect(openNotional).to.be.eq(448385811);
+    }
+
+    let ppcTx = await amm.as(longer).closePosition(4, 200);
+
+    {
+      const { size, margin, openNotional } = await amm.getPositionInfo(longer);
+
+      expect(size).to.be.eq(4116078);
+      expect(margin).to.be.eq(75632573);
+      expect(openNotional).to.be.eq(226897950);
+
+      expect(ppcTx.stateChanges.transfers[0].amount).to.be.equal(73564181);
+    }
+
     const p2 = await amm.getPositionInfo(longer);
     console.log(`P2=${JSON.stringify(p2)}`);
 
-    await amm.as(longer).closePosition();
+    let ppcTx2 = await amm.as(longer).closePosition();
+
+    {
+      expect(ppcTx2.stateChanges.transfers[0].amount).to.be.equal(75360296);
+    }
   });
 });
 
