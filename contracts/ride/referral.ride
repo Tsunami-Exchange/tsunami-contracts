@@ -19,6 +19,7 @@
 
   # Coordinator
   let k_coordinatorAddress = "k_coordinatorAddress"
+  let k_child = "k_child"
   let k_governance_asset = "k_gov_asset"
   let k_admin_address = "k_admin_address"
   let k_amm = "k_amm"
@@ -65,7 +66,20 @@
   func adminAddress() = addressFromString(coordinator().getString(k_admin_address).valueOrErrorMessage("Admin address not set"))
   func governanceAsset() = fromBase58String(coordinator().getString(k_governance_asset).valueOrErrorMessage("Governance asset not set"))
   func swapAddress() = addressFromString(coordinator().getString(k_swap_address).valueOrErrorMessage("Swap address not set")).valueOrErrorMessage("Swap address invalid")
-  func isWhitelist(_address: String) = getBoolean(coordinator(), k_amm.toCompositeKey(_address)).valueOrElse(false)
+  
+  func isWhitelist(_address: String) = {
+    let rootCoordinator = coordinator()
+    let ammCoordinator = getString(_address.addressFromStringValue(), k_coordinatorAddress).valueOrErrorMessage("No coordinator set for possible AMM " + _address).addressFromStringValue()
+    
+    let ammCoordinatorHaveAmm = getBoolean(ammCoordinator, k_amm.toCompositeKey(_address)).valueOrElse(false)
+    let isValidCoordinator = if (rootCoordinator == ammCoordinator) then {
+      true
+    } else {
+      getBoolean(rootCoordinator, k_child.toCompositeKey(ammCoordinator.toString())).valueOrElse(false)
+    }
+    
+    ammCoordinatorHaveAmm && isValidCoordinator
+  }
 
   ##### Core constants #####
 

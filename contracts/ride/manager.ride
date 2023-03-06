@@ -19,6 +19,8 @@ let k_staking_address = "k_staking_address"       # Address that stakes quote as
 
 # Global initialization state
 let k_initialized = "k_initialized"               # If Insurance was properly initialized
+let k_paused = "k_paused"                         # If all Manager operations are paused
+
 
 ##### View functions #####
 func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
@@ -31,6 +33,7 @@ func adminAddress() = addressFromString(coordinator().getString(k_admin_address)
 func stakingAddress() = addressFromString(coordinator().getString(k_staking_address).valueOrErrorMessage("Staking address not set")).valueOrErrorMessage("Staking address invalid")
 
 func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
+func paused() = this.getBoolean(k_paused).valueOrElse(false)
 
 func assetManagerAddress(_assetId: String) = addressFromString(this.getString(toCompositeKey(k_asset_manager_address, _assetId)).valueOrErrorMessage("No asset manager for token " + _assetId)).valueOrErrorMessage("Invalid asset manager address for token " + _assetId)
 
@@ -64,6 +67,28 @@ func initialize(
 }
 
 @Callable(i)
+func unpause() = {
+  if (i.caller != adminAddress()) then {
+    throw("Invalid unpause params")
+  } else {
+    [
+      BooleanEntry(k_paused, false)
+    ]
+  }
+}
+
+@Callable(i)
+func pause() = {
+  if (i.caller != adminAddress()) then {
+    throw("Invalid pause params")
+  } else {
+    [
+      BooleanEntry(k_paused, true)
+    ]
+  }
+}
+
+@Callable(i)
 func addAssetManager(
   _assetId: String,
   _vaultAddress: String
@@ -86,6 +111,7 @@ func withdraw(_assetId: String, _amount: Int) = {
   if (
     !isWhitelist(i.caller.toString()) 
     || !initialized()
+    || paused()
     || _amount > balanceOf(_assetId)
   ) then {
     throw("Invalid withdraw params (manager) " + _amount.toString() + " > " + balanceOf(_assetId).toString())
@@ -115,6 +141,7 @@ func deposit() = {
   if (
     !initialized()
     || (!isWhitelist(i.caller.toString()) && i.caller != adminAddress())
+    || paused()
     || i.payments.size() != 1
   ) then {
     throw("Invalid deposit params (manager)")
@@ -183,20 +210,54 @@ func view_claimProfit(_assetId: String) = {
   }
 }
 
-   
-  @Verifier(tx)
-  func verify() = {
-    let coordinatorStr = this.getString(k_coordinatorAddress)
-    if (coordinatorStr.isDefined()) then {
-      let admin = addressFromStringValue(coordinatorStr.value()).getString(k_admin_address)
-      if (admin.isDefined()) then {
-        admin.value().addressFromStringValue().getBoolean("status_" + this.toString() + "_" + tx.id.toBase58String() ).valueOrElse(false)
-      } else { 
-        # Admin is not defined in coordinator, set admin first
-        throw("unable to verify: admin not set in coordinator")
-      }
-    } else {
-      # Coordinator not set, use native verify
-      sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)
-    }
+@Callable(i)
+func migrate(_assetId: String) = {
+  let _amount = balanceOf(_assetId)
+  if (
+    !initialized()
+    || i.caller != adminAddress()
+    || !paused()
+  ) then {
+    throw("Invalid migrate params (manager)")
+  } else {
+    strict unstake = invoke(
+      this.getString("k_vires_address")
+        .valueOrErrorMessage("No legacy vires address")
+        .addressFromString()
+        .valueOrErrorMessage("Invalid legacy vires address"),
+      "withdraw",
+      [_assetId, _amount],
+      []
+    )
+
+    strict stake = invoke(
+      assetManagerAddress(_assetId),
+      "deposit",
+      [],
+      [AttachedPayment(fromBase58String(_assetId), _amount)]
+    )
+
+    [
+      DeleteEntry("k_vires_address"),
+      DeleteEntry("k_vires_vault")
+    ]
   }
+}
+
+   
+@Verifier(tx)
+func verify() = {
+  let coordinatorStr = this.getString(k_coordinatorAddress)
+  if (coordinatorStr.isDefined()) then {
+    let admin = addressFromStringValue(coordinatorStr.value()).getString(k_admin_address)
+    if (admin.isDefined()) then {
+      admin.value().addressFromStringValue().getBoolean("status_" + this.toString() + "_" + tx.id.toBase58String() ).valueOrElse(false)
+    } else { 
+      # Admin is not defined in coordinator, set admin first
+      throw("unable to verify: admin not set in coordinator")
+    }
+  } else {
+    # Coordinator not set, use native verify
+    sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)
+  }
+}
