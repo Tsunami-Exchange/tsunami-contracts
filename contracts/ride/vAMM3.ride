@@ -1900,7 +1900,6 @@ func addMargin(_direction: Int) = {
     || !requireOpenPosition(i.caller.toString(), _direction)
     || !initialized()
     || paused()
-    || closeOnly()
     || isMarketClosed()
   ) then {
     throw("Invalid addMargin parameters")
@@ -2357,7 +2356,7 @@ func payFunding() = {
     } else {
       []
     }
-    
+
     updateFunding(
       fundingBlockTimestamp + fundingPeriodSeconds(),
       latestLongCumulativePremiumFraction() + longPremiumFraction,
@@ -2365,6 +2364,8 @@ func payFunding() = {
       divd(longPremiumFraction, underlyingPrice),
       divd(shortPremiumFraction, underlyingPrice)
     )
+
+    
   }
 }
 
@@ -2427,6 +2428,42 @@ func ensureCalledOnce() = {
     } else {
       throw("Can not call vAMM methods twice in one tx")
     }
+  }
+}
+
+@Callable(i)
+func migratePosition(_trader: String) = {
+  let positionSizeOpt = this.getInteger(k_positionSize.toCompositeKey(_trader))
+  if (positionSizeOpt.isDefined()) then {
+    let pSize = this.getIntegerValue(k_positionSize.toCompositeKey(_trader))
+    let pMargin = this.getIntegerValue(k_positionMargin.toCompositeKey(_trader))
+    let pNotional = this.getIntegerValue(k_positionOpenNotional.toCompositeKey(_trader))
+    let pFraction = this.getIntegerValue(k_positionLastUpdatedCumulativePremiumFraction.toCompositeKey(_trader))
+    let pTimestamp = this.getIntegerValue(k_positionLastUpdatedTimestamp.toCompositeKey(_trader))
+    let pFee = this.getIntegerValue(k_positionFee.toCompositeKey(_trader))
+    let pSequence = this.getIntegerValue(k_positionSequence.toCompositeKey(_trader))
+    let pDirection = getDirection(pSize)
+    let positionKey = _trader + "_" + pDirection.toString()
+    
+    [
+      DeleteEntry(k_positionSize.toCompositeKey(_trader)),
+      DeleteEntry(k_positionMargin.toCompositeKey(_trader)),
+      DeleteEntry(k_positionOpenNotional.toCompositeKey(_trader)),
+      DeleteEntry(k_positionLastUpdatedCumulativePremiumFraction.toCompositeKey(_trader)),
+      DeleteEntry(k_positionLastUpdatedTimestamp.toCompositeKey(_trader)),
+      DeleteEntry(k_positionFee.toCompositeKey(_trader)),
+      DeleteEntry(k_positionSequence.toCompositeKey(_trader)),
+      IntegerEntry(k_positionSize.toCompositeKey(positionKey), pSize),
+      IntegerEntry(k_positionMargin.toCompositeKey(positionKey), pMargin),
+      IntegerEntry(k_positionOpenNotional.toCompositeKey(positionKey), pNotional),
+      IntegerEntry(k_positionLastUpdatedCumulativePremiumFraction.toCompositeKey(positionKey), pFraction),
+      IntegerEntry(k_positionLastUpdatedTimestamp.toCompositeKey(positionKey), pTimestamp),
+      IntegerEntry(k_positionFee.toCompositeKey(positionKey), pFee),
+      IntegerEntry(k_positionSequence.toCompositeKey(positionKey), pSequence)
+    ]
+
+  } else {
+    throw("Nothing to migrate for " + _trader)
   }
 }
 

@@ -2409,6 +2409,28 @@ class AMM {
     return tx;
   }
 
+  async migratePosition(trader) {
+    let tx = await invoke(
+      {
+        dApp: this.address,
+        functionName: "migratePosition",
+        arguments: [trader],
+        payment: [],
+      },
+      this.e.seeds.admin
+    );
+
+    await waitForTx(tx.id);
+    return tx;
+  }
+
+  async getTraders() {
+    let allKeys = await accountData(this.address);
+    return Object.keys(allKeys)
+      .filter((x) => x.startsWith("k_positionSize_"))
+      .map((x) => x.replace("k_positionSize_", ""));
+  }
+
   async updateSettings(update) {
     console.log(`Updating settings for ${this.address}`);
 
@@ -2979,6 +3001,9 @@ class AMM {
       let positionalNotional = Number.parseFloat(
         (parseInt(parts[5]) / 10 ** 6).toFixed(4)
       );
+      let rolloverFee = Number.parseFloat(
+        (parseInt(parts[6]) / 10 ** 6).toFixed(4)
+      );
       let info = await this.getPositionInfo(_trader);
 
       return {
@@ -2988,6 +3013,7 @@ class AMM {
         unrealizedPnl,
         badDebt,
         positionalNotional,
+        rolloverFee,
         size: info.size / decimals,
         openNotional: info.openNotional / decimals,
         leverage: info.openNotional / decimals / (info.margin / decimals),
