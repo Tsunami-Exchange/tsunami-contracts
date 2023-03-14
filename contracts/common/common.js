@@ -3534,7 +3534,11 @@ class Orders {
     _leverage,
     _side,
     _usdnPayment,
-    _refLink = ""
+    _refLink = "",
+    _stopTriggerPrice = 0,
+    _stopLimitPrice = 0,
+    _takeTriggerPrice = 0,
+    _takeLimitPrice = 0
   ) {
     let positionDirection = 0;
     if (_type == 1 || _type == 2) {
@@ -3572,6 +3576,10 @@ class Orders {
         leverage,
         _side,
         _refLink,
+        _stopTriggerPrice,
+        _stopLimitPrice,
+        _takeTriggerPrice,
+        _takeLimitPrice,
       ])}`
     );
     let tx = await invoke(
@@ -3587,6 +3595,10 @@ class Orders {
           leverage,
           _side,
           _refLink,
+          _stopTriggerPrice,
+          _stopLimitPrice,
+          _takeTriggerPrice,
+          _takeLimitPrice,
         ],
         payment:
           usdnPayment == 0
@@ -3636,7 +3648,7 @@ class Orders {
     return await accountDataByKey(
       `k_traderOrderCnt_${_amm}_${_trader}`,
       address(this.e.seeds.orders)
-    ).then((x) => x && x.value);
+    ).then((x) => (x ? x.value : 0));
   }
 
   async canExecute(_order) {

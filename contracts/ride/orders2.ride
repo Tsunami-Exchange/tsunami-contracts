@@ -17,6 +17,7 @@
   let k_executedOrders      = "k_executedOrders"
   let k_canceledOrders      = "k_canceledOrders"
   let k_order               = "k_order"
+  let k_orderRequest        = "k_orderReq"
   let k_lastOrderId         = "k_lastOrderId"
   let k_traderOrderCnt      = "k_traderOrderCnt"
   let k_traderOrderIds      = "k_traderOrderIds"
@@ -41,7 +42,7 @@
   let DECREASE = 2
 
   # Limit of orders per trader per AMM
-  let MAX_TRADER_ORDERS_PER_AMM = 5
+  let MAX_TRADER_ORDERS_PER_AMM = 10
 
   # TIME
   let TIME = lastBlock.timestamp
@@ -68,6 +69,10 @@
 
   func orderKey(_orderId: Int) = {
     k_order.toCompositeKey(_orderId.toString())
+  }
+
+  func orderRequestKey(_orderId: Int, _type: Int) = {
+    k_orderRequest + "_" + _orderId.toString() + "_" + _type.toString()
   }
 
   func traderOrderCountKey(_amm: String, _trader: String) = {
@@ -116,6 +121,27 @@
     } else {
       val.split(",")
     }
+  }
+
+  func haveOrderRequest(_orderId: Int, _type: Int) = {
+    let key = orderRequestKey(_orderId, _type)
+    this.getString(key).isDefined()
+  }
+
+  func getOrderRequest(_orderId: Int, _type: Int) = {
+    let key = orderRequestKey(_orderId, _type)
+    let orderRequestStr = this.getString(key).valueOrErrorMessage("Not order request for key: " + key)
+
+    let orderRequestPartList   = orderRequestStr.split(",")
+
+    let orderId       = orderRequestPartList[0].parseInt().valueOrErrorMessage("Invalid orderId")
+    let amm           = orderRequestPartList[1]
+    let trader        = orderRequestPartList[2]
+    let type          = orderRequestPartList[3].parseInt().valueOrErrorMessage("Invalid type")
+    let triggerPrice  = orderRequestPartList[4].parseInt().valueOrErrorMessage("Invalid triggerPrice")
+    let limitPrice    = orderRequestPartList[5].parseInt().valueOrErrorMessage("Invalid limitPrice")
+
+    (orderId, amm,  trader, type, triggerPrice, limitPrice)
   }
 
   func getOrder(_orderId: Int) = {
@@ -213,6 +239,23 @@
     
     [
       StringEntry(orderKey(_orderId), orderStr)
+    ]
+  }
+
+  func saveOrderRequest(
+    _orderId: Int,
+    _amm: String, 
+    _trader: String, 
+    _type: Int, 
+    _triggerPrice: Int,
+    _limitPrice: Int
+  ) = {
+    let orderReqStr = makeString([
+      _orderId.toString(), _amm, _trader, _type.toString(), _triggerPrice.toString(), _limitPrice.toString()
+    ], ",")
+    
+    [
+      StringEntry(orderRequestKey(_orderId, _type), orderReqStr)
     ]
   }
 
@@ -319,7 +362,7 @@
       }
     }
     
-    let (newOrders, cancelActions) = FOLD<7>(orders, (orders, []), cleanUpOne)
+    let (newOrders, cancelActions) = FOLD<10>(orders, (orders, []), cleanUpOne)
 
     cancelActions
     ++
@@ -363,13 +406,17 @@
   # Function that creates an order.
   # 
   # @param _amm Market address.
-  # @param _type The type of order (e.g. limit, take, stop). STOP = 1, TAKE = 2
+  # @param _type The type of order (e.g. limit, take, stop). STOP = 1, TAKE = 2, LIMIT = 3
   # @param _triggerPrice The price at which the order is triggered. Never 0. In 6 decimals.
   # @param _limitPrice The maximum price the user is willing to pay. May be 0. In 6 decimals.
   # @param _amountIn The amount of the asset to be used. For STOP and TAKE orders it's in base asset. In 6 decimals.
   # @param _leverage The leverage used in the trade. Only for LIMIT orders.
   # @param _side The direction of the trade (e.g. LONG or SHORT). LONG = 1, SHORT = 2.
   # @param _refLink A referral link for the order.
+  # @param _stopTriggerPrice The price at which the stop loss order is triggered. For LIMIT only.
+  # @param _stopLimitPrice The limit price for the stop loss order. For LIMIT only.
+  # @param _takeTriggerPrice The price at which the take profit order is triggered. For LIMIT only.
+  # @param _takeLimitPrice The limit price for the take profit order. For LIMIT only.
   #
   # @notice limit orders are not supported right now
   @Callable(i)
@@ -381,7 +428,11 @@
     _amountIn: Int,
     _leverage: Int,
     _side: Int,
-    _refLink: String
+    _refLink: String,
+    _stopTriggerPrice: Int,
+    _stopLimitPrice: Int,
+    _takeTriggerPrice: Int,
+    _takeLimitPrice: Int
   ) = {
     let _trader = i.caller.toString()
     strict cleanUp = invoke(this, "cleanUpStaleOrders", [_amm, _trader], [])
@@ -416,7 +467,55 @@
         ],
         []
       )
-      []
+
+      let orderId = match (doCall) {
+          case t: Int => t
+          case _ => throw("Invalid ID of created order")
+        }
+
+      if (_type == LIMIT) then {
+        let makeStop = if (_stopTriggerPrice > 0) then {
+          strict doMakeStop = invoke(
+            this,
+            "internalCreateOrderRequest",
+            [
+              _trader,
+              _amm,
+              orderId,
+              STOP,
+              _stopTriggerPrice,
+              _stopLimitPrice
+            ],
+            []
+          )
+
+          []
+        } else {
+          []
+        }
+
+        let makeTake = if (_takeTriggerPrice > 0) then {
+          strict doMakeTake = invoke(
+            this,
+            "internalCreateOrderRequest",
+            [
+              _trader,
+              _amm,
+              orderId,
+              TAKE,
+              _takeTriggerPrice,
+              _takeLimitPrice
+            ],
+            []
+          )
+          []
+        } else {
+          []  
+        }
+        makeStop ++ makeTake
+      } else {
+        []
+      }
     }
   }
 
@@ -462,7 +561,7 @@
           "increasePosition",
           [_direction, _leverage, _minBaseAssetAmount, _refLink],
           i.payments
-        )
+        ) 
         strict doResetContext = invoke(this, "resetContext", [], [])
         strict openedPositionSize = getPositionSize(_amm, _trader, _direction)
         let amountIn = abs(openedPositionSize)
@@ -522,6 +621,54 @@
   }
 
   @Callable(i)
+  func internalMarkOrderExecuted(
+    _amm: String,
+    _trader: String,
+    _orderId: Int
+  ) = {
+    if (
+      !initialized()
+      || !isWhitelist(_amm)
+      || !(i.caller == this)
+    ) then {
+      throw("Invalid internalMarkOrderExecuted parameters")
+    } else {
+      let newTraderOrderCount = getTraderOrderCount(_amm, _trader) - 1
+      
+      updateTraderOrderCount(_amm, _trader, newTraderOrderCount)
+      ++
+      addRemoveOrderId(_orderId, _amm, _trader, false)
+      ++
+      markExecuteOrder(_orderId)
+    }
+  }
+
+  @Callable(i)
+  func internalCreateOrderRequest(
+    _trader: String,
+    _amm: String,
+    _orderId: Int,
+    _type: Int,
+    _triggerPrice: Int,
+    _limitPrice: Int
+  ) = {
+    if (
+      !initialized()
+      || !isWhitelist(_amm)
+      || _triggerPrice <= 0
+      || _limitPrice < 0
+      || !(i.caller == this)
+    ) then {
+      throw("Invalid internalCreateOrderRequest parameters")
+    } else {
+      saveOrderRequest(
+        _orderId, _amm, _trader, _type, _triggerPrice, _limitPrice
+      )
+    }
+  }
+
+
+  @Callable(i)
   func internalCreateOrder(
     _trader: String,
     _amm: String,
@@ -546,7 +693,7 @@
       || !(_type == STOP || _type == TAKE || _type == LIMIT)
       || !(i.caller == this)
     ) then {
-      throw("Invalid createOrder parameters")
+      throw("Invalid internalCreateOrder parameters")
     } else {
       let orderId = currentOrderId() + 1
       let positionDirection = getPositionDirection(_side, _type)
@@ -596,15 +743,17 @@
           if (newTraderOrderCount > MAX_TRADER_ORDERS_PER_AMM) then {
             throw("Invalid createLimitOrder parameters: order count")
           } else {
-            saveOrder(
-              orderId, _amm, _trader, _amountIn, _leverage, _type, _triggerPrice, usdnPayment, _side, _refLink, positionId, _limitPrice
-            )
-            ++
-            addRemoveOrderId(orderId, _amm, _trader, true)
-            ++
-            updateTraderOrderCount(_amm, _trader, newTraderOrderCount)
-            ++
-            updateLastOrderId(orderId)
+            let changeSet = 
+              saveOrder(
+                orderId, _amm, _trader, _amountIn, _leverage, _type, _triggerPrice, usdnPayment, _side, _refLink, positionId, _limitPrice
+              )
+              ++
+              addRemoveOrderId(orderId, _amm, _trader, true)
+              ++
+              updateTraderOrderCount(_amm, _trader, newTraderOrderCount)
+              ++
+              updateLastOrderId(orderId)
+            (changeSet, orderId)
           }
         }
       }
@@ -654,6 +803,7 @@
         []
       }
 
+
       markCancelOrder(_orderId)
       ++
       addRemoveOrderId(_orderId, _amm, _trader, false)
@@ -696,7 +846,7 @@
     ) then {
       throw("Invalid executeOrder parameters")
     } else {
-      let positionSize = getPositionSize(_amm, _trader, positionDirection)
+      strict positionSize = getPositionSize(_amm, _trader, positionDirection)
       let currentPositionId = if (positionSize != 0) then {
         getPositionId(_amm, _trader, positionDirection)
       } else {
@@ -788,13 +938,93 @@
       strict doClosePosition = invoke(addressFromStringValue(_amm), method, args, payments)
       strict doResetContext = invoke(this, "resetContext", [], [])
 
-      let newTraderOrderCount = getTraderOrderCount(_amm, _trader) - 1
-      
-      updateTraderOrderCount(_amm, _trader, newTraderOrderCount)
-      ++
-      addRemoveOrderId(_orderId, _amm, _trader, false)
-      ++
-      markExecuteOrder(_orderId)
+      strict executeOrderRequest = if (_type == LIMIT) then {
+        strict newPositionSize = getPositionSize(_amm, _trader, positionDirection)
+        strict newPositionId = getPositionId(_amm, _trader, positionDirection)
+
+        let positionSizeDelta = newPositionSize - positionSize
+        let closeOrderSide = if (newPositionSize > 0) then SHORT else LONG
+        
+        strict makeTakeOrder = if (haveOrderRequest(_orderId, TAKE)) then {
+          let (
+            newOrderId, 
+            newAmm,  
+            newTrader, 
+            newType, 
+            newTriggerPrice, 
+            newLimitPrice)
+          = getOrderRequest(_orderId, TAKE)
+
+          strict doCall = invoke(
+            this,
+            "internalCreateOrder",
+            [
+              newTrader, 
+              newAmm, 
+              newType, 
+              newTriggerPrice, 
+              newLimitPrice, 
+              positionSizeDelta, 
+              0, 
+              closeOrderSide, 
+              "",
+              "",
+              0
+            ],
+            []
+          )
+
+          []
+        } else {
+          []
+        }
+
+        strict makeStopOrder = if (haveOrderRequest(_orderId, STOP)) then {
+          let (
+            newOrderId, 
+            newAmm,  
+            newTrader, 
+            newType, 
+            newTriggerPrice, 
+            newLimitPrice)
+          = getOrderRequest(_orderId, STOP)
+
+          strict doCall = invoke(
+            this,
+            "internalCreateOrder",
+            [
+              newTrader, 
+              newAmm, 
+              newType, 
+              newTriggerPrice, 
+              newLimitPrice, 
+              positionSizeDelta, 
+              0, 
+              closeOrderSide, 
+              "",
+              "",
+              0
+            ],
+            []
+          )
+          []
+        } else {
+          []
+        }
+
+        makeTakeOrder ++ makeStopOrder
+      } else {
+        []
+      }
+
+      strict doMarkOrderExecuted = invoke(
+        this,
+        "internalMarkOrderExecuted",
+        [_amm, _trader, _orderId],
+        []
+      )
+
+      []
     }
   }
 

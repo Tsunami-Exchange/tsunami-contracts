@@ -982,3 +982,94 @@ describe("Should be to reset order counter", async function () {
     expect(cnt3).to.be.equal(1);
   });
 });
+
+describe("Should be to auto create and execute stop loss and take profit after limit order execution", async function () {
+  this.timeout(600000);
+
+  let e, amm, longer, user, shorter, executor, lp;
+
+  before(async function () {
+    await setupAccounts({
+      admin: 1 * wvs,
+      longer: 0.1 * wvs,
+      user: 0.1 * wvs,
+      lp: 0.1 * wvs,
+      shorter: 0.1 * wvs,
+      executor: 0.2 * wvs,
+    });
+
+    longer = accounts.longer;
+    shorter = accounts.shorter;
+    executor = accounts.executor;
+    user = accounts.user;
+    lp = accounts.lp;
+
+    e = new Environment(accounts.admin);
+    await e.deploy();
+    await e.fundAccounts({
+      [longer]: 50000,
+      [shorter]: 50000,
+      [user]: 50000,
+      [lp]: 100000,
+    });
+
+    amm = await e.deployAmm(1000000, 55);
+
+    await e.vault.as(lp).stake(100000);
+  });
+
+  it("Will auto create take profit and stop loss", async function () {
+    await amm.setOraclePrice(50.0);
+    await amm.syncTerminalPriceToOracle();
+
+    {
+      let cnt = await e.orders.getOrderCount(address(user), amm.address);
+      expect(cnt).to.be.equal(0);
+    }
+
+    let [orderId] = await e.orders
+      .as(user)
+      .createOrder(
+        amm.address,
+        LIMIT,
+        57.0,
+        0,
+        1000,
+        3,
+        DIR_LONG,
+        1000,
+        "",
+        51.0,
+        0,
+        65.0,
+        0
+      );
+
+    {
+      let [can] = await e.orders.canExecute(orderId);
+      expect(can).to.be.false;
+    }
+
+    {
+      let cnt = await e.orders.getOrderCount(address(user), amm.address);
+      expect(cnt).to.be.equal(1);
+    }
+
+    await amm.setOraclePrice(57.15);
+    await amm.syncTerminalPriceToOracle();
+
+    {
+      let [can] = await e.orders.canExecute(orderId);
+      expect(can).to.be.true;
+    }
+
+    let tx = await e.orders.as(executor).executeOrder(orderId);
+
+    console.log(`Order executed in ${tx.id}`);
+
+    {
+      let cnt = await e.orders.getOrderCount(address(user), amm.address);
+      expect(cnt).to.be.equal(2);
+    }
+  });
+});
