@@ -5,7 +5,7 @@
   ##### Key constants #####
   let k_totalSupply = "k_totalSupply"
   let k_rewardBalance = "k_rewardBalance"
-  let k_swapAddress = "k_swapAddress"
+  let k_swap_address = "k_swap_address"
 
   # Global staking
   let k_lastUpdateTime = "k_lastUpdateTime"
@@ -25,15 +25,16 @@
   let k_coordinatorAddress = "k_coordinatorAddress"
   let k_staking_address = "k_staking_address"
   let k_governance_asset = "k_gov_asset"
-  let k_quote_asset = "k_quote_asset" 
+  let k_reward_asset = "k_reward_asset" 
   let k_admin_address = "k_admin_address"   
 
   ##### Coordinator constants #####
-  func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
-  func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
-  func governanceAsset() = fromBase58String(coordinator().getStringValue(k_governance_asset))
-  func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
-  func stakingAddress() = addressFromString(coordinator().getStringValue(k_staking_address)).valueOrErrorMessage("Staking not set")
+  func coordinator() = addressFromString(this.getString(k_coordinatorAddress).valueOrErrorMessage("Coordinator not set Farming")).valueOrErrorMessage("Coordinator address invalid")
+  func adminAddress() = addressFromString(coordinator().getString(k_admin_address).valueOrErrorMessage("Admin address not set"))
+  func governanceAsset() = fromBase58String(coordinator().getString(k_governance_asset).valueOrErrorMessage("Governance asset not set"))
+  func rewardAsset() = fromBase58String(coordinator().getString(k_reward_asset).valueOrErrorMessage("Reward asset not set"))
+  func stakingAddress() = addressFromString(coordinator().getString(k_staking_address).valueOrErrorMessage("Staking address not set")).valueOrErrorMessage("Staking address invalid")
+  func swapAddress() = addressFromString(coordinator().getString(k_swap_address).valueOrErrorMessage("Swap address not set")).valueOrErrorMessage("Swap address invalid")
 
   ##### Core constants #####
 
@@ -58,8 +59,6 @@
   func rewardRate() = int0(k_rewardRate)
   func periodFinish() = int0(k_periodFinish)
   func rewardBalance() = int0(k_rewardBalance)
-
-  func swapAddress() = addressFromString(this.getString(k_swapAddress).valueOrErrorMessage("Now swap address")).valueOrErrorMessage("Invalid swap address")
 
   func rewards(_staker: String) = int0(k_userReward.toCompositeKey(_staker))
   func userRewardPerTokenPaid(_staker: String) = int0(k_userRewardPerToken.toCompositeKey(_staker))
@@ -164,32 +163,17 @@
 
   @Callable(i)
   func initialize(
-    _coordinator: String,
-    _swapAddress: String
+    _coordinator: String
   ) = {
     if (initialized() || i.caller != this) then {
       throw("Unable to initialize")
     } else {
       [
         StringEntry(k_coordinatorAddress, addressFromStringValue(_coordinator).toString()),
-        StringEntry(k_swapAddress, addressFromStringValue(_swapAddress).toString()),
         BooleanEntry(k_initialized, true)
       ]
     }
   }
-
-@Callable(i)
-func setSwap(
-  _swapAddress: String
-) = {
-  if (i.caller != adminAddress()) then {
-    throw("Invalid setSwap params")
-  } else {
-    [
-      StringEntry(k_swapAddress, _swapAddress)
-    ]
-  }
-}
 
   @Callable(i)
   func stake() = {
@@ -353,7 +337,7 @@ func setSwap(
         []
       )
 
-      let rewardsAmount = assetBalance(this, quoteAsset())
+      let rewardsAmount = assetBalance(this, rewardAsset())
 
       # Now we will have USDN on balance, so proceed to exchange it
       #
@@ -361,7 +345,7 @@ func setSwap(
         swapAddress(),
         "swap",
         [toBase58String(governanceAsset()), 0], # Want Gov Asset
-        [AttachedPayment(quoteAsset(), rewardsAmount)] # In exchange for Quote Asset
+        [AttachedPayment(rewardAsset(), rewardsAmount)] # In exchange for Reward Asset
       )
 
       # We do not keep any governance asset on this contract balance, so everything, 

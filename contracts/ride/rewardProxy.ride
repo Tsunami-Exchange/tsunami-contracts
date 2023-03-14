@@ -1,0 +1,78 @@
+  {-# STDLIB_VERSION 6 #-}
+  {-# CONTENT_TYPE DAPP #-}
+  {-# SCRIPT_TYPE ACCOUNT #-}
+
+  # Coordinator
+  let k_coordinatorAddress = "k_coordinatorAddress"
+  let k_reward_asset = "k_reward_asset" 
+  let k_quote_asset = "k_quote_asset"
+  let k_swap_address = "k_swap_address"
+  let k_admin_address = "k_admin_address"
+  
+
+  # Keys
+  let k_target = "k_target"
+  let k_initialized = "k_initialized"
+
+  ##### Coordinator constants #####
+  func coordinator() = addressFromString(this.getString(k_coordinatorAddress).valueOrErrorMessage("Coordinator not set")).valueOrErrorMessage("Coordinator address invalid")
+  func rewardAsset() = fromBase58String(coordinator().getString(k_reward_asset).valueOrErrorMessage("Reward asset not set"))
+  func quoteAsset() = fromBase58String(coordinator().getString(k_quote_asset).valueOrErrorMessage("Quote asset not set"))
+  func swapAddress() = addressFromString(coordinator().getString(k_swap_address).valueOrErrorMessage("Swap address not set")).valueOrErrorMessage("Swap address invalid")
+
+  func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
+  func getTarget() = addressFromStringValue(this.getString(k_target).valueOrErrorMessage("Target rewards address not set"))
+
+  @Callable(i)
+  func initialize(
+    _coordinator: String,
+    _target: String
+  ) = {
+    if (
+      initialized() 
+      || i.caller != this
+    ) then {
+      throw("Unable to initialize")
+    } else {
+      [
+        StringEntry(k_coordinatorAddress, addressFromStringValue(_coordinator).toString()),
+        StringEntry(k_target, addressFromStringValue(_target).toString()),
+        BooleanEntry(k_initialized, true)
+      ]
+    }
+  }
+
+  @Callable(i)
+  func ackRewards() = {
+    strict rewardsInQuoteAsset = assetBalance(this, quoteAsset())
+    
+    strict doSwap = invoke(
+      swapAddress(),
+      "swap",
+      [toBase58String(rewardAsset()), 0], # Want Gov Asset
+      [AttachedPayment(quoteAsset(), rewardsInQuoteAsset)] # In exchange for Reward Asset
+    )
+
+    strict rewards = assetBalance(this, rewardAsset())
+
+    [
+      ScriptTransfer(getTarget(), rewards, rewardAsset())
+    ]
+  }
+
+  @Verifier(tx)
+  func verify() = {
+    let coordinatorStr = this.getString(k_coordinatorAddress)
+    if (coordinatorStr.isDefined()) then {
+      let admin = addressFromStringValue(coordinatorStr.value()).getString(k_admin_address)
+      if (admin.isDefined()) then {
+        admin.value().addressFromStringValue().getBoolean("status_" + this.toString() + "_" + tx.id.toBase58String() ).valueOrElse(false)
+      } else { 
+        # Admin is not defined in coordinator, set admin first
+        throw("unable to verify: admin not set in coordinator")
+      }
+    } else {
+      # Coordinator not set, use native verify
+      sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)
+    }
+  }

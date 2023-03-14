@@ -2,6 +2,7 @@ chai.config.includeStack = true;
 chai.use(require("chai-as-promised"));
 
 process.on("unhandledRejection", (error) => {
+  console.log(error);
   console.log("unhandledRejection", JSON.stringify(error));
 });
 
@@ -12,10 +13,10 @@ const DIR_SHORT = 2;
 const { expect } = require("chai");
 const { Environment } = require("../common/common");
 
-describe("vAMM should work with positive funding", async function () {
+describe("vAMM should work with positive funding (with other quote asset)", async function () {
   this.timeout(600000);
 
-  let e, amm, longer, shorter, liquidator;
+  let e, amm, longer, shorter;
 
   before(async function () {
     await setupAccounts({
@@ -27,10 +28,11 @@ describe("vAMM should work with positive funding", async function () {
 
     longer = accounts.longer;
     shorter = accounts.shorter;
-    liquidator = accounts.liquidator;
 
-    e = new Environment(accounts.admin);
-    await e.deploy();
+    let x = new Environment(accounts.admin);
+    await x.deploy();
+    e = await x.deployDefaultChild(x.assets.usdt);
+
     await e.fundAccounts({
       [longer]: 170,
       [shorter]: 100,

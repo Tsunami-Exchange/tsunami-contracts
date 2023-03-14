@@ -1,0 +1,172 @@
+  {-# STDLIB_VERSION 6 #-}
+  {-# CONTENT_TYPE DAPP #-}
+  {-# SCRIPT_TYPE ACCOUNT #-}
+
+  # Initialization status
+  let k_initialized = "k_initialized"
+
+  # Coordinator
+  let k_coordinatorAddress = "k_coordinatorAddress"
+  let k_admin_address = "k_admin_address"
+
+  # Markets
+  let k_market = "k_market"
+
+  # Keys
+  func getMarketKey(_from: String, _to: String) = {
+    k_market + "_" + _from + "_" + _to
+  }
+
+  ##### Coordinator constants #####
+  func coordinator() = addressFromString(this.getString(k_coordinatorAddress).valueOrErrorMessage("Coordinator not set Swap")).valueOrErrorMessage("Coordinator address invalid")
+  func adminAddress() = addressFromString(coordinator().getString(k_admin_address).valueOrErrorMessage("Admin address not set"))
+
+  # Get functions
+  func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
+
+  func getMarket(_from: String, _to: String) = {
+    let key = getMarketKey(_from, _to)
+    let fromName = assetInfo(_from.fromBase58String()).value().name
+    let toName = assetInfo(_to.fromBase58String()).value().name
+    let errorDesc = _from + " [" + fromName + "] -> " + _to + " [" + toName + "]"
+    let addressStr = this.getString(key).valueOrErrorMessage("No market for swap: " + errorDesc)
+    addressStr.addressFromString().valueOrErrorMessage("Invalid market address for swap: " + errorDesc)
+  }
+  
+  @Callable(i)
+  func initialize(
+    _coordinator: String,
+    _fromAssets: String,
+    _toAssets: String,
+    _markets: String
+  ) = {
+    if (initialized() 
+      || i.caller != this
+    ) then {
+      throw("Unable to initialize")
+    } else {
+      let fromAssets = _fromAssets.split(",")
+      let toAssets = _toAssets.split(",")
+      let markets = _markets.split(",")
+
+      if (
+        fromAssets.size() != toAssets.size() 
+        || fromAssets.size() != markets.size()
+        || fromAssets.size() > 5
+      ) then {
+        throw("Unable to initialize: invalid assets / markets")
+      } else {
+        func handle(_acc: List[StringEntry], _idx: Int) = {
+          if (_idx >= fromAssets.size()) then {
+            _acc
+          } else {
+            let from = fromAssets[_idx]
+            let to = toAssets[_idx]
+            let market = markets[_idx]
+
+            if (
+              from == ""
+              || to == ""
+              || !market.addressFromString().isDefined()
+            ) then {
+              throw("Invalid market at index: " + _idx.toString())
+            } else {
+              _acc ++ [
+                StringEntry(getMarketKey(from, to), market)
+              ]
+            }
+          } 
+        }
+
+        let doAddAllMarkets = FOLD<5>([0, 1, 2, 3, 4], [], handle)
+        
+        [
+          StringEntry(k_coordinatorAddress, addressFromStringValue(_coordinator).toString()),
+          BooleanEntry(k_initialized, true)
+        ] ++ doAddAllMarkets
+      }
+    }
+  }
+
+  @Callable(i)
+  func swap(_to: String, _expected: Int) = {
+    if (
+      !initialized()
+      || i.payments.size() != 1
+      || _expected < 0
+    ) then {
+      throw("Invalid swap params: payment count")
+    } else {
+      let assetId = i.payments[0].assetId
+      let from = if (assetId.isDefined()) then {
+        assetId.value().toBase58String()
+      } else {
+        "WAVES"
+      }
+
+      let market = getMarket(from, _to)
+      strict amountBeforeSwap = assetBalance(this, _to.fromBase58String())
+      strict doSwap = invoke(
+        market,
+        "swap",
+        [_to, _expected], 
+        i.payments
+      )
+      strict amountAfterSwap = assetBalance(this, _to.fromBase58String())
+      strict delta = amountAfterSwap - amountBeforeSwap
+
+      ([
+        ScriptTransfer(i.caller, delta, _to.fromBase58String())
+      ], delta)
+    }
+  }
+
+  @Callable(i)
+  func addMarket(_from: String, _to: String, _market: String) = {
+    if (
+      (i.caller != adminAddress() && i.caller != this)
+      || !initialized()
+      || _from == ""
+      || _to == ""
+      || !_market.addressFromString().isDefined()
+    ) then {
+      throw("Invalid addMarket params")
+    } else {
+      [
+        StringEntry(getMarketKey(_from, _to), _market)
+      ]
+    }
+  }
+
+  @Callable(i)
+  func removeMarket(_from: String, _to: String) = {
+    if (
+      i.caller != adminAddress()
+      || !initialized()
+      || _from == ""
+      || _to == ""
+    ) then {
+      throw("Invalid addMarket params")
+    } else {
+      [
+        DeleteEntry(getMarketKey(_from, _to))
+      ]
+    }
+  }
+
+  @Verifier(tx)
+  func verify() = {
+    let coordinatorStr = this.getString(k_coordinatorAddress)
+    if (coordinatorStr.isDefined()) then {
+      let admin = addressFromStringValue(coordinatorStr.value()).getString(k_admin_address)
+      if (admin.isDefined()) then {
+        admin.value().addressFromStringValue().getBoolean("status_" + this.toString() + "_" + tx.id.toBase58String() ).valueOrElse(false)
+      } else { 
+        # Admin is not defined in coordinator, set admin first
+        throw("unable to verify: admin not set in coordinator")
+      }
+    } else {
+      # Coordinator not set, use native verify
+      sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)
+    }
+  }

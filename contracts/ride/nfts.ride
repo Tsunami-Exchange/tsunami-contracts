@@ -21,13 +21,11 @@
   
 
   ##### Coordinator constants #####
-  func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
-  func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
-  func adminPublicKey() = fromBase58String(coordinator().getStringValue(k_admin_public_key))
+  func coordinator() = addressFromString(this.getString(k_coordinatorAddress).valueOrErrorMessage("Coordinator not set")).valueOrErrorMessage("Coordinator address invalid")
+  func adminAddress() = addressFromString(coordinator().getString(k_admin_address).valueOrErrorMessage("Admin address not set"))
 
   func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
   func nftCreatorAddress() = addressFromStringValue(this.getString(k_nft_creator_address).valueOrErrorMessage("No NFT creator address"))
-  # func minterAddress() = addressFromStringValue(this.getStringValue(k_nft_creator_address))
   func prizesAddress() = addressFromString(coordinator().getString(k_prizes_address).valueOrErrorMessage("No Prizes address set"))
 
   # Key functions

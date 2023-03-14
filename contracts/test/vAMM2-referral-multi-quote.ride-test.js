@@ -18,7 +18,7 @@ const computeFee = (payment, leverage, fee) => {
   return payment - amount;
 };
 
-describe("vAMM should work with referral program", async function () {
+describe("vAMM should work with referral program (with other quote asset)", async function () {
   this.timeout(600000);
 
   let e, amm, longer, shorter, liquidator, referrer;
@@ -37,8 +37,9 @@ describe("vAMM should work with referral program", async function () {
     liquidator = accounts.liquidator;
     referrer = accounts.referrer;
 
-    e = new Environment(accounts.admin);
-    await e.deploy();
+    let x = new Environment(accounts.admin);
+    await x.deploy();
+    e = await x.deployDefaultChild(x.assets.usdt);
     await e.fundAccounts({
       [longer]: 100,
       [shorter]: 100,

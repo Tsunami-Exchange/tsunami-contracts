@@ -15,10 +15,10 @@
   let k_spent = "k_spent"
 
   ##### Coordinator constants #####
-  func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
-  func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
-  func rewarderPublicKey() = fromBase58String(this.getStringValue(k_rewarder_public_key))
-  func nftManagerAddress() = addressFromString(coordinator().getStringValue(k_nft_manager_address)).valueOrErrorMessage("NFT Manager not set")
+  func coordinator() = addressFromString(this.getString(k_coordinatorAddress).valueOrErrorMessage("Coordinator not set")).valueOrErrorMessage("Coordinator address invalid")
+  func adminAddress() = addressFromString(coordinator().getString(k_admin_address).valueOrErrorMessage("Admin address not set"))
+  func rewarderPublicKey() = fromBase58String(this.getString(k_rewarder_public_key).valueOrErrorMessage("No rewarder public key set"))
+  func nftManagerAddress() = addressFromString(coordinator().getString(k_nft_manager_address).valueOrErrorMessage("NFT Manager address not set")).valueOrErrorMessage("NFT Manager not set")
 
   func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
   
@@ -52,6 +52,13 @@
     }
   }
 
+  # This callable function allows a user to claim a prize given a nonce, recipient, 
+  # asset ID, amount, and signature. It verifies the signature using the rewarder public key, 
+  # checks that the caller is the recipient, and that the signature has not already been spent. 
+  # It then splits the asset ID and amount into separate lists and creates a list of ScriptTransfers 
+  # to transfer the assets to the recipient address. If the type is "mint", it invokes the NFT Manager 
+  # contract to mint the asset to the recipient. Finally, it adds a BooleanEntry to the list indicating
+  #  that the signature has been spent.
   @Callable(i)
   func claimPrize(
     _nonce: String,

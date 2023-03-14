@@ -151,7 +151,7 @@ describe.only("vAMM should apply rollover fee", async function () {
       .as(longer)
       .increasePosition(actualPaymentFor1000Margin, DIR_LONG, 3, 0);
 
-    await advanceDate(year / 2);
+    await e.advanceTime(year / 2);
     let data = await amm.getPositionActualData(longer);
 
     expect(data.margin).to.be.closeTo(1000 - 1000 * 0.15, 0.1);
@@ -174,7 +174,7 @@ describe.only("vAMM should apply rollover fee", async function () {
       .as(longer)
       .increasePosition(actualPaymentFor1000Margin, DIR_LONG, 3, 0);
 
-    await advanceDate(year / 2);
+    await e.advanceTime(year / 2);
     await amm.as(longer).addMargin(5);
     await amm.as(longer).addMargin(0.00001);
     let data = await amm.getPositionActualData(longer);
@@ -196,7 +196,7 @@ describe.only("vAMM should apply rollover fee", async function () {
       .as(longer)
       .increasePosition(actualPaymentFor1000Margin, DIR_LONG, 3, 0);
 
-    await advanceDate(year / 2);
+    await e.advanceTime(year / 2);
     await amm.as(longer).removeMargin(5);
     await amm.as(longer).removeMargin(0.00001);
     let data = await amm.getPositionActualData(longer);
