@@ -476,7 +476,7 @@
     # And vice - versa
     if (
       !initialized()
-      || !isWhitelist(i.caller.toString())
+      || (!isWhitelist(i.caller.toString()) && i.caller != adminAddress())
     ) then {
       throw("Invalid exchangeFreeAndLocked params")
     } else {

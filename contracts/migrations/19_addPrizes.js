@@ -8,8 +8,8 @@ const migrate = async (e) => {
   const marketplaceAddress = loadAddress("marketplaceAddress");
 
   await e.upgradeCoordinator();
-  await e.deployPrizes(rewarderPublicKey);
-  await e.deployNfts(marketplaceAddress);
+  //await e.deployPrizes(rewarderPublicKey);
+  //await e.deployNfts(marketplaceAddress);
 
   for (let amm of e.amms) {
     await amm.upgrade();

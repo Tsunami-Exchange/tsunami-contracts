@@ -124,6 +124,13 @@ class Environment {
     console.log(`Loaded environment with ${this.amms.length} AMMs`);
   }
 
+  async getChildren() {
+    let allKeys = await accountData(this.addresses.coordinator);
+    return Object.keys(allKeys)
+      .filter((x) => x.startsWith("k_child_"))
+      .map((x) => x.replace("k_child_", ""));
+  }
+
   async deployDefaultChild(assetId) {
     if (!assetId) {
       throw Error("No quote asset for child coordinator");
@@ -259,6 +266,7 @@ class Environment {
     }
 
     {
+      /*
       const addAdminTx = await invoke(
         {
           dApp: address(seeds.coordinator),
@@ -269,6 +277,7 @@ class Environment {
       );
 
       console.log(`setAdmin in ${addAdminTx.id}`);
+      */
 
       const addChildTx = await invoke(
         {
@@ -281,7 +290,10 @@ class Environment {
 
       console.log(`addChild in ${addChildTx.id}`);
 
-      await Promise.all([waitForTx(addAdminTx.id), waitForTx(addChildTx.id)]);
+      await Promise.all([
+        //waitForTx(addAdminTx.id),
+        waitForTx(addChildTx.id),
+      ]);
     }
 
     {
@@ -451,102 +463,138 @@ class Environment {
 
     // Init manager
     {
-      const initManagerTx = await invoke(
-        {
-          dApp: address(seeds.manager),
-          functionName: "initialize",
-          arguments: [
-            address(seeds.coordinator),
-            assets.neutrino,
-            address(seeds.assetManager),
-          ],
-        },
-        seeds.manager
-      );
+      let k_initialized = await accountDataByKey(
+        `k_initialized`,
+        address(seeds.manager)
+      ).then((x) => x && x.value);
+      if (!k_initialized) {
+        const initManagerTx = await invoke(
+          {
+            dApp: address(seeds.manager),
+            functionName: "initialize",
+            arguments: [
+              address(seeds.coordinator),
+              assets.neutrino,
+              address(seeds.assetManager),
+            ],
+          },
+          seeds.manager
+        );
 
-      initTxs.push(waitForTx(initManagerTx.id));
-      console.log("Manager initialized in " + initManagerTx.id);
+        initTxs.push(waitForTx(initManagerTx.id));
+        console.log("Manager initialized in " + initManagerTx.id);
+      }
     }
 
     // Init simple asset manager
     {
-      const initSimpleManagerTx = await invoke(
-        {
-          dApp: address(seeds.assetManager),
-          functionName: "initialize",
-          arguments: [address(seeds.coordinator)],
-        },
-        seeds.assetManager
-      );
+      let k_initialized = await accountDataByKey(
+        `k_initialized`,
+        address(seeds.assetManager)
+      ).then((x) => x && x.value);
+      if (!k_initialized) {
+        const initSimpleManagerTx = await invoke(
+          {
+            dApp: address(seeds.assetManager),
+            functionName: "initialize",
+            arguments: [address(seeds.coordinator)],
+          },
+          seeds.assetManager
+        );
 
-      initTxs.push(waitForTx(initSimpleManagerTx.id));
-      console.log(
-        "Simple Asset Manager initialized in " + initSimpleManagerTx.id
-      );
+        initTxs.push(waitForTx(initSimpleManagerTx.id));
+        console.log(
+          "Simple Asset Manager initialized in " + initSimpleManagerTx.id
+        );
+      }
     }
 
     // Init proxy staking
     {
-      console.log(`Initializing proxy staking...`);
-      const initStakingTx = await invoke(
-        {
-          dApp: address(seeds.staking),
-          functionName: "initialize",
-          arguments: [
-            address(seeds.coordinator),
-            await this.getKey(`k_staking_address`),
-          ],
-        },
-        seeds.staking
-      );
+      let k_initialized = await accountDataByKey(
+        `k_initialized`,
+        address(seeds.staking)
+      ).then((x) => x && x.value);
+      if (!k_initialized) {
+        console.log(`Initializing proxy staking...`);
+        const initStakingTx = await invoke(
+          {
+            dApp: address(seeds.staking),
+            functionName: "initialize",
+            arguments: [
+              address(seeds.coordinator),
+              await this.getKey(`k_staking_address`),
+            ],
+          },
+          seeds.staking
+        );
 
-      initTxs.push(waitForTx(initStakingTx.id));
+        initTxs.push(waitForTx(initStakingTx.id));
+      }
     }
 
     // Init housekeeper
     {
-      console.log(`Initializing housekeeper...`);
-      const initHousekeeperTx = await invoke(
-        {
-          dApp: address(seeds.housekeeper),
-          functionName: "initialize",
-          arguments: [address(seeds.coordinator)],
-        },
-        seeds.housekeeper
-      );
+      let k_initialized = await accountDataByKey(
+        `k_initialized`,
+        address(seeds.housekeeper)
+      ).then((x) => x && x.value);
+      if (!k_initialized) {
+        console.log(`Initializing housekeeper...`);
+        const initHousekeeperTx = await invoke(
+          {
+            dApp: address(seeds.housekeeper),
+            functionName: "initialize",
+            arguments: [address(seeds.coordinator)],
+          },
+          seeds.housekeeper
+        );
 
-      initTxs.push(waitForTx(initHousekeeperTx.id));
-      console.log("Housekeeper initialized in " + initHousekeeperTx.id);
+        initTxs.push(waitForTx(initHousekeeperTx.id));
+        console.log("Housekeeper initialized in " + initHousekeeperTx.id);
+      }
     }
 
     // Init Vault
     {
-      const initVaultTx = await invoke(
-        {
-          dApp: address(seeds.vault),
-          functionName: "initialize",
-          arguments: [address(seeds.coordinator)],
-        },
-        seeds.vault
-      );
+      let k_initialized = await accountDataByKey(
+        `k_initialized`,
+        address(seeds.vault)
+      ).then((x) => x && x.value);
+      if (!k_initialized) {
+        const initVaultTx = await invoke(
+          {
+            dApp: address(seeds.vault),
+            functionName: "initialize",
+            arguments: [address(seeds.coordinator)],
+          },
+          seeds.vault
+        );
 
-      initTxs.push(waitForTx(initVaultTx.id));
-      console.log("Vault initialized in " + initVaultTx.id);
+        initTxs.push(waitForTx(initVaultTx.id));
+        console.log("Vault initialized in " + initVaultTx.id);
+      }
     }
 
     // Init orders
     {
-      const initOrdersTx = await invoke(
-        {
-          dApp: address(seeds.orders),
-          functionName: "initialize",
-          arguments: [address(seeds.coordinator)],
-        },
-        seeds.orders
-      );
+      let k_initialized = await accountDataByKey(
+        `k_initialized`,
+        address(seeds.orders)
+      ).then((x) => x && x.value);
+      if (!k_initialized) {
+        const initOrdersTx = await invoke(
+          {
+            dApp: address(seeds.orders),
+            functionName: "initialize",
+            arguments: [address(seeds.coordinator)],
+          },
+          seeds.orders
+        );
 
-      initTxs.push(waitForTx(initOrdersTx.id));
-      console.log("Orders initialized in " + initOrdersTx.id);
+        initTxs.push(waitForTx(initOrdersTx.id));
+        console.log("Orders initialized in " + initOrdersTx.id);
+      }
     }
 
     await Promise.all(initTxs);
@@ -596,6 +644,7 @@ class Environment {
       coordinator: 0.05 * wvs,
       staking: 0.05 * wvs,
       oracle: 1 * wvs,
+      oracleJit: 0.05 * wvs,
       miner: 0.05 * wvs,
       orders: 0.05 * wvs,
       referral: 0.05 * wvs,
@@ -614,6 +663,7 @@ class Environment {
     this.seeds.coordinator = accounts.coordinator;
     this.seeds.staking = accounts.staking;
     this.seeds.oracle = accounts.oracle;
+    this.seeds.oracleJit = accounts.oracleJit;
     this.seeds.miner = accounts.miner;
     this.seeds.orders = accounts.orders;
     this.seeds.referral = accounts.referral;
@@ -878,6 +928,14 @@ class Environment {
       this.isLocal,
       address(this.seeds.timer)
     );
+    let p17 = deploy(
+      "oracle.ride",
+      3400000,
+      this.seeds.oracleJit,
+      "JIT Oracle",
+      this.isLocal,
+      address(this.seeds.timer)
+    );
 
     let period = Math.floor(new Date().getTime() / 1000 / 604800);
 
@@ -914,6 +972,7 @@ class Environment {
       p14,
       p15,
       p16,
+      p17,
       seedOracleTx,
     ]);
 
@@ -1082,6 +1141,15 @@ class Environment {
         this.seeds.admin
       );
 
+      const setOracleTx = await invoke(
+        {
+          dApp: address(this.seeds.coordinator),
+          functionName: "setOracleAddress",
+          arguments: [address(this.seeds.oracleJit)],
+        },
+        this.seeds.admin
+      );
+
       initTxs.push(waitForTx(setQuoteAssetTx.id));
       initTxs.push(waitForTx(setGovAssetTx.id));
       initTxs.push(waitForTx(setStakingAddressTx.id));
@@ -1096,6 +1164,7 @@ class Environment {
       initTxs.push(waitForTx(setVaultTx.id));
       initTxs.push(waitForTx(setSwapTx.id));
       initTxs.push(waitForTx(setRewardAssetTx.id));
+      initTxs.push(waitForTx(setOracleTx.id));
     }
 
     // Init staking
@@ -1312,6 +1381,24 @@ class Environment {
       console.log("Vault initialized in " + initVaultTx.id);
     }
 
+    // Init Oracle
+    {
+      const initOracleTx = await invoke(
+        {
+          dApp: address(this.seeds.oracleJit),
+          functionName: "initialize",
+          arguments: [
+            address(this.seeds.coordinator),
+            publicKey(this.seeds.admin),
+          ],
+        },
+        this.seeds.oracleJit
+      );
+
+      initTxs.push(waitForTx(initOracleTx.id));
+      console.log("Oracle (JIT) initialized in " + initOracleTx.id);
+    }
+
     await Promise.all(initTxs);
 
     // Add 0.0001 to locked in vault
@@ -1346,6 +1433,7 @@ class Environment {
     this.vault = new Vault(this);
     this.manager = new Manager(this);
     this.vires = new Vires(this);
+    this.oracle = new Oracle(this);
 
     this.now = new Date().getTime();
     console.log(`Environment deployed`);
@@ -1940,21 +2028,40 @@ class Environment {
 
     this.seeds.amms[address(accounts.amm)] = ammSeed;
 
-    let seedOracleTx = data(
-      {
-        data: [
-          {
-            key: "price",
-            type: "integer",
-            value: Math.round(_price * decimals),
-          },
-        ],
-      },
-      this.seeds.oracle
-    );
+    const waitFor = [];
 
-    await broadcast(seedOracleTx);
-    console.log(`Seed AMM oracle in ${seedOracleTx.id}`);
+    if (!options.jitOracleStream) {
+      let seedOracleTx = data(
+        {
+          data: [
+            {
+              key: "price",
+              type: "integer",
+              value: Math.round(_price * decimals),
+            },
+          ],
+        },
+        this.seeds.oracle
+      );
+
+      await broadcast(seedOracleTx);
+
+      console.log(`Seed AMM oracle in ${seedOracleTx.id}`);
+      waitFor.push(waitForTx(seedOracleTx.id));
+    } else {
+      console.log(
+        `Using JIT oracle: ${address(this.seeds.oracleJit)}, stream ${
+          options.jitOracleStream
+        }`
+      );
+
+      await this.oracle.createStream(
+        options.jitOracleStream,
+        0.05 * decimals,
+        10 * decimals
+      );
+      this.oracle.setPrice(options.jitOracleStream, _price);
+    }
 
     let p3 = deploy(
       "vAMM3.ride",
@@ -1976,7 +2083,17 @@ class Environment {
 
     console.log(`addAmm in ${addAmmTx.id}`);
 
-    await Promise.all([p3, waitForTx(addAmmTx.id), waitForTx(seedOracleTx.id)]);
+    await Promise.all([p3, waitForTx(addAmmTx.id), ...waitFor]);
+
+    let baseOracle;
+
+    if (!options.jitOracleStream) {
+      baseOracle = `${address(this.seeds.oracle)},price,,`;
+    } else {
+      baseOracle = `${address(this.seeds.oracleJit)},k_stream_data_price_${
+        options.jitOracleStream
+      },k_stream_data_block_${options.jitOracleStream},`;
+    }
 
     {
       const initTx = invokeScript(
@@ -2013,7 +2130,7 @@ class Environment {
               }, // _fee 0.12%
               {
                 type: "string",
-                value: `${address(this.seeds.oracle)},price,,`,
+                value: baseOracle,
               }, // Base oracle data address
               { type: "string", value: "" }, // Quote oracle data
               { type: "string", value: address(this.seeds.coordinator) }, // Coordinator address,
@@ -2049,7 +2166,10 @@ class Environment {
               }, // _feeToStakersPercent 50%
               {
                 type: "integer",
-                value: options.maxOracleDelay || 1,
+                value:
+                  options.maxOracleDelay == undefined
+                    ? 1
+                    : options.maxOracleDelay,
               }, // _maxOracleDelay 1 block
               {
                 type: "integer",
@@ -2059,6 +2179,10 @@ class Environment {
                 type: "integer",
                 value: options.fundingMode || 1,
               }, // _fundingMode 1 (asymmetric)
+              {
+                type: "integer",
+                value: options.jitOracleStream ? 2 : 1,
+              }, // _Oracle mode default 1 (plain)
             ],
           },
         },
@@ -2235,6 +2359,7 @@ class Environment {
   }
 
   async ensureDeploymentFee(address, fee) {
+    fee = fee + 1000000; // Initialize
     const contractBalance = await balance(address);
     const toAdd = contractBalance >= fee ? 0 : fee - contractBalance;
     if (toAdd > 0) {
@@ -2425,7 +2550,9 @@ class AMM {
   }
 
   async getTraders() {
+    console.log(`Getting traders for ${this.address}...`);
     let allKeys = await accountData(this.address);
+    console.log(`Got traders for ${this.address}!`);
     return Object.keys(allKeys)
       .filter((x) => x.startsWith("k_positionSize_"))
       .map((x) => x.replace("k_positionSize_", ""));
@@ -2533,6 +2660,7 @@ class AMM {
             { type: "integer", value: _leverage * decimals }, // _leverage = 3
             { type: "integer", value: _minBaseAssetAmount * decimals }, // _minBaseAssetAmount = 0.1 WAVES
             { type: "string", value: _link || "" },
+            { type: "string", value: this.e.oracle.lastPrice || "" },
           ],
         },
         payment,
@@ -2556,7 +2684,10 @@ class AMM {
         dApp: address(this.e.seeds.amms[this.address]),
         call: {
           function: "addMargin",
-          args: [{ type: "integer", value: direction }],
+          args: [
+            { type: "integer", value: direction },
+            { type: "string", value: this.e.oracle.lastPrice || "" },
+          ],
         },
         payment: [
           {
@@ -2587,6 +2718,7 @@ class AMM {
           args: [
             { type: "integer", value: _amount * decimals },
             { type: "integer", value: direction },
+            { type: "string", value: this.e.oracle.lastPrice || "" },
           ],
         },
       },
@@ -2642,6 +2774,7 @@ class AMM {
               type: "boolean",
               value: _addToMargin,
             },
+            { type: "string", value: this.e.oracle.lastPrice || "" },
           ],
         },
       },
@@ -2666,6 +2799,7 @@ class AMM {
           args: [
             { type: "string", value: address(_trader) },
             { type: "integer", value: direction },
+            { type: "string", value: this.e.oracle.lastPrice || "" },
           ],
         },
       },
@@ -2718,7 +2852,7 @@ class AMM {
         dApp: address(this.e.seeds.amms[this.address]),
         call: {
           function: "payFunding",
-          args: [],
+          args: [{ type: "string", value: this.e.oracle.lastPrice || "" }],
         },
       },
       this.e.seeds.admin
@@ -2804,38 +2938,6 @@ class AMM {
       openNotional,
       positionFraction,
     };
-  }
-
-  async getBorrow(_trader) {
-    let trader = address(_trader);
-    let dApp = address(this.e.seeds.amms[this.address]);
-
-    const invokeTx = invokeScript(
-      {
-        dApp: dApp,
-        call: {
-          function: "view_getBorrowedByTrader",
-          args: [trader],
-        },
-      },
-      this.e.seeds.admin
-    );
-
-    try {
-      await broadcast(invokeTx);
-    } catch (e) {
-      let { message } = JSON.parse(JSON.stringify(e));
-      let parts = message
-        .replace("Error while executing account-script: ", "")
-        .split(",");
-      let amount = parseInt(parts[0]);
-      let assetId = parts[1];
-
-      return {
-        amount,
-        assetId,
-      };
-    }
   }
 
   async totalPositionInfo() {
@@ -2969,6 +3071,7 @@ class AMM {
           args: [
             { type: "string", value: trader },
             { type: "integer", value: direction },
+            { type: "string", value: this.e.oracle.lastPrice || "" },
           ],
         },
       },
@@ -3027,7 +3130,7 @@ class AMM {
         dApp: address(this.e.seeds.amms[this.address]),
         call: {
           function: "view_getFunding",
-          args: [],
+          args: [{ type: "string", value: this.e.oracle.lastPrice || "" }],
         },
       },
       this.e.seeds.admin
@@ -3599,6 +3702,7 @@ class Orders {
           _stopLimitPrice,
           _takeTriggerPrice,
           _takeLimitPrice,
+          this.e.now + 1000 * 60 * 24,
         ],
         payment:
           usdnPayment == 0
@@ -3635,7 +3739,7 @@ class Orders {
       {
         dApp: address(this.e.seeds.orders),
         functionName: "executeOrder",
-        arguments: [_order],
+        arguments: [_order, ""],
       },
       this.sender
     );
@@ -3661,6 +3765,10 @@ class Orders {
             {
               value: _order,
               type: "integer",
+            },
+            {
+              value: "",
+              type: "string",
             },
           ],
         },
@@ -3722,6 +3830,7 @@ class Orders {
           Math.round(_stopLimitPrice * decimals),
           Math.round(_takeTriggerPrice * decimals),
           Math.round(_takeLimitPrice * decimals),
+          "",
         ],
         payment: [
           {
@@ -4274,7 +4383,7 @@ class Housekeeper {
       {
         dApp: address(this.e.seeds.housekeeper),
         functionName: "performHousekeeping",
-        arguments: [amms],
+        arguments: [true, true, true, amms],
         payment: [],
       },
       this.e.seeds.admin
@@ -4516,6 +4625,136 @@ class Vires {
 
     await waitForTx(tx.id);
     return tx;
+  }
+}
+
+class Oracle {
+  constructor(e, address, sender) {
+    this.e = e;
+    this.address = address;
+    this.sender = sender;
+  }
+
+  as(_sender) {
+    return new Oracle(this.e, address, _sender);
+  }
+
+  async createStream(_name, _maxDeviation, _ttl) {
+    let tx = await invoke(
+      {
+        dApp: address(this.e.seeds.oracleJit),
+        functionName: "createStream",
+        arguments: [_name, _maxDeviation, _ttl],
+        payment: [],
+      },
+      this.e.seeds.admin
+    );
+
+    await waitForTx(tx.id);
+    return tx;
+  }
+
+  async setOraclePublicKeys(_keys) {
+    let tx = await invoke(
+      {
+        dApp: address(this.e.seeds.oracleJit),
+        functionName: "setOraclePublicKeys",
+        arguments: [_keys.join(",")],
+        payment: [],
+      },
+      this.e.seeds.admin
+    );
+
+    await waitForTx(tx.id);
+    return tx;
+  }
+
+  async updateData(_data) {
+    let tx = await invoke(
+      {
+        dApp: address(this.e.seeds.oracleJit),
+        functionName: "updateData",
+        arguments: [_data],
+        payment: [],
+      },
+      this.e.seeds.admin
+    );
+
+    await waitForTx(tx.id);
+    return tx;
+  }
+
+  async pause(_id) {
+    let tx = await invoke(
+      {
+        dApp: address(this.e.seeds.oracleJit),
+        functionName: "pause",
+        arguments: [_id],
+        payment: [],
+      },
+      this.e.seeds.admin
+    );
+
+    await waitForTx(tx.id);
+    return tx;
+  }
+
+  async unPause(_id) {
+    let tx = await invoke(
+      {
+        dApp: address(this.e.seeds.oracleJit),
+        functionName: "unPause",
+        arguments: [_id],
+        payment: [],
+      },
+      this.e.seeds.admin
+    );
+
+    await waitForTx(tx.id);
+    return tx;
+  }
+
+  async getStreamData(_id) {
+    const price = await accountDataByKey(
+      `k_stream_data_price_${_id}`,
+      address(this.e.seeds.oracleJit)
+    ).then((x) => x.value);
+
+    const timestamp = await accountDataByKey(
+      `k_stream_data_timestamp_${_id}`,
+      address(this.e.seeds.oracleJit)
+    ).then((x) => x.value);
+
+    return {
+      price,
+      timestamp,
+    };
+  }
+
+  setPrice(_stream, _price, _seeds = [this.e.seeds.admin]) {
+    let sec = 1000;
+    const signData = (_signers, _data) => {
+      let data = _data.join(",");
+      let signatures = _signers.map((s) => {
+        let sig = signBytes(s, new TextEncoder().encode(data));
+        return `${publicKey(s)}=${sig}`;
+      });
+
+      return signatures.join(":");
+    };
+
+    let data = [
+      _stream,
+      this.e.now + 1 * sec,
+      Math.round(_price * decimals),
+      Math.round(_price * decimals * 0.005),
+    ];
+    let signature = signData(_seeds, data);
+
+    let update = [...data, signature].join("__");
+    this.lastPrice = update;
+
+    return this.lastPrice;
   }
 }
 

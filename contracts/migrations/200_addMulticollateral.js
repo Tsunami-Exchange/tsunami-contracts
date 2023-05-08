@@ -8,9 +8,9 @@ const migrate = async (e) => {
   const usdc = loadAddress("usdc");
 
   await e.upgradeCoordinator();
-  await e.insurance.upgrade();
+  //await e.insurance.upgrade();
 
-  await e.deployCollateral(stablePuzzlePool, [usdt, usdc]);
+  //await e.deployCollateral(stablePuzzlePool, [usdt, usdc]);
 
   for (let amm of e.amms) {
     await amm.upgrade();

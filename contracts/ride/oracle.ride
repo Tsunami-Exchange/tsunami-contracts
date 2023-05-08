@@ -1,0 +1,273 @@
+  {-# STDLIB_VERSION 6 #-}
+  {-# CONTENT_TYPE DAPP #-}
+  {-# SCRIPT_TYPE ACCOUNT #-}
+
+  # Initialization status
+  let k_initialized = "k_initialized"
+
+  # Coordinator
+  let k_coordinatorAddress = "k_coordinatorAddress"
+  let k_admin_address = "k_admin_address"
+  let k_nft_manager_address = "k_nft_manager_address"
+
+  # Own constants  
+  let k_oracle_public_keys = "k_oracle_public_keys"
+  let k_stream = "k_stream"
+
+  let k_stream_data_price = "k_stream_data_price"
+  let k_stream_data_spread = "k_stream_data_spread"
+  let k_stream_data_timestamp = "k_stream_data_timestamp"
+  let k_stream_data_block = "k_stream_data_block"
+
+
+  ##### Coordinator constants #####
+  func coordinator() = addressFromString(this.getString(k_coordinatorAddress).valueOrErrorMessage("Coordinator not set")).valueOrErrorMessage("Coordinator address invalid")
+  func adminAddress() = addressFromString(coordinator().getString(k_admin_address).valueOrErrorMessage("Admin address not set"))
+
+  func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
+
+  ##### Math functions #####
+  let DECIMAL_UNIT      = 1 * (10 * 10 * 10 * 10 * 10 * 10)
+
+  func divd(_x: Int, _y: Int) = fraction(_x, DECIMAL_UNIT, _y, HALFEVEN)
+  func muld(_x: Int, _y: Int) = fraction(_x, _y, DECIMAL_UNIT, HALFEVEN)
+  func abs(_x: Int) = if (_x > 0) then _x else -_x
+
+  ##### Key functions #####
+  func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
+
+  func getStreamSettingsKey(_id: String) = k_stream.toCompositeKey(_id)
+
+  ##### Verification functions #####
+  func toList(_str: String, _spr: String) = {
+    if (_str.indexOf(_spr).isDefined()) then _str.split(_spr) else [_str]
+  }
+
+  func verifyOraclePublicKeys(_keys: String) = {
+    let list = _keys.toList(",")
+    if (list.size() > 9) then {
+      throw("Max 9 signatures")
+    } else {
+      _keys
+    }
+  }
+
+  ##### Data functions #####
+  func lastTimestamp() = lastBlock.timestamp
+
+  func getOracleAddresses() = {
+    let oraStr = this.getStringValue(k_oracle_public_keys)
+    if (oraStr.indexOf(",").isDefined()) then oraStr.split(",") else [oraStr]
+  }
+
+  func getStreamSettings(_id: String) = {
+    let _key = getStreamSettingsKey(_id)
+    let str = this.getString(_key).valueOrErrorMessage("No stream with id: " + _id)
+
+    let parts = str.split(",")
+    (
+      parts[0].parseInt().valueOrErrorMessage("Invalid maxDeviation in stream: " + _id),
+      parts[1].parseInt().valueOrErrorMessage("Invalid validityPeriod in stream: " + _id),
+      parts[2] == "true"
+    )
+  }
+
+  func getStreamLastData(_id: String) = {
+    let dataPoint = this.getInteger(k_stream_data_price.toCompositeKey(_id))
+    if (dataPoint.isDefined()) then {
+      (
+        this.getIntegerValue(k_stream_data_price.toCompositeKey(_id)),
+        this.getIntegerValue(k_stream_data_spread.toCompositeKey(_id)),
+        this.getIntegerValue(k_stream_data_timestamp.toCompositeKey(_id))
+      )
+    } else {
+      (0, 0, lastTimestamp())
+    }
+  }
+
+  ##### Update functions #####
+  func updateStreamSettings(_id: String, _maxDeviation: Int, _validityPeriod: Int, _stopped: Boolean) = {
+    let streamData = makeString([
+      _maxDeviation.toString(), 
+      _validityPeriod.toString(),
+      _stopped.toString()
+    ], ",")
+
+    [
+      StringEntry(getStreamSettingsKey(_id), streamData)
+    ]
+  }
+
+  
+  @Callable(i)
+  func initialize(
+    _coordinator: String,
+    _oraclePublicKeys: String
+  ) = {
+    if (initialized() || i.caller != this) then {
+      throw("Unable to initialize")
+    } else {
+      [
+        StringEntry(k_coordinatorAddress, addressFromStringValue(_coordinator).toString()),
+        StringEntry(k_oracle_public_keys, verifyOraclePublicKeys(_oraclePublicKeys)),
+        BooleanEntry(k_initialized, true)
+      ]
+    }
+  }
+
+  @Callable(i)
+  func setOraclePublicKeys(
+    _oraclePublicKeys: String
+  ) = {
+    if (
+      !initialized() 
+      || i.caller != adminAddress()
+    ) then {
+      throw("Invalid setOraclePublicKeys params")
+    } else {
+      [
+        StringEntry(k_oracle_public_keys, verifyOraclePublicKeys(_oraclePublicKeys))
+      ]
+    }
+  }
+
+  @Callable(i)
+  func createStream(
+    _id: String,
+    _maxDeviation: Int,
+    _validityPeriod: Int
+  ) = {
+    if (
+      i.caller != adminAddress()
+      || _maxDeviation <= 0
+      || _validityPeriod <= 0
+    ) then {
+      throw("Invalid createStream params")
+    } else {
+      updateStreamSettings(_id, _maxDeviation, _validityPeriod, false)
+    }
+  }
+
+  @Callable(i)
+  func pause(
+    _id: String
+  ) = {
+    if (
+      i.caller != adminAddress()
+    ) then {
+      throw("Invalid pause params")
+    } else {
+      # Will throw if id is invalid
+      let (maxDeviation, validityPeriod, stopped) = getStreamSettings(_id) 
+
+      updateStreamSettings(_id, maxDeviation, validityPeriod, true)
+    }
+  }
+
+  @Callable(i)
+  func unPause(
+    _id: String
+  ) = {
+    if (
+      i.caller != adminAddress()
+    ) then {
+      throw("Invalid unPause params")
+    } else {
+      # Will throw if id is invalid
+      let (maxDeviation, validityPeriod, stopped) = getStreamSettings(_id) 
+      
+      updateStreamSettings(_id, maxDeviation, validityPeriod, false)
+    }
+  }
+
+  # 1683214055 1683214068
+  @Callable(i)
+  func updateData(
+    _data: String
+  ) = {
+    let update = _data.split_4C("__")
+
+    let id = update[0]
+    strict timestamp = update[1].parseInt().valueOrErrorMessage("Invalid data: timestamp")
+    strict price = update[2].parseInt().valueOrErrorMessage("Invalid data: price")
+    strict spread = update[3].parseInt().valueOrErrorMessage("Invalid data: spread")
+    let signatures = if (update[4].indexOf(":").isDefined()) then update[4].split_4C(":") else [update[4]]
+
+    let message = (
+      id
+      + "," + timestamp.toString()
+      + "," + price.toString()
+      + "," + spread.toString()
+    ).toBytes()
+
+    let oracles = getOracleAddresses()
+
+    func handle(_acc: Int, _signatureData: String) = {
+      let signedBy = _signatureData.split("=")
+      let signer = signedBy[0]
+      let signature = signedBy[1]
+
+      let isValidSigner = oracles.containsElement(signer)
+      let isValidSignature = message.sigVerify(fromBase58String(signature), fromBase58String(signer))
+
+      let result = if (isValidSigner && isValidSignature) then { _acc + 1 } else { _acc }
+
+      result
+    }
+
+    let signaturesCount = FOLD<5>(signatures, 0, handle)
+    let isQuorumReached = signaturesCount > oracles.size() / 2 # Should be true
+
+    strict (maxDeviation, validityPeriod, stopped) = getStreamSettings(id) # Will throw if id is invalid
+    
+    let now = lastTimestamp()
+
+    let isValidTimestamp = timestamp > now || now - timestamp < validityPeriod
+    let iNotStopped = !stopped
+
+    let (lastPrice, lastSpread, streamLastTimestamp) = getStreamLastData(id)
+
+    # 0 means this is the first data point
+    let diff = if (lastPrice == 0) then 0 else abs((price - lastPrice).divd(lastPrice))
+    let isValidDiff = diff < maxDeviation
+
+    if (streamLastTimestamp > timestamp) then {
+      ([], (lastPrice, lastSpread, streamLastTimestamp))
+    } else {
+      if (isQuorumReached && isValidTimestamp && iNotStopped && isValidDiff) then {
+        ([
+          IntegerEntry(k_stream_data_price.toCompositeKey(id)    , price),
+          IntegerEntry(k_stream_data_spread.toCompositeKey(id)   , spread),
+          IntegerEntry(k_stream_data_timestamp.toCompositeKey(id), timestamp),
+          IntegerEntry(k_stream_data_block.toCompositeKey(id)    , height)
+        ], (price, spread, timestamp))
+      } else {
+        let reasons = [
+          if (!isValidTimestamp) then "invalid timestamp" else "",
+          if (!iNotStopped) then "stopped" else "",
+          if (!isValidDiff) then "invalid diff (too large)" else "",
+          if (!isQuorumReached) then "quorum not reached" else ""
+        ]
+
+        let reason = makeString(reasons, ", ")
+        throw("Invalid updateDate params: " + reason)
+      }
+    }
+  }
+
+  @Verifier(tx)
+  func verify() = {
+    let coordinatorStr = this.getString(k_coordinatorAddress)
+    if (coordinatorStr.isDefined()) then {
+      let admin = addressFromStringValue(coordinatorStr.value()).getString(k_admin_address)
+      if (admin.isDefined()) then {
+        admin.value().addressFromStringValue().getBoolean("status_" + this.toString() + "_" + tx.id.toBase58String() ).valueOrElse(false)
+      } else { 
+        # Admin is not defined in coordinator, set admin first
+        throw("unable to verify: admin not set in coordinator")
+      }
+    } else {
+      # Coordinator not set, use native verify
+      sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)
+    }
+  }

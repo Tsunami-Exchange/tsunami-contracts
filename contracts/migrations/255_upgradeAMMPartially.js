@@ -1,5 +1,3 @@
-const { loadSeed, loadAddress } = require("../common/wallet");
-
 const migrate = async (e) => {
   await e.orders.upgrade();
 
@@ -9,9 +7,10 @@ const migrate = async (e) => {
     for (let t of traders) {
       console.log(`Migrating position of ${t} in ${amm.address}`);
 
-      await amm.migratePosition(t);
+      if (!t.includes("_1") && !t.includes("_2")) {
+        await amm.migratePosition(t);
+      }
     }
-    break;
   }
 };
 

@@ -1,6 +1,8 @@
 const migrate = async (e) => {
+  await e.orders.upgrade();
+
   for (let amm of e.amms) {
-    //await e.forceSetKey(amm.address, "k_fundingMode", 2);
+    await amm.upgrade();
   }
 };
 

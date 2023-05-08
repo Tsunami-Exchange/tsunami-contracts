@@ -93,10 +93,18 @@ const run = async () => {
       const m = require(`./${migration}`);
       let success = true;
       try {
-        const e = new Environment(process.env[`${chainId}_ADMIN_SEED`]);
-        await e.load(env.COORDINATOR_ADDRESS);
+        let e = new Environment(process.env[`${chainId}_ADMIN_SEED`]);
+        await e.load(coordinatorAddress);
 
         await m.migrate(e);
+
+        let children = await e.getChildren();
+        for (let child of children) {
+          e = new Environment(process.env[`${chainId}_ADMIN_SEED`]);
+          await e.load(child);
+
+          await m.migrate(e);
+        }
       } catch (e) {
         let error = JSON.stringify(e);
         if (error === "{}") {

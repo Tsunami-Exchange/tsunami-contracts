@@ -45,6 +45,7 @@ let k_maxOpenNotional = "k_maxOpenNotional"               # max open notional in
 let k_feeToStakersPercent = "k_feeToStakersPercent"       # percent of fee to stakers (rest goes to vault)
 let k_maxOracleDelay = "k_maxOracleDelay"                 # max delay in oracle data
 let k_fundingMode = "k_fundingMode"                       # funding mode. maybe symmetric or asymmetric
+let k_oracleMode = "k_oracleMode"                         # oracle mode. maybe plain or jit
 
 # Funding state
 let k_latestLongCumulativePremiumFraction = "k_latestLongPremiumFraction" # Latest Cumulative Premium Fraction. (Part of Premium paid this funding period). Premium = MarkPrice - IndexPrice
@@ -112,6 +113,8 @@ let PNL_OPTION_SPOT   = 1
 let PNL_OPTION_ORACLE = 2
 let FUNDING_ASYMMETRIC = 1
 let FUNDING_SYMMETRIC  = 2
+let ORACLE_PLAIN       = 1
+let ORACLE_JIT         = 2
 
 ##### Helper functions #####
 
@@ -170,6 +173,7 @@ func lastSequence() = intOr(k_sequence, 0)
 func feeToStakersPercent() = int(k_feeToStakersPercent)
 func maxOracleDelay() = int(k_maxOracleDelay)
 func fundingMode() = intOr(k_fundingMode, FUNDING_ASYMMETRIC)
+func oracleMode() = intOr(k_oracleMode, ORACLE_PLAIN)
 
 func lastTimestamp() = lastBlock.timestamp
 
@@ -226,14 +230,15 @@ func getDirection(_positionSize: Int) = {
 # Returns info on positions's fee closing fee, including 
 # fee tier on increase position and applied NFT artifact
 #
-func getPositionFee(_trader: String) = {
-  let positionFeeOpt = this.getInteger(k_positionFee.toCompositeKey(_trader))
+func getPositionFee(_trader: String, _direction: Int) = {
+  let positionKey = _trader + "_" + _direction.toString()
+  let positionFeeOpt = this.getInteger(k_positionFee.toCompositeKey(positionKey))
   match (positionFeeOpt) {
     case positionFee: Int => positionFee
     case _ => fee()
   }
 }
-
+  
 # Checks that a trader have an open position
 #
 func requireOpenPosition(_trader: String, _direction: Int) = {
@@ -503,7 +508,7 @@ func getOraclePriceValue(oracle: Address, priceKey: String, blockKey: String) = 
   # If block key is set, than check that return value was set no more than maxOracleDelay blocks ago
   #
   if (blockKey != "") then {
-    let currentBlock = lastBlock.height
+    let currentBlock = height
     let lastOracleBlock = oracle.getInteger(blockKey).valueOrErrorMessage("Can not get oracle block. Oracle: " + oracle.toString() + " key: " + blockKey)
     if (currentBlock - lastOracleBlock > maxOracleDelay()) then {
       throw("Oracle stale data. Last oracle block: " + lastOracleBlock.toString() + " current block: " + currentBlock.toString())
@@ -1162,7 +1167,8 @@ func updateSettings(
   _feeToStakersPercent: Int,
   _maxOracleDelay: Int,
   _rolloverFee: Int,
-  _fundingMode: Int
+  _fundingMode: Int,
+  _oracleMode: Int
 ) = {
   [
     IntegerEntry(k_initMarginRatio, _initMarginRatio),
@@ -1176,9 +1182,10 @@ func updateSettings(
     IntegerEntry(k_maxPriceSpread, _maxPriceSpread),
     IntegerEntry(k_maxOpenNotional, _maxOpenNotional),
     IntegerEntry(k_feeToStakersPercent, _feeToStakersPercent),
-    IntegerEntry(k_maxOracleDelay, _feeToStakersPercent),
+    IntegerEntry(k_maxOracleDelay, _maxOracleDelay),
     IntegerEntry(k_rolloverFee, _rolloverFee),
-    IntegerEntry(k_fundingMode, _fundingMode)
+    IntegerEntry(k_fundingMode, _fundingMode),
+    IntegerEntry(k_oracleMode, _oracleMode)
   ]
 }
 
@@ -1541,7 +1548,8 @@ func changeSettings(
   _feeToStakersPercent: Int,
   _maxOracleDelay: Int,
   _rolloverFee: Int,
-  _fundingMode: Int
+  _fundingMode: Int,
+  _oracleMode: Int
 ) = {
   if (
     _fundingPeriod <= 0
@@ -1558,6 +1566,7 @@ func changeSettings(
     || _maxOracleDelay <= 0
     || _rolloverFee <= 0
     || (_fundingMode != FUNDING_SYMMETRIC && _fundingMode != FUNDING_ASYMMETRIC)
+    || (_oracleMode != ORACLE_PLAIN && _oracleMode != ORACLE_JIT)
     || !initialized()
     || i.caller != adminAddress()
   ) then {
@@ -1577,7 +1586,8 @@ func changeSettings(
       _feeToStakersPercent,
       _maxOracleDelay,
       _rolloverFee,
-      _fundingMode
+      _fundingMode,
+      _oracleMode
     )
   }
 }
@@ -1602,7 +1612,8 @@ func initialize(
   _feeToStakersPercent: Int,
   _maxOracleDelay: Int,
   _rolloverFee: Int,
-  _fundingMode: Int
+  _fundingMode: Int,
+  _oracleMode: Int
 ) = {
   if (
     _qtAstR <= 0
@@ -1618,9 +1629,10 @@ func initialize(
     || _maxPriceSpread <= 0
     || _maxOpenNotional <= 0
     || _feeToStakersPercent <= 0 || _feeToStakersPercent > DECIMAL_UNIT
-    || _maxOracleDelay <= 0
+    || _maxOracleDelay < 0
     || _rolloverFee <= 0
     || (_fundingMode != FUNDING_SYMMETRIC && _fundingMode != FUNDING_ASYMMETRIC)
+    || (_oracleMode != ORACLE_PLAIN && _oracleMode != ORACLE_JIT)
     || initialized()
     || i.caller != this
   ) then {
@@ -1642,7 +1654,8 @@ func initialize(
       _feeToStakersPercent,
       _maxOracleDelay,
       _rolloverFee,
-      _fundingMode
+      _fundingMode,
+      _oracleMode
     )
     ++
     updateFunding(
@@ -1679,8 +1692,10 @@ func increasePosition(
   _direction: Int,
   _leverage: Int,
   _minBaseAssetAmount: Int,
-  _refLink: String
+  _refLink: String,
+  _priceUpdate: String
 ) = {
+  strict updateOracle = invoke(this, "updateOracle", [_priceUpdate], [])
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
   strict ensureCalledOnce = invoke(this, "ensureCalledOnce", [], [])
 
@@ -1886,7 +1901,8 @@ func increasePosition(
 # @payment required Added margin (in quote asset) 
 # @notice fully realizes rollover fee, funding stays unrealized
 @Callable(i)
-func addMargin(_direction: Int) = {
+func addMargin(_direction: Int, _priceUpdate: String) = {
+  strict updateOracle = invoke(this, "updateOracle", [_priceUpdate], [])
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
   strict ensureCalledOnce = invoke(this, "ensureCalledOnce", [], [])
 
@@ -1966,8 +1982,10 @@ func addMargin(_direction: Int) = {
 @Callable(i)
 func removeMargin(
   _amount: Int,
-  _direction: Int
+  _direction: Int,
+  _priceUpdate: String
 ) = {
+  strict updateOracle = invoke(this, "updateOracle", [_priceUpdate], [])
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
   strict ensureCalledOnce = invoke(this, "ensureCalledOnce", [], [])
 
@@ -2051,13 +2069,20 @@ func removeMargin(
 # @param _addToMargin if true, do not withdraw funds from position, instead add them to margin (reduce position size, keep margin).
 # @notice will not close position with bad debt (they can ony be liquidated)
 @Callable(i)
-func closePosition(_size: Int, _direction: Int, _minQuoteAssetAmount: Int, _addToMargin: Boolean) = {
+func closePosition(
+  _size: Int,
+  _direction: Int,
+  _minQuoteAssetAmount: Int,
+  _addToMargin: Boolean,
+  _priceUpdate: String
+) = {
+  strict updateOracle = invoke(this, "updateOracle", [_priceUpdate], [])
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
   strict ensureCalledOnce = invoke(this, "ensureCalledOnce", [], [])
 
   let _trader = getActualCaller(i)
   let _traderAddress = addressFromString(_trader).valueOrErrorMessage("Invalid caller")
-  let positionFee = getPositionFee(_trader)
+  let positionFee = getPositionFee(_trader, _direction)
   if (
     !requireOpenPosition(_trader, _direction)
     || !initialized()
@@ -2192,7 +2217,8 @@ func closePosition(_size: Int, _direction: Int, _minQuoteAssetAmount: Int, _addT
 #
 # @param _trader The address of the trader to be liquidated.
 @Callable(i)
-func liquidate(_trader: String, _direction: Int) = {
+func liquidate(_trader: String, _direction: Int, _priceUpdate: String) = {
+  strict updateOracle = invoke(this, "updateOracle", [_priceUpdate], [])
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
   # If market (future) price and index price diverge a lot, use index price to compute
   # liquidation margin. That provides additional safety layer for traders
@@ -2331,7 +2357,8 @@ func liquidate(_trader: String, _direction: Int) = {
 
 # Function to pay (exchange) funding. This method can be called by anyone, but usually is called by an exchange's keeper bot.
 @Callable(i)
-func payFunding() = {
+func payFunding(_priceUpdate: String) = {
+  strict updateOracle = invoke(this, "updateOracle", [_priceUpdate], [])
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
   
   let fundingBlockTimestamp = nextFundingBlockTimestamp()
@@ -2366,6 +2393,32 @@ func payFunding() = {
     )
 
     
+  }
+}
+
+@Callable(i)
+func updateOracle(_priceUpdate: String) = {
+  if (oracleMode() == ORACLE_PLAIN) then {
+    []
+  } else {
+    let priceUpdates = _priceUpdate.split_4C("::")
+    let baseOracle = getOracleData(k_baseOracle).valueOrErrorMessage("No base asset oracle data")
+    let baseOracleAddress = baseOracle._1
+
+    strict doUpdateBaseOracle = invoke(baseOracleAddress, "updateData", [priceUpdates[0]], [])
+
+    let quoteOracle = getOracleData(k_quoteOracle)
+    strict doUpdateQuoteOracle = if (quoteOracle.isDefined()) then {
+      let quoteOracleV = quoteOracle.value()
+      let quoteOracleAddress = quoteOracleV._1
+
+      strict doUpdateQuoteOracle = invoke(quoteOracleAddress, "updateData", [priceUpdates[1]], [])
+      []
+    } else {
+      []
+    }
+
+    []
   }
 }
 
@@ -2434,17 +2487,16 @@ func ensureCalledOnce() = {
 @Callable(i)
 func migratePosition(_trader: String) = {
   let positionSizeOpt = this.getInteger(k_positionSize.toCompositeKey(_trader))
-  if (positionSizeOpt.isDefined()) then {
+  if (positionSizeOpt.isDefined() && addressFromString(_trader).isDefined()) then {
     let pSize = this.getIntegerValue(k_positionSize.toCompositeKey(_trader))
     let pMargin = this.getIntegerValue(k_positionMargin.toCompositeKey(_trader))
     let pNotional = this.getIntegerValue(k_positionOpenNotional.toCompositeKey(_trader))
     let pFraction = this.getIntegerValue(k_positionLastUpdatedCumulativePremiumFraction.toCompositeKey(_trader))
-    let pTimestamp = this.getIntegerValue(k_positionLastUpdatedTimestamp.toCompositeKey(_trader))
-    let pFee = this.getIntegerValue(k_positionFee.toCompositeKey(_trader))
+    let pTimestamp = this.getInteger(k_positionLastUpdatedTimestamp.toCompositeKey(_trader)).valueOrElse(lastBlock.timestamp)
+    let pFee = this.getInteger(k_positionFee.toCompositeKey(_trader)).valueOrElse(fee())
     let pSequence = this.getIntegerValue(k_positionSequence.toCompositeKey(_trader))
     let pDirection = getDirection(pSize)
     let positionKey = _trader + "_" + pDirection.toString()
-    
     [
       DeleteEntry(k_positionSize.toCompositeKey(_trader)),
       DeleteEntry(k_positionMargin.toCompositeKey(_trader)),
@@ -2478,7 +2530,12 @@ func migratePosition(_trader: String) = {
 #
 # @param _trader Address of trader
 @Callable(i)
-func view_calcRemainMarginWithFundingPayment(_trader: String, _direction: Int) = {
+func view_calcRemainMarginWithFundingPayment(
+  _trader: String,
+  _direction: Int,
+  _priceUpdate: String
+) = {
+  strict updateOracle = invoke(this, "updateOracle", [_priceUpdate], [])
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
   let (
     positionSize,
@@ -2533,7 +2590,8 @@ func view_getTerminalAmmPrice() = {
 # 3 - spot price used for funding computation in 6 decimals
 # 4 - index price used for funding computation in 6 decimals
 @Callable(i)
-func view_getFunding() = {
+func view_getFunding(_priceUpdate: String) = {
+  strict updateOracle = invoke(this, "updateOracle", [_priceUpdate], [])
   strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
   
   let underlyingPrice = getOraclePrice()

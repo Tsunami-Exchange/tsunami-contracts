@@ -24,7 +24,7 @@ const migrate = async (e) => {
   for (let amm of e.amms) {
     await amm.upgrade();
     if (!x.includes(amm.address)) {
-      await amm.migrateLiquidity();
+      //await amm.migrateLiquidity();
     }
   }
 };

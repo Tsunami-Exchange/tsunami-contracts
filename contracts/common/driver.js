@@ -10,7 +10,13 @@ const deploy = async (filename, fee, seed, name, injectTimer, timerAddress) => {
     );
     console.log(`Injected timer to ${name}`);
   }
-  const script = compile(code);
+  let script = "";
+  try {
+    script = compile(code);
+  } catch (e) {
+    console.log(code);
+    throw e;
+  }
   const oldScript = await scriptByAddress(address(seed));
   if (script === oldScript) {
     console.log(`${name} already deployed to ${address(seed)}`);

@@ -850,7 +850,7 @@ describe("Should be able to use a helper", async function () {
     await e.vault.as(lp).stake(100000);
   });
 
-  it("Can create order with helper", async function () {
+  it("Can create order with helper 1", async function () {
     let x = await e.orders
       .as(shorter)
       .increasePositionWithStopLoss(
@@ -872,7 +872,7 @@ describe("Should be able to use a helper", async function () {
     expect(cnt).to.be.equal(2);
   });
 
-  it("Can create order with helper", async function () {
+  it("Can create order with helper 2", async function () {
     await amm.as(shorter).closePosition(); // so both old orders should be cancelled on new opening
     let x = await e.orders
       .as(shorter)

@@ -161,8 +161,10 @@
     let refLink         = orderPartList[8 ]
     let positionId      = orderPartList[9].parseInt().valueOrErrorMessage("Invalid positionId")
     let limitPrice      = orderPartList[10].parseInt().valueOrErrorMessage("Invalid limitPrice")
+    let expiration      = if (orderPartList.size() > 11) then orderPartList[11].parseInt().valueOrErrorMessage("Invalid limitPrice") else 0
     
-    (amm, trader, amountIn, leverage, type, triggerPrice, paymentUsdn, side, refLink, positionId, limitPrice)
+    
+    (amm, trader, amountIn, leverage, type, triggerPrice, paymentUsdn, side, refLink, positionId, limitPrice, expiration)
   }
 
   func getMarketPrice(_amm: String) = {
@@ -229,12 +231,13 @@
     _side: Int, 
     _refLink: String,
     _positionId: Int,
-    _limitPrice: Int
+    _limitPrice: Int,
+    _expiration: Int
   ) = {
     let orderStr = makeString([
       _amm, _trader, _amountIn.toString(), _leverage.toString(), _type.toString(),
       _triggerPrice.toString(), _paymentUsdn.toString(), _side.toString(), _refLink, 
-      _positionId.toString(), _limitPrice.toString()
+      _positionId.toString(), _limitPrice.toString(), _expiration.toString()
     ], ",")
     
     [
@@ -349,10 +352,14 @@
         _x7, 
         _x8, 
         _positionId,
-        _x9
+        _x9,
+        _expiration
       ) = getOrder(orderIdInt)
 
-      if ((_type == STOP || _type == TAKE) && positionIds[0] != _positionId && positionIds[1] != _positionId) then {
+      let cancelTakeStopOfNoPosition = (_type == STOP || _type == TAKE) && positionIds[0] != _positionId && positionIds[1] != _positionId
+      let cancelLimitIfExpired = (_type == LIMIT) && lastBlock.timestamp >= _expiration
+
+      if (cancelTakeStopOfNoPosition || cancelLimitIfExpired) then {
         let change = markCancelOrder(orderIdInt)
         let newOrderList = addRemoveOrderIdList(_acc._1, orderIdInt, _amm, _trader, false)
 
@@ -432,7 +439,8 @@
     _stopTriggerPrice: Int,
     _stopLimitPrice: Int,
     _takeTriggerPrice: Int,
-    _takeLimitPrice: Int
+    _takeLimitPrice: Int,
+    _expiration: Int
   ) = {
     let _trader = i.caller.toString()
     strict cleanUp = invoke(this, "cleanUpStaleOrders", [_amm, _trader], [])
@@ -463,7 +471,8 @@
           _side, 
           _refLink,
           paymentAssetId,
-          paymentAmount
+          paymentAmount,
+          _expiration
         ],
         []
       )
@@ -540,7 +549,8 @@
     _stopTriggerPrice: Int,
     _stopLimitPrice: Int,
     _takeTriggerPrice: Int,
-    _takeLimitPrice: Int
+    _takeLimitPrice: Int,
+    _priceData: String
   ) = {
     let _trader = i.caller.toString()
     strict cleanUp = invoke(this, "cleanUpStaleOrders", [_amm, _trader], [])
@@ -559,7 +569,7 @@
         strict doClosePosition = invoke(
           addressFromStringValue(_amm), 
           "increasePosition",
-          [_direction, _leverage, _minBaseAssetAmount, _refLink],
+          [_direction, _leverage, _minBaseAssetAmount, _refLink, _priceData],
           i.payments
         ) 
         strict doResetContext = invoke(this, "resetContext", [], [])
@@ -582,6 +592,7 @@
               stopLossSide, 
               _refLink,
               "",
+              0,
               0
             ],
             []
@@ -606,6 +617,7 @@
               stopLossSide, 
               _refLink,
               "",
+              0,
               0
             ],
             []
@@ -680,7 +692,8 @@
     _side: Int,
     _refLink: String,
     _paymentAssetId: String,
-    _paymentAmount: Int
+    _paymentAmount: Int,
+    _expiration: Int
   ) = {
     if (
       !initialized()
@@ -692,6 +705,7 @@
       || !(_side == LONG || _side == SHORT)
       || !(_type == STOP || _type == TAKE || _type == LIMIT)
       || !(i.caller == this)
+      || _expiration < 0
     ) then {
       throw("Invalid internalCreateOrder parameters")
     } else {
@@ -745,7 +759,19 @@
           } else {
             let changeSet = 
               saveOrder(
-                orderId, _amm, _trader, _amountIn, _leverage, _type, _triggerPrice, usdnPayment, _side, _refLink, positionId, _limitPrice
+                orderId, 
+                _amm, 
+                _trader, 
+                _amountIn, 
+                _leverage, 
+                _type, 
+                _triggerPrice, 
+                usdnPayment, 
+                _side, 
+                _refLink, 
+                positionId, 
+                _limitPrice,
+                _expiration
               )
               ++
               addRemoveOrderId(orderId, _amm, _trader, true)
@@ -823,7 +849,7 @@
   # @param _orderId The ID of the order to be executed.
   # @notice can only cancel you own order.
   @Callable(i)
-  func executeOrder(_orderId: Int) = {
+  func executeOrder(_orderId: Int, _priceData: String) = {
     let (
       _amm, 
       _trader, 
@@ -870,7 +896,7 @@
           else marketPrice >= _triggerPrice
         
         if (isExecutable) then {
-          ("closePosition", [minv(_amountIn, abs(positionSize)), positionDirection, muld(_limitPrice, abs(positionSize)), false], [])
+          ("closePosition", [minv(_amountIn, abs(positionSize)), positionDirection, muld(_limitPrice, abs(positionSize)), false, _priceData], [])
         } else {
           throw("Can not execute STOP order: triggerPrice mismatch")
         }
@@ -891,7 +917,7 @@
           else marketPrice <= _triggerPrice
         
         if (isExecutable) then {
-          ("closePosition", [minv(_amountIn, abs(positionSize)), positionDirection, muld(_limitPrice, abs(positionSize)), false], [])
+          ("closePosition", [minv(_amountIn, abs(positionSize)), positionDirection, muld(_limitPrice, abs(positionSize)), false, _priceData], [])
         } else {
           throw("Can not execute TAKE order: triggerPrice mismatch")
         }
@@ -912,7 +938,8 @@
           _side, 
           _leverage, 
           if (_limitPrice == 0) then 0 else divd(amountInWithFee, _limitPrice), 
-          _refLink
+          _refLink,
+          _priceData
         ], [AttachedPayment(quoteAsset(), _amountUsdn)])
 
         } else {
@@ -969,6 +996,7 @@
               closeOrderSide, 
               "",
               "",
+              0,
               0
             ],
             []
@@ -1003,6 +1031,7 @@
               closeOrderSide, 
               "",
               "",
+              0,
               0
             ],
             []
@@ -1034,8 +1063,8 @@
   # 
   # @param _orderId The ID of the order to be checked for execution possibility.
   @Callable(i)
-  func view_canExecuteOrder(_orderId: Int) = {
-    strict s = invoke(this, "executeOrder", [_orderId], [])
+  func view_canExecuteOrder(_orderId: Int, _priceData: String) = {
+    strict s = invoke(this, "executeOrder", [_orderId, _priceData], [])
     throw("Success")
   }
 

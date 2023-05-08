@@ -4,13 +4,14 @@
   "description": "vAMM-base perpetual futures on Waves",
   "scripts": {
     "ride-test:vAMM2:basic": "cd contracts && surfboard test vAMM2-basic.ride-test.js",
+    "ride-test:vAMM2:basic:oracle": "cd contracts && surfboard test vAMM2-basic-oracle.ride-test.js",
     "ride-test:vAMM2:basic:multi": "cd contracts && surfboard test vAMM2-basic-multi-quote.ride-test.js",
     "ride-test:vAMM2:partial": "cd contracts && surfboard test vAMM2-partial.ride-test.js",
     "ride-test:vAMM2:largek": "cd contracts && surfboard test vAMM2-largek.ride-test.js",
     "ride-test:vAMM2:liquidation": "cd contracts && surfboard test vAMM2-liquidation.ride-test.js",
     "ride-test:vAMM2:impact": "cd contracts && surfboard test vAMM2-impact.ride-test.js",
     "ride-test:vAMM2:spread": "cd contracts && surfboard test vAMM2-spread.ride-test.js",
-    "ride-test:vAMM2:orders": "cd contracts && surfboard test vAMM2-orders.ride-test.js -v",
+    "ride-test:vAMM2:orders": "cd contracts && surfboard test vAMM2-orders.ride-test.js",
     "ride-test:vAMM2:referral": "cd contracts && surfboard test vAMM2-referral.ride-test.js",
     "ride-test:vAMM2:referral:multi": "cd contracts && surfboard test vAMM2-referral-multi-quote.ride-test.js",
     "ride-test:vAMM2:funding": "cd contracts && surfboard test vAMM2-funding.ride-test.js",
@@ -29,6 +30,8 @@
     "ride-test:housekeeper": "cd contracts && surfboard test housekeeper.ride-test.js",
     "ride-test:prizes": "cd contracts && surfboard test prizes.ride-test.js",
     "ride-test:vault": "cd contracts && surfboard test vault.ride-test.js",
+    "ride-test:oracle": "cd contracts && surfboard test oracle.ride-test.js",
+    "ride-test:oracle:multisig": "cd contracts && surfboard test oracle-multisig.ride-test.js",
     "ride-test:vault:staking": "cd contracts && surfboard test vault-staking.ride-test.js",
     "ride-test:vault:profit": "cd contracts && surfboard test vault-profit.ride-test.js",
     "ride-test:vAMM2": "npm-run-all ride-test:vAMM2:*",
@@ -49,15 +52,16 @@
     "allure-js-commons": "^2.0.0-beta.19",
     "allure-mocha": "^2.0.0-beta.19",
     "chai-as-promised": "^7.1.1",
+    "husky": "^8.0.0",
     "mocha": "^10.0.0",
     "mocha-multi-reporters": "^1.5.1",
     "node-fetch": "^2.6.7",
-    "npm-run-all": "^4.1.5",
-    "husky": "^8.0.0"
+    "npm-run-all": "^4.1.5"
   },
   "author": "mr. Hamster",
   "license": "MIT",
   "dependencies": {
+    "@waves/ride-js": "^2.2.5",
     "chai": "^4.3.6"
   }
 }

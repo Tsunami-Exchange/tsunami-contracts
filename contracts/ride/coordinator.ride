@@ -25,6 +25,7 @@ let k_referral_address = "k_referral_address"     # Referral contract address
 let k_manager_address = "k_manager_address"       # Fund manager address
 let k_nft_manager_address = "k_nft_manager_address" # Fund manager address
 let k_child = "k_child"                           # Child coordinators
+let k_oracle = "k_oracle"                         # Address for JIT Oracle
 
 ##### View functions #####
 func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
@@ -40,7 +41,7 @@ func isAdmin(i: Invocation) = if (i.caller == admin()) then unit else throw("Onl
 func setAdmin(
   _adminAddress: String
 ) = isNoAdminOrAdmin(i).valueOrElse({
-  let address = addressFromStringValue(_adminAddress)
+  strict address = addressFromStringValue(_adminAddress)
   [
     StringEntry(k_admin_address, address.toString())
   ]
@@ -50,7 +51,7 @@ func setAdmin(
 func setInsuranceFund(
   _insuranceFund: String
 ) = isAdmin(i).valueOrElse({
-  let address = getAddressIfValid(_insuranceFund)
+  strict address = getAddressIfValid(_insuranceFund)
   [
     StringEntry(k_insurance_address, address)
   ]
@@ -60,7 +61,7 @@ func setInsuranceFund(
 func setLiquidityMiner(
   _liquidityMiner: String
 ) = isAdmin(i).valueOrElse({
-  let address = getAddressIfValid(_liquidityMiner)
+  strict address = getAddressIfValid(_liquidityMiner)
   [
     StringEntry(k_miner_address, address)
   ]
@@ -70,7 +71,7 @@ func setLiquidityMiner(
 func setOrders(
   _orders: String
 ) = isAdmin(i).valueOrElse({
-  let address = getAddressIfValid(_orders)
+  strict address = getAddressIfValid(_orders)
   [
     StringEntry(k_orders_address, address)
   ]
@@ -80,7 +81,7 @@ func setOrders(
 func setReferral(
   _referral: String
 ) = isAdmin(i).valueOrElse({
-  let address = getAddressIfValid(_referral)
+  strict address = getAddressIfValid(_referral)
   [
     StringEntry(k_referral_address, address)
   ]
@@ -90,7 +91,7 @@ func setReferral(
 func setFarming(
   _farming: String
 ) = isAdmin(i).valueOrElse({
-  let address = getAddressIfValid(_farming)
+  strict address = getAddressIfValid(_farming)
   [
     StringEntry(k_farming_address, address)
   ]
@@ -100,7 +101,7 @@ func setFarming(
 func setManager(
   _manager: String
 ) = isAdmin(i).valueOrElse({
-  let address = getAddressIfValid(_manager)
+  strict address = getAddressIfValid(_manager)
   [
     StringEntry(k_manager_address, address)
   ]
@@ -110,7 +111,7 @@ func setManager(
 func setHousekeeper(
   _housekeeper: String
 ) = isAdmin(i).valueOrElse({
-  let address = getAddressIfValid(_housekeeper)
+  strict address = getAddressIfValid(_housekeeper)
   [
     StringEntry(k_housekeeper_address, address)
   ]
@@ -120,7 +121,7 @@ func setHousekeeper(
 func setPrizes(
   _prizes: String
 ) = isAdmin(i).valueOrElse({
-  let address = getAddressIfValid(_prizes)
+  strict address = getAddressIfValid(_prizes)
   [
     StringEntry(k_prizes_address, address)
   ]
@@ -130,7 +131,7 @@ func setPrizes(
 func setNftManager(
   _nftManager: String
 ) = isAdmin(i).valueOrElse({
-  let address = getAddressIfValid(_nftManager)
+  strict address = getAddressIfValid(_nftManager)
   [
     StringEntry(k_nft_manager_address, address)
   ]
@@ -140,7 +141,7 @@ func setNftManager(
 func setSwap(
   _swap: String
 ) = isAdmin(i).valueOrElse({
-  let address = getAddressIfValid(_swap)
+  strict address = getAddressIfValid(_swap)
   [
     StringEntry(k_swap_address, address)
   ]
@@ -168,7 +169,7 @@ func setRewardAsset(
 func setStakingAddress(
   _stakingAddress: String
 ) = isAdmin(i).valueOrElse({
-  let stakingAddress = getAddressIfValid(_stakingAddress)
+  strict stakingAddress = getAddressIfValid(_stakingAddress)
   [
     StringEntry(k_staking_address, _stakingAddress)
   ]
@@ -178,9 +179,19 @@ func setStakingAddress(
 func setVaultAddress(
   _vaultAddress: String
 ) = isAdmin(i).valueOrElse({
-  let exchangeAddress = getAddressIfValid(_vaultAddress)
+  strict exchangeAddress = getAddressIfValid(_vaultAddress)
   [
     StringEntry(k_vault_address, _vaultAddress)
+  ]
+})
+
+@Callable(i)
+func setOracleAddress(
+  _oracleAddress: String
+) = isAdmin(i).valueOrElse({
+  strict oracleAddress = getAddressIfValid(_oracleAddress)
+  [
+    StringEntry(k_orders_address, _oracleAddress)
   ]
 })
 
