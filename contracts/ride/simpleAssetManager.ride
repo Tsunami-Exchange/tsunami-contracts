@@ -35,6 +35,10 @@ func updateFunds(_assetId: String, _value: Int) = {
   ]
 }
 
+func strAssetId(_asset: ByteVector | Unit) = {
+  if (_asset.isDefined()) then toBase58String(_asset.value()) else "WAVES"
+}
+
 @Callable(i)
 func initialize(
   _coordinator: String
@@ -64,7 +68,7 @@ func withdraw(_assetId: String, _amount: Int) = {
     updateFunds(_assetId, currentAssetBalance)
     ++
     [
-      ScriptTransfer(i.caller, _amount, fromBase58String(_assetId))
+      ScriptTransfer(i.caller, _amount, if (_assetId == "WAVES") then unit else fromBase58String(_assetId))
     ]
   }
 }
@@ -72,7 +76,7 @@ func withdraw(_assetId: String, _amount: Int) = {
 @Callable(i)
 func deposit() = {
   let _amount = i.payments[0].amount
-  let _assetId = toBase58String(i.payments[0].assetId.valueOrErrorMessage("No assetId"))
+  let _assetId = strAssetId(i.payments[0].assetId)
   if (
     !initialized()
     || (!isWhitelist(i.caller.toString()) && i.caller != adminAddress())
@@ -94,7 +98,7 @@ func claimProfit(_assetId: String) = {
     throw("Invalid claimProfit params (simple asset manager)")
   } else {
     ([
-      ScriptTransfer(i.caller, 0, fromBase58String(_assetId))
+      ScriptTransfer(i.caller, 0, if (_assetId == "WAVES") then unit else fromBase58String(_assetId))
     ], 0)
   }
 }

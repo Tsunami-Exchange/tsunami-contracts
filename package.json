@@ -22,6 +22,7 @@
     "ride-test:vAMM2:balance": "cd contracts && surfboard test vAMM2-balance.ride-test.js",
     "_ride-test:vAMM2:attack": "cd contracts && surfboard test vAMM2-attack.ride-test.js",
     "_ride-test:vAMM2:attack2": "cd contracts && surfboard test vAMM2-attack2.ride-test.js",
+    "ride-test:spot:basic": "cd contracts && surfboard test spot-basic.ride-test.js",
     "ride-test:miner:basic": "cd contracts && surfboard test miner-basic.ride-test.js",
     "ride-test:miner:multiamm": "cd contracts && surfboard test miner-multiamm.ride-test.js",
     "ride-test:staking": "cd contracts && surfboard test staking.ride-test.js",

@@ -26,6 +26,7 @@ let k_manager_address = "k_manager_address"       # Fund manager address
 let k_nft_manager_address = "k_nft_manager_address" # Fund manager address
 let k_child = "k_child"                           # Child coordinators
 let k_oracle = "k_oracle"                         # Address for JIT Oracle
+let k_spot_address = "k_spot_address"             # Address for Spot trading
 
 ##### View functions #####
 func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
@@ -172,6 +173,16 @@ func setStakingAddress(
   strict stakingAddress = getAddressIfValid(_stakingAddress)
   [
     StringEntry(k_staking_address, _stakingAddress)
+  ]
+})
+
+@Callable(i)
+func setSpotAddress(
+  _spotAddress: String
+) = isAdmin(i).valueOrElse({
+  strict stakingAddress = getAddressIfValid(_spotAddress)
+  [
+    StringEntry(k_spot_address, _spotAddress)
   ]
 })
 

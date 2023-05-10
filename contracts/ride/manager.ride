@@ -16,6 +16,10 @@ let k_vault_address = "k_vault_address"           # Address of vault contract
 let k_amm = "k_amm"                               # Marks valid AMM addresses (for insurance)
 let k_admin_address = "k_admin_address"           # Address of admin account           
 let k_staking_address = "k_staking_address"       # Address that stakes quote asset
+let k_spot_address = "k_spot_address"             # Address for Spot trading
+
+# Spot
+let k_vault = "k_vault"
 
 # Global initialization state
 let k_initialized = "k_initialized"               # If Insurance was properly initialized
@@ -31,22 +35,34 @@ func vaultAddress() = addressFromString(coordinator().getString(k_vault_address)
 func ordersAddress() = addressFromString(coordinator().getString(k_orders_address).valueOrErrorMessage("Orders address not set")).valueOrErrorMessage("Orders address invalid")
 func adminAddress() = addressFromString(coordinator().getString(k_admin_address).valueOrErrorMessage("Admin address not set"))
 func stakingAddress() = addressFromString(coordinator().getString(k_staking_address).valueOrErrorMessage("Staking address not set")).valueOrErrorMessage("Staking address invalid")
+func spotAddress() = addressFromString(coordinator().getString(k_spot_address).valueOrErrorMessage("Spot address not set")).valueOrErrorMessage("Spot address invalid")
 
 func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
 func paused() = this.getBoolean(k_paused).valueOrElse(false)
 
 func assetManagerAddress(_assetId: String) = addressFromString(this.getString(toCompositeKey(k_asset_manager_address, _assetId)).valueOrErrorMessage("No asset manager for token " + _assetId)).valueOrErrorMessage("Invalid asset manager address for token " + _assetId)
 
+func isSpotVault(_address: String) = {
+  let spot = spotAddress()
+
+  spot.getBoolean(k_vault.toCompositeKey(_address)).valueOrElse(false)
+}
+
 func isWhitelist(_address: String) = {
   _address == stakingAddress().toString()
   || _address == vaultAddress().toString()
   || _address == ordersAddress().toString()
+  || isSpotVault(_address)
 }
 
 func updateFunds(_assetId: String, _value: Int) = {
   [
     IntegerEntry(toCompositeKey(k_funds, _assetId), _value)
   ]
+}
+
+func strAssetId(_asset: ByteVector | Unit) = {
+  if (_asset.isDefined()) then toBase58String(_asset.value()) else "WAVES"
 }
 
 @Callable(i)
@@ -132,7 +148,7 @@ func withdraw(_assetId: String, _amount: Int) = {
     updateFunds(_assetId, currentAssetBalance)
     ++
     [
-      ScriptTransfer(i.caller, _amount, fromBase58String(_assetId))
+      ScriptTransfer(i.caller, _amount, if (_assetId == "WAVES") then unit else fromBase58String(_assetId))
     ]
   }
 }
@@ -140,7 +156,7 @@ func withdraw(_assetId: String, _amount: Int) = {
 @Callable(i)
 func deposit() = {
   let _amount = i.payments[0].amount
-  let _assetId = toBase58String(i.payments[0].assetId.valueOrErrorMessage("No assetId"))
+  let _assetId = strAssetId(i.payments[0].assetId)
   if (
     !initialized()
     || (!isWhitelist(i.caller.toString()) && i.caller != adminAddress())
@@ -184,7 +200,7 @@ func claimProfit(_assetId: String) = {
       }
 
     ([
-      ScriptTransfer(i.caller, profit, fromBase58String(_assetId))
+      ScriptTransfer(i.caller, profit, if (_assetId == "WAVES") then unit else fromBase58String(_assetId))
     ], profit)
   }
 }
@@ -212,41 +228,6 @@ func view_claimProfit(_assetId: String) = {
     throw(balanceOf(_assetId).toString() + "," + (balanceOf(_assetId) + profit).toString() + "," + profit.toString())
   }
 }
-
-@Callable(i)
-func migrate(_assetId: String) = {
-  let _amount = balanceOf(_assetId)
-  if (
-    !initialized()
-    || i.caller != adminAddress()
-    || !paused()
-  ) then {
-    throw("Invalid migrate params (manager)")
-  } else {
-    strict unstake = invoke(
-      this.getString("k_vires_address")
-        .valueOrErrorMessage("No legacy vires address")
-        .addressFromString()
-        .valueOrErrorMessage("Invalid legacy vires address"),
-      "withdraw",
-      [_assetId, _amount],
-      []
-    )
-
-    strict stake = invoke(
-      assetManagerAddress(_assetId),
-      "deposit",
-      [],
-      [AttachedPayment(fromBase58String(_assetId), _amount)]
-    )
-
-    [
-      DeleteEntry("k_vires_address"),
-      DeleteEntry("k_vires_vault")
-    ]
-  }
-}
-
    
 @Verifier(tx)
 func verify() = {

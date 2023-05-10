@@ -6,11 +6,16 @@
   let k_totalSupply = "k_totalSupply" # Total supply of v-Shares (virtual LP token)
   let k_rewardBalance = "k_rewardBalance" # Total supply of rewards tokens
   
-  let k_lockedBalance = "k_lockedBalance" # Amount of USDN reserved (locked from LP)
-  let k_freeBalance = "k_freeBalance" # Amount of USDN free for LP to withdraw
+  let k_lockedBalance = "k_lockedBalance" # Amount of Token reserved (locked from LP)
+  let k_freeBalance = "k_freeBalance" # Amount of Token free for LP to withdraw
+  let k_excessBalance = "k_excessBalance" # Amount of Token borrowed/repaid to vault (can be positive or negative)
+
+  # Vault asset
+  let k_vaultAsset = "k_vaultAsset"
+  let k_vaultAssetDecimals = "k_vaultAssetDecimals"
 
   # Global staking
-  let k_rate = "k_rate" # Rate of exchange from USDN to v-Shares
+  let k_rate = "k_rate" # Rate of exchange from Asset to v-Shares
   let k_lastUpdateTime = "k_lastUpdateTime"
   let k_rewardPerTokenStored = "k_rewardPerTokenStored"
   let k_rewardRate = "k_rewardRate"
@@ -35,6 +40,7 @@
   let k_quote_asset = "k_quote_asset"
   let k_admin_address = "k_admin_address"
   let k_manager_address = "k_manager_address"
+  let k_spot_address = "k_spot_address"
   let k_collateral_address = "k_collateral_address"
 
   func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
@@ -43,8 +49,14 @@
   func coordinator() = addressFromString(this.getString(k_coordinatorAddress).valueOrErrorMessage("Coordinator not set")).valueOrErrorMessage("Coordinator address invalid")
   func adminAddress() = addressFromString(coordinator().getString(k_admin_address).valueOrErrorMessage("Admin address not set"))
   func isWhitelist(_address: String) = getBoolean(coordinator(), k_amm.toCompositeKey(_address)).valueOrElse(false)
+  func isSpot(_address: String) = getString(coordinator(), k_spot_address).valueOrErrorMessage("Spot address not set") == _address
   func governanceAsset() = fromBase58String(coordinator().getString(k_governance_asset).valueOrErrorMessage("Governance asset not set"))
-  func quoteAsset() = fromBase58String(coordinator().getString(k_quote_asset).valueOrErrorMessage("Quote asset not set"))
+  func vaultAssetStr() = this.getString(k_vaultAsset).valueOrErrorMessage("Vault asset not set")
+  func vaultAsset() = {
+    let _assetIdStr = vaultAssetStr()
+    if (_assetIdStr == "WAVES") then unit else fromBase58String(_assetIdStr)
+  }
+  func vaultAssetDecimals() = this.getInteger(k_vaultAssetDecimals).valueOrErrorMessage("Vault asset decimals not set")
   func managerAddress() = addressFromString(coordinator().getString(k_manager_address).valueOrErrorMessage("Manager address not set")).valueOrErrorMessage("Manager address invalid")
 
   ##### Core constants #####
@@ -55,8 +67,19 @@
   let NO_STAKER = 0
 
   ##### Helper functions #####
-  func usdnFromDecimals(_amount: Int)  = _amount / 100
-  func usdnToDecimals(_amount: Int)    = _amount * 100
+  func assetFromDecimals(_amount: Int)  = {
+    let assetDecimals = vaultAssetDecimals()
+    if (assetDecimals == 6) then _amount / 100
+    else if (assetDecimals == 8) then _amount
+    else throw("Invalid asset decimals")
+  }
+
+  func assetToDecimals(_amount: Int)   = {
+    let assetDecimals = vaultAssetDecimals()
+    if (assetDecimals == 6) then _amount * 100
+    else if (assetDecimals == 8) then _amount
+    else throw("Invalid asset decimals")
+  }
 
   func divd(_x: Int, _y: Int) = fraction(_x, DECIMAL_UNIT, _y, HALFEVEN)
   func muld(_x: Int, _y: Int) = fraction(_x, _y, DECIMAL_UNIT, HALFEVEN)
@@ -83,6 +106,7 @@
   func lastWithdrawnDate(_staker: String) = int0(k_last_withdraw_date.toCompositeKey(_staker))
   func freeBalance() = int0(k_freeBalance)
   func lockedBalance() = int0(k_lockedBalance)
+  func excessBalance() = int0(k_excessBalance)
   func rewardPerTokenStored() = int0(k_rewardPerTokenStored)
   func lastUpdateTime() = int0(k_lastUpdateTime)
   func rewardRate() = int0(k_rewardRate)
@@ -205,6 +229,15 @@
     }
   }
 
+  func updateExcessBalance(_change: Int) = {
+    let balance = excessBalance()
+    # TODO: Check max imbalance
+    [
+      IntegerEntry(k_excessBalance, balance + _change)
+    ]
+
+  }
+
   func updateTotalSupply(_change: Int) = {
     [
       IntegerEntry(k_totalSupply, totalSupply() + _change)
@@ -265,13 +298,25 @@
 
   @Callable(i)
   func initialize(
-    _coordinator: String
+    _coordinator: String,
+    _vaultAsset: String
   ) = {
     if (initialized() || i.caller != this) then {
       throw("Unable to initialize")
     } else {
+      let assetDecimals = if (_vaultAsset == "WAVES") then {
+        8
+      } else {
+        let info = assetInfo(fromBase58String(_vaultAsset)).valueOrErrorMessage("Invalid token id: " + _vaultAsset)
+        
+        info.decimals
+      }
+
+      
       [
         StringEntry(k_coordinatorAddress, addressFromString(_coordinator).valueOrErrorMessage("Invalid coordinator address").toString()),
+        StringEntry(k_vaultAsset, _vaultAsset),
+        IntegerEntry(k_vaultAssetDecimals, assetDecimals),
         BooleanEntry(k_initialized, true)
       ]
     }
@@ -280,9 +325,9 @@
   @Callable(i)
   func stake() = {
     let _staker = i.caller.toString()
-    let _amount = i.payments[0].amount.usdnToDecimals()
+    let _amount = i.payments[0].amount.assetToDecimals()
     if (
-      i.payments[0].assetId != quoteAsset() 
+      i.payments[0].assetId != vaultAsset() 
       || i.payments.size() != 1
       || !initialized()
     ) then {
@@ -311,7 +356,7 @@
         managerAddress(),
         "deposit",
         [],
-        [AttachedPayment(quoteAsset(), _amount.usdnFromDecimals())]
+        [AttachedPayment(vaultAsset(), _amount.assetFromDecimals())]
       )
 
       updateUserRewards(_staker, stakerEarned, stakerRewardPerTokenPaid)
@@ -335,7 +380,7 @@
   @Callable(i)
   func unStake(_amount: Int) = {
     let _staker = i.caller.toString()
-    let amountOfQuoteAsset = _amount.usdnToDecimals()
+    let amountOfQuoteAsset = _amount.assetToDecimals()
     if ( 
       i.payments != []
       || amountOfQuoteAsset <= 0
@@ -365,7 +410,7 @@
           strict unstake = invoke(
             managerAddress(),
             "withdraw",
-            [quoteAsset().toBase58String(),  amountOfQuoteAsset.usdnFromDecimals()],
+            [vaultAssetStr(),  amountOfQuoteAsset.assetFromDecimals()],
             []
           )
 
@@ -384,7 +429,7 @@
           setUserWithdrawParams(_staker, newLastWithdrawnDate, newWithdrawnInPeriod)
           ++
           [
-            ScriptTransfer(i.caller, amountOfQuoteAsset.usdnFromDecimals(), quoteAsset())
+            ScriptTransfer(i.caller, amountOfQuoteAsset.assetFromDecimals(), vaultAsset())
           ]
         }
       }
@@ -419,13 +464,14 @@
 
   @Callable(i)
   func addFree() = {
-    let _amount = i.payments[0].amount.usdnToDecimals()
+    let _amount = i.payments[0].amount.assetToDecimals()
     if (
-      i.payments[0].assetId != quoteAsset()
+      i.payments[0].assetId != vaultAsset()
       || i.payments.size() != 1
       || !initialized()
       || !(
-        isWhitelist(i.caller.toString()) 
+        isWhitelist(i.caller.toString())
+        || isSpot(i.caller.toString())
         || i.caller == adminAddress()
       )
     ) then {
@@ -437,7 +483,7 @@
         managerAddress(),
         "deposit",
         [],
-        [AttachedPayment(quoteAsset(), _amount.usdnFromDecimals())]
+        [AttachedPayment(vaultAsset(), _amount.assetFromDecimals())]
       )
 
       updateFreeBalance(_amount)
@@ -448,9 +494,9 @@
 
   @Callable(i)
   func addLocked() = {
-    let _amount = i.payments[0].amount.usdnToDecimals()
+    let _amount = i.payments[0].amount.assetToDecimals()
     if (
-      i.payments[0].assetId != quoteAsset()
+      i.payments[0].assetId != vaultAsset()
       || i.payments.size() != 1
       || !initialized()
       || !(
@@ -464,7 +510,7 @@
         managerAddress(),
         "deposit",
         [],
-        [AttachedPayment(quoteAsset(), _amount.usdnFromDecimals())]
+        [AttachedPayment(vaultAsset(), _amount.assetFromDecimals())]
       )
       updateLockedBalance(_amount)
     }
@@ -480,7 +526,7 @@
     ) then {
       throw("Invalid exchangeFreeAndLocked params")
     } else {
-      let amountOfQuoteAsset = _amount.usdnToDecimals()
+      let amountOfQuoteAsset = _amount.assetToDecimals()
 
       let newRate = computeNewRate(-amountOfQuoteAsset)
       
@@ -503,20 +549,91 @@
     ) then {
       throw("Invalid withdrawLocked params")
     } else {
-      let amountOfQuoteAsset = _amount.usdnToDecimals()
+      let amountOfQuoteAsset = _amount.assetToDecimals()
 
       strict unstake = invoke(
         managerAddress(),
         "withdraw",
-        [quoteAsset().toBase58String(),  amountOfQuoteAsset.usdnFromDecimals()],
+        [vaultAssetStr(),  amountOfQuoteAsset.assetFromDecimals()],
         []
       )
 
       updateLockedBalance(-amountOfQuoteAsset)
       ++
       [
-        ScriptTransfer(i.caller, amountOfQuoteAsset.usdnFromDecimals(), quoteAsset())
+        ScriptTransfer(i.caller, amountOfQuoteAsset.assetFromDecimals(), vaultAsset())
       ]
+    }
+  }
+
+  @Callable(i)
+  func getFeeRate(_change: Int) = {
+    if (
+      !initialized()
+    ) then {
+      throw("Invalid getFeeRate params")
+    } else {
+      let amountOfQuoteAsset = _change.assetToDecimals()
+      let oldExcessBalance = excessBalance()
+      let newExcessBalance = oldExcessBalance + _change
+      
+      if (abs(newExcessBalance) < abs(oldExcessBalance)) then {
+        ([], DECIMAL_UNIT * 70 / 100 / 100) # TODO: Better compute fee rate
+      } else {
+        ([], DECIMAL_UNIT * 130 / 100 / 100)
+      }
+    }
+  }
+
+  @Callable(i)
+  func borrow(_amount: Int) = {
+    if (
+      !initialized()
+      || _amount <= 0
+      || !(
+        isSpot(i.caller.toString())
+      )
+    ) then {
+      throw("Invalid borrow params")
+    } else {
+      let amountOfQuoteAsset = _amount.assetToDecimals()
+
+      strict unstake = invoke(
+        managerAddress(),
+        "withdraw",
+        [vaultAssetStr(),  amountOfQuoteAsset.assetFromDecimals()],
+        []
+      )
+
+      updateExcessBalance(-amountOfQuoteAsset)
+      ++
+      [
+        ScriptTransfer(i.caller, amountOfQuoteAsset.assetFromDecimals(), vaultAsset())
+      ]
+    }
+  }
+
+  @Callable(i)
+  func repay() = {
+    let _amount = i.payments[0].amount.assetToDecimals()
+    if (
+      i.payments[0].assetId != vaultAsset()
+      || i.payments.size() != 1
+      || !initialized()
+      || !(
+        isSpot(i.caller.toString()) 
+        || i.caller == adminAddress()
+      )
+    ) then {
+      throw("Invalid repay params")
+    } else {
+      strict unstake = invoke(
+        managerAddress(),
+        "deposit",
+        [],
+        [AttachedPayment(vaultAsset(), _amount.assetFromDecimals())]
+      )
+      updateExcessBalance(_amount)
     }
   }
 
@@ -563,12 +680,12 @@
     strict profitResp = invoke(
       managerAddress(),
       "claimProfit",
-      [quoteAsset().toBase58String()],
+      [vaultAssetStr()],
       []
     )
 
     let profit = match profitResp {
-      case p: Int => p.usdnToDecimals()
+      case p: Int => p.assetToDecimals()
       case _ => throw("Invalid claimProfit response")
     }
 
@@ -579,7 +696,7 @@
         managerAddress(),
         "deposit",
         [],
-        [AttachedPayment(quoteAsset(), profit.usdnFromDecimals())]
+        [AttachedPayment(vaultAsset(), profit.assetFromDecimals())]
       )
 
       updateFreeBalance(profit)
@@ -604,15 +721,15 @@
   @Callable(i)
   func view_stakingReward(_staker: String) = {
     let stakerEarned = updateReward(_staker, 0)._3
-    throw(stakerEarned.usdnFromDecimals().toString())
+    throw(stakerEarned.assetFromDecimals().toString())
   }
 
   @Callable(i)
   func view_withdrawLimit(_staker: String) = {
     let withdrawLimitLeft = getWithdrawLimitLeft(_staker)._2
-    let limitInUsdn = withdrawLimitLeft.muld(rate()).usdnFromDecimals()
+    let limitInAsset = withdrawLimitLeft.muld(rate()).assetFromDecimals()
 
-    throw(limitInUsdn.toString())
+    throw(limitInAsset.toString())
   }
 
   @Verifier(tx)

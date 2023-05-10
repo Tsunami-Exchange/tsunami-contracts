@@ -1,0 +1,871 @@
+# This is a vAMM + Exchange contract
+#
+{-# STDLIB_VERSION 6 #-}
+{-# SCRIPT_TYPE ACCOUNT #-}
+{-# CONTENT_TYPE DAPP #-}
+
+##### Key constants #####
+
+# Oracle keys
+let k_baseOracle = "k_baseOracle"     # Base asset oracle data
+
+# Global initialization state
+let k_initialized = "k_initialized"                       # If AMM was properly initialized
+let k_paused = "k_paused"                                 # If all AMM operations are paused
+
+# Exchange settings
+let k_fee = "k_fee"                                       # Exchange fee. Default is 0.012%. 1/3 goes to stakers, 2/3 goes to vault
+let k_spreadLimit = "k_spreadLimit"                       # abs((marketPrice - oraclePrice) / oraclePrice). If over spread limit, liquidations consult oracle price
+let k_maxPriceImpact = "k_maxPriceImpact"                 # maximum price impact per order
+let k_maxPriceSpread = "k_maxPriceSpread"                 # max spread between Index and Market Price
+let k_maxOracleDelay = "k_maxOracleDelay"                 # max delay in oracle data
+
+# AMM State
+let k_quoteAssetReserve = "k_qtAstR"                      # Quote Asset Reserve (AMM)
+let k_baseAssetReserve = "k_bsAstR"                       # Base Asset Reserve (AMM)
+let k_quoteAssetWeight = "k_qtAstW"                       # Quote Asset Weight
+let k_baseAssetWeight = "k_bsAstW"                        # Base Asset Weight (always 1, TODO: Remove)
+let k_totalPositionSize = "k_totalPositionSize"           # Total trader position size (in Base asset)
+
+# Reentrance protection
+let k_lastTx = "k_lastTx"
+
+# Coordinator
+let k_coordinatorAddress = "k_coordinatorAddress"         # Address of Coordinator (base contract that keeps references to all infrastructure)
+
+# Coordinator keys
+let k_vault_address = "k_vault_address"           # Address of vault contract
+let k_admin_address = "k_admin_address"           # Address of admin account           
+let k_quote_asset = "k_quote_asset"               # Address of quote asset (USDN in our case)
+let k_staking_address = "k_staking_address"       # Address that should receive staking benefits
+let k_spot_address = "k_spot_address"             
+let k_referral_address = "k_referral_address"     # Referral contract address
+let k_nft_manager_address = "k_nft_manager_address" # NFT manager address
+
+func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
+
+##### Coordinator data ##### 
+func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
+func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
+func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
+func stakingAddress() = addressFromString(coordinator().getStringValue(k_staking_address)).valueOrErrorMessage("Staking not set")
+func isSpot(_address: String) = getString(coordinator(), k_spot_address).valueOrErrorMessage("Spot address not set") == _address
+func referralAddress() = addressFromString(coordinator().getStringValue(k_referral_address)).valueOrErrorMessage("Referral not set")
+func nftManagerAddress() = addressFromString(coordinator().getStringValue(k_nft_manager_address)).valueOrErrorMessage("NFT Manager not set")
+
+##### NFT Artifacts #####
+let k_token_param = "k_token_param"
+let k_token_type = "k_token_type"
+let FEE_REDUCTION_TOKEN_TYPE = "fee_reduction"
+
+##### Core constants #####
+
+let DIR_LONG          = 1
+let DIR_SHORT         = 2
+let SECONDS           = 1000
+let DECIMAL_NUMBERS   = 6
+let DECIMAL_UNIT      = 1 * (10 * 10 * 10 * 10 * 10 * 10)
+let MINUTES_IN_YEAR   = 525600 * DECIMAL_UNIT
+let ONE_DAY           = 86400 * DECIMAL_UNIT
+let PNL_OPTION_SPOT   = 1
+let PNL_OPTION_ORACLE = 2
+let FUNDING_ASYMMETRIC = 1
+let FUNDING_SYMMETRIC  = 2
+
+##### Helper functions #####
+
+func s(_x: Int) = _x.toString() + ","
+
+func divd(_x: Int, _y: Int) = fraction(_x, DECIMAL_UNIT, _y, HALFEVEN)
+func muld(_x: Int, _y: Int) = fraction(_x, _y, DECIMAL_UNIT, HALFEVEN)
+
+func bdivd(_x: BigInt, _y: BigInt) = fraction(_x, DECIMAL_UNIT.toBigInt(), _y, HALFEVEN)
+func bmuld(_x: BigInt, _y: BigInt) = fraction(_x, _y, DECIMAL_UNIT.toBigInt(), HALFEVEN)
+
+func abs(_x: Int) = if (_x > 0) then _x else -_x
+func vmax(_x: Int, _y: Int) = if (_x >= _y) then _x else _y
+
+##### Accessor functions #####
+func int(k: String) = this.getInteger(k).valueOrErrorMessage("no value for " + k)
+func intOr(k: String, def: Int) = this.getInteger(k).valueOrElse(def)
+func strA(_address: Address, _key: String) = {
+  let val = _address.getString(_key).valueOrErrorMessage("No value for key " + _key)
+  val
+}
+
+func intA(_address: Address, _key: String) = {
+  let val = _address.getInteger(_key).valueOrErrorMessage("No value for key " + _key)
+  val
+}
+
+func fee() = int(k_fee)
+func qtAstR() = int(k_quoteAssetReserve)
+func bsAstR() = int(k_baseAssetReserve)
+func qtAstW() = intOr(k_quoteAssetWeight, DECIMAL_UNIT)
+func bsAstW() = intOr(k_baseAssetWeight, DECIMAL_UNIT)
+func totalPositionSize() = int(k_totalPositionSize)
+func spreadLimit() = int(k_spreadLimit)
+func maxPriceImpact() = int(k_maxPriceImpact)
+func maxPriceSpread() = int(k_maxPriceSpread)
+func maxOracleDelay() = int(k_maxOracleDelay)
+
+func lastTimestamp() = lastBlock.timestamp
+
+# Reads oracle data by key
+#
+func getOracleData(key: String) = {
+  let oracleDataStr = this.getString(key)
+  if (oracleDataStr.isDefined() && oracleDataStr.value() != "") then {
+    let oracleData = oracleDataStr.value().split(",")
+    let oracleAddress = addressFromString(oracleData.getElement(0)).valueOrErrorMessage("Invalid oracle address in: " + oracleDataStr.value())
+    let priceKey = oracleData.getElement(1)
+    let blockKey = oracleData.getElement(2)
+    let openKey = oracleData.getElement(3)
+
+    (oracleAddress, priceKey, blockKey, openKey)
+  } else {
+    unit
+  }
+}
+
+# Checks if AMM was properly initialized
+#
+func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
+
+# Checks if AMM was paused  
+#
+func paused() = this.getBoolean(k_paused).valueOrElse(false)
+
+# Computes new AMM state (quoteAssetReserve, baseAssetReserve, totalPositionSize)
+#
+func updateReserve(_isAdd: Boolean, _quoteAssetAmount: Int, _baseAssetAmount: Int) = {
+  if (_isAdd) then {
+    let newBase = bsAstR() - _baseAssetAmount
+    if (newBase <= 0) then {
+      throw("Tx lead to base asset reserve <= 0, revert")
+    } else {
+      (
+        qtAstR() + _quoteAssetAmount,
+        newBase,
+        totalPositionSize() + _baseAssetAmount
+      )
+    }
+  } else {
+    let newQuote = qtAstR() - _quoteAssetAmount
+    if (newQuote <= 0) then {
+      throw("Tx lead to base quote reserve <= 0, revert")
+    } else {
+      (
+        newQuote,
+        bsAstR() + _baseAssetAmount,
+        totalPositionSize() - _baseAssetAmount
+      )
+    }
+  }
+}
+
+# Computes AMM invariant
+#
+func calcInvariant(_qtAstR: Int, _bsAstR: Int) = {
+  let bqtAstR = _qtAstR.toBigInt()
+  let bbsAstR = _bsAstR.toBigInt()
+
+  bqtAstR.bmuld(bbsAstR)
+}
+
+# Computes result of swapping a given amount of _quoteAssetAmount
+# Returns full new AMM state, as well as amount of base asset bought / sold
+# _isAdd - true when we are adding quote asset to AMM, false when removing
+#
+func swapInput(_isAdd: Boolean, _quoteAssetAmount: Int) = {
+  let _qtAstR = qtAstR()
+  let _bsAstR = bsAstR()
+  let _qtAstW = qtAstW()
+  let _bsAstW = bsAstW()
+
+  let quoteAssetAmountAdjusted = _quoteAssetAmount.divd(_qtAstW)
+
+  let k = calcInvariant(_qtAstR, _bsAstR)
+  let quoteAssetReserveAfter = if (_isAdd) then {
+    _qtAstR + quoteAssetAmountAdjusted
+  } else {
+    _qtAstR - quoteAssetAmountAdjusted
+  }
+
+  let baseAssetReserveAfter = bdivd(k, quoteAssetReserveAfter.toBigInt()).toInt()
+  let amountBaseAssetBoughtAbs = abs(baseAssetReserveAfter - _bsAstR)
+  let amountBaseAssetBought = if (_isAdd) then {
+    amountBaseAssetBoughtAbs
+  } else {
+    -amountBaseAssetBoughtAbs
+  }
+  
+  let (
+    quoteAssetReserveAfter1,
+    baseAssetReserveAfter1,
+    totalPositionSizeAfter1
+  ) = updateReserve(_isAdd, quoteAssetAmountAdjusted, amountBaseAssetBoughtAbs)
+
+  let priceBefore = divd(_qtAstR.muld(_qtAstW), _bsAstR.muld(_bsAstW))
+  let marketPrice = divd(_quoteAssetAmount, amountBaseAssetBoughtAbs)
+  let priceDiff = abs(priceBefore - marketPrice)
+  let priceImpact = DECIMAL_UNIT - divd(priceBefore, (priceBefore + priceDiff))
+
+  let maxPriceImpactValue = maxPriceImpact()
+  if (priceImpact > maxPriceImpactValue) then {
+    throw("Price impact " + priceImpact.toString() + " > max price impact " + maxPriceImpactValue.toString() 
+      + " before quote asset: " + _qtAstR.toString()
+      + " before base asset: " + _bsAstR.toString()
+      + " quote asset amount to exchange: " + _quoteAssetAmount.toString()
+      + " price before: " + priceBefore.toString()
+      + " marketPrice: " + marketPrice.toString()
+    )
+  } else {
+    (
+      amountBaseAssetBought,
+      quoteAssetReserveAfter1,
+      baseAssetReserveAfter1,
+      totalPositionSizeAfter1
+    )
+  }
+}
+
+# Computes result of swapping a given amount of _baseAssetAmount
+# Returns full new AMM state, as well as amount of quote asset bought / sold
+# _isAdd - true when we are adding quote asset to AMM, false when removing
+#
+func swapOutputWithReserves(
+  _isAdd: Boolean, 
+  _baseAssetAmount: Int,
+  _checkMaxPriceImpact: Boolean,
+  _quoteAssetReserve: Int,
+  _quoteAssetWeight: Int,
+  _baseAssetReserve: Int,
+  _baseAssetWeight: Int
+) = {
+  # Price before is computed to check for max price impact during trader
+  #
+  let priceBefore = divd(_quoteAssetReserve.muld(_quoteAssetWeight), _baseAssetReserve.muld(_baseAssetWeight))
+
+  if (_baseAssetAmount == 0) then {
+    throw("Invalid base asset amount")
+  } else {
+    let k = calcInvariant(_quoteAssetReserve, _baseAssetReserve)
+    let baseAssetPoolAmountAfter = if (_isAdd) then {
+      _baseAssetReserve + _baseAssetAmount 
+    } else {
+      _baseAssetReserve - _baseAssetAmount
+    }
+
+    let quoteAssetAfter = bdivd(k, baseAssetPoolAmountAfter.toBigInt()).toInt()
+    let quoteAssetDelta = abs(quoteAssetAfter - _quoteAssetReserve)
+    let quoteAssetSold = quoteAssetDelta.muld(_quoteAssetWeight)
+
+    let maxPriceImpactValue = maxPriceImpact()
+
+    let (
+      quoteAssetReserveAfter1,
+      baseAssetReserveAfter1,
+      totalPositionSizeAfter1
+    ) = updateReserve(!_isAdd, quoteAssetDelta, _baseAssetAmount)
+
+    let marketPrice = divd(quoteAssetSold, _baseAssetAmount)
+    let priceDiff = abs(priceBefore - marketPrice)
+    let priceImpact = DECIMAL_UNIT - divd(priceBefore, (priceBefore + priceDiff))
+    
+    if (priceImpact > maxPriceImpactValue && _checkMaxPriceImpact) then {
+      throw("Price impact " + priceImpact.toString() + " > max price impact " + maxPriceImpactValue.toString() 
+        + " before quote asset: " + _quoteAssetReserve.toString()
+        + " before base asset: " + _baseAssetReserve.toString()
+        + " base asset amount to exchange: " + _baseAssetAmount.toString()
+        + " price before: " + priceBefore.toString()
+        + " market price: " + marketPrice.toString()
+      )
+    } else {
+      (
+        quoteAssetSold,
+        quoteAssetReserveAfter1,
+        baseAssetReserveAfter1,
+        totalPositionSizeAfter1,
+        priceImpact
+      )
+    }
+  }
+}
+
+# Computes result of swapping a given amount of _baseAssetAmount
+# Returns full new AMM state, as well as amount of quote asset bought / sold
+# _isAdd - true when we are adding quote asset to AMM, false when removing
+#
+func swapOutput(
+  _isAdd: Boolean, 
+  _baseAssetAmount: Int,
+  _checkMaxPriceImpact: Boolean
+) = {
+  swapOutputWithReserves(
+    _isAdd,
+    _baseAssetAmount,
+    _checkMaxPriceImpact,
+    qtAstR(),
+    qtAstW(),
+    bsAstR(),
+    bsAstW()
+  )
+}
+
+func getOraclePriceValue(oracle: Address, priceKey: String, blockKey: String) = {
+  let lastValue = oracle.getInteger(priceKey).valueOrErrorMessage("Can not get oracle price. Oracle: " + oracle.toString() + " key: " + priceKey)
+
+  # If block key is set, than check that return value was set no more than maxOracleDelay blocks ago
+  #
+  if (blockKey != "") then {
+    let currentBlock = lastBlock.height
+    let lastOracleBlock = oracle.getInteger(blockKey).valueOrErrorMessage("Can not get oracle block. Oracle: " + oracle.toString() + " key: " + blockKey)
+    if (currentBlock - lastOracleBlock > maxOracleDelay()) then {
+      throw("Oracle stale data. Last oracle block: " + lastOracleBlock.toString() + " current block: " + currentBlock.toString())
+    } else {
+      lastValue
+    }
+  } else {
+    lastValue
+  }
+}
+
+# Returns oracle price (Index Price)
+#
+func getOraclePrice() = {
+  let baseOracle = getOracleData(k_baseOracle).valueOrErrorMessage("No base asset oracle data")
+  let baseOraclePrice = getOraclePriceValue(baseOracle._1, baseOracle._2, baseOracle._3)
+  let quoteOraclePrice = DECIMAL_UNIT
+
+  divd(baseOraclePrice, quoteOraclePrice)
+}
+
+# Computes price diff in % between current and oracle price
+#
+func absPriceDiff(
+  _oraclePrice: Int,
+  _quoteAssetReserve: Int, 
+  _baseAssetReserve: Int,
+  _qtAstW: Int,
+  _bsAstW: Int
+) = {
+  let priceAfter = divd(_quoteAssetReserve.muld(_qtAstW), _baseAssetReserve.muld(_bsAstW))
+  let averagePrice = divd(_oraclePrice + priceAfter, 2 * DECIMAL_UNIT)
+  let absPriceDiff = divd(abs(_oraclePrice - priceAfter), averagePrice)
+
+  absPriceDiff
+}
+
+# Checks that the result of operation is not bringing AMM over the spread limit.
+# Note, that this method will allow any operation that is actually IMPROVING spread.
+#
+func requireNotOverSpreadLimit(_quoteAssetReserve: Int, _baseAssetReserve: Int) = {
+  let oraclePrice = getOraclePrice()
+  let _qtAstW = qtAstW()
+  let _bsAstW = bsAstW()
+  let absPriceDiffBefore = absPriceDiff(oraclePrice, qtAstR(), bsAstR(), _qtAstW, _bsAstW)
+  let absPriceDiffAfter = absPriceDiff(oraclePrice, _quoteAssetReserve, _baseAssetReserve, _qtAstW, _bsAstW)
+  if (absPriceDiffAfter > maxPriceSpread() && absPriceDiffAfter > absPriceDiffBefore) then {
+      throw("Price spread " + absPriceDiffAfter.toString() + " > max price spread " + maxPriceSpread().toString())
+  } else {
+    true
+  }
+}
+
+# Returns current spot price
+#
+func getSpotPrice() = {
+  let _quoteAssetReserve = qtAstR()
+  let _baseAssetReserve = bsAstR()
+  let _qtAstW = qtAstW()
+  let _bsAstW = bsAstW()
+  divd(_quoteAssetReserve.muld(_qtAstW), _baseAssetReserve.muld(_bsAstW))
+}
+
+# Checks if stop price and index price diverge more then spreadLimit. Used to determine what price to use
+# to compute liquidation. When isOverFluctuationLimit() == true, best of mark/index MR will be used 
+#
+func isOverFluctuationLimit() = {
+  let oraclePrice = getOraclePrice()
+  let currentPrice = getSpotPrice()
+  divd(abs(oraclePrice - currentPrice), oraclePrice) > spreadLimit()
+}
+
+func getTerminalAmmState() = {
+  let _positionSize = totalPositionSize()
+  if (_positionSize == 0) then {
+    (qtAstR(), bsAstR())
+  } else {
+    let direction = _positionSize > 0
+    let (
+      currentNetMarketValue,
+      terminalQuoteAssetReserve,
+      terminalBaseAssetReserve
+    ) = swapOutput(
+      direction,
+      abs(_positionSize),
+      false
+    )
+
+    (terminalQuoteAssetReserve, terminalBaseAssetReserve)
+  }
+}
+
+func getQuoteAssetWeight(
+  baseAssetReserve: Int,
+  totalPositionSize: Int,
+  quoteAssetReserve: Int, 
+  targetPrice: Int
+) = {
+    let b = baseAssetReserve.toBigInt()
+    let sz = totalPositionSize.toBigInt()
+    let q = quoteAssetReserve.toBigInt()
+    let p = targetPrice.toBigInt()
+    
+    let k = bmuld(q, b)
+    let newB = b + sz
+    let newQ = bdivd(k, newB)
+    let z = bdivd(newQ, newB)
+    let result = bdivd(p, z)
+
+    result.toInt()
+}
+
+func getSyncTerminalPrice(_terminalPrice: Int, _qtAstR: Int, _bsAstR: Int) = {
+  let _positionSize = totalPositionSize()
+  if (_positionSize == 0) then {
+    let newQtAstW = divd(_terminalPrice.muld(_bsAstR), _qtAstR)
+    (
+      newQtAstW,
+      DECIMAL_UNIT,
+      0
+    )
+  } else {
+    let direction = _positionSize > 0
+    let currentNetMarketValue = swapOutput(
+      direction,
+      abs(_positionSize),
+      false
+    )._1
+
+    # Compute new qW and bW
+    let newQtAstW = getQuoteAssetWeight(_bsAstR, _positionSize, _qtAstR, _terminalPrice)
+    let newBsAstW = DECIMAL_UNIT
+    
+    (
+      newQtAstW,
+      newBsAstW
+    )
+  }
+}
+
+func getAdjustedFee(_artifactId: String, _baseFeeDiscount: Int) = {
+  let baseFeeRaw = fee()
+  let baseFee = muld(baseFeeRaw, _baseFeeDiscount)
+  let (adjustedFee, burnArtifact) = if (_artifactId != "") then {
+      let artifactKind = strA(nftManagerAddress(), k_token_type.toCompositeKey(_artifactId))
+      if (artifactKind == FEE_REDUCTION_TOKEN_TYPE) then {
+        let reduction = intA(nftManagerAddress(), k_token_param.toCompositeKey(_artifactId))
+        let adjustedFee = muld(baseFee, reduction)
+        (adjustedFee, true)
+      } else {
+        throw("Invalid attached artifact")
+      }
+    } else {
+      (baseFee, false)
+    }
+  (adjustedFee, burnArtifact)
+}
+
+func updateSettings(
+  _spreadLimit: Int,
+  _maxPriceImpact: Int,
+  _maxPriceSpread: Int,
+  _maxOracleDelay: Int
+) = {
+  [
+    IntegerEntry(k_spreadLimit, _spreadLimit),
+    IntegerEntry(k_maxPriceImpact, _maxPriceImpact),
+    IntegerEntry(k_maxPriceSpread, _maxPriceSpread),    
+    IntegerEntry(k_maxOracleDelay, _maxOracleDelay)
+  ]
+}
+
+func updateAmmReserves(
+  _qtAstR: Int,
+  _bsAstR: Int
+) = {
+  [
+    IntegerEntry(k_quoteAssetReserve, _qtAstR),
+    IntegerEntry(k_baseAssetReserve, _bsAstR)
+  ]
+}
+
+func updateAmmWeights(
+  _qtAstW: Int,
+  _bsAstW: Int
+) = {
+  [
+    IntegerEntry(k_quoteAssetWeight, _qtAstW),
+    IntegerEntry(k_baseAssetWeight, _bsAstW)
+  ]
+}
+
+func updateAmm(
+  _qtAstR: Int,
+  _bsAstR: Int,
+  _totalPositionSizeAfter: Int
+) = {
+  let _qtAstW = qtAstW()
+  let _bsAstW = bsAstW()
+
+  updateAmmReserves(_qtAstR, _bsAstR)
+  ++
+  [
+    IntegerEntry(k_totalPositionSize, _totalPositionSizeAfter)
+
+  ]
+}
+
+func transferFee(i: Int) = {
+  [
+    ScriptTransfer(stakingAddress(), i, quoteAsset())
+  ]
+}
+
+func doBurnArtifact(_burnArtifact: Boolean, i: Invocation) = {
+  if (_burnArtifact) then {
+    [
+      Burn(i.payments[1].assetId.valueOrErrorMessage("Invalid artifact"), 1)
+    ]
+  } else {
+    []
+  }
+}
+
+##### Callable functions #####
+
+# Pauses the contract. During the pause, no actions can be taken except for unpausing the contract. 
+# The purpose of pausing the contract may be to perform maintenance work or to immediately stop the market.
+#
+# @notice admin only
+@Callable(i)
+func pause() = {
+  if (i.caller != adminAddress()) then {
+    throw("Invalid pause params")
+  } else {
+    [
+      BooleanEntry(k_paused, true)
+    ]
+  }
+}
+
+# Unpauses contract.
+#
+# @notice admin only
+@Callable(i)
+func unpause() = {
+  if (i.caller != adminAddress()) then {
+    throw("Invalid unpause params")
+  } else {
+    [
+      BooleanEntry(k_paused, false)
+    ]
+  }
+}
+
+# Adds specified amount of liquidity to the market.
+# 
+# @param _quoteAssetAmount Amount of liquidity to add (in quote asset, 6 decimals)
+# @notice admin only
+@Callable(i)
+func addLiquidity(_quoteAssetAmount: Int) = {
+  if (
+    i.caller != adminAddress()
+    || _quoteAssetAmount <= 0
+  ) then {
+    throw("Invalid addLiquidity params")
+  } else {
+    let _qtAstR = qtAstR()
+    let _bsAstR = bsAstR()
+    let _qtAstW = qtAstW()
+    let _bsAstW = bsAstW()
+    let price = divd(_qtAstR.muld(_qtAstW), _bsAstR.muld(_bsAstW))
+
+    let qtAstRAfter = _qtAstR + _quoteAssetAmount
+    let baseAssetAmountToAdd = divd(qtAstRAfter.muld(_qtAstW), price) - _bsAstR
+
+    let bsAstRAfter = _bsAstR + baseAssetAmountToAdd
+
+    let (
+      newQuoteAssetWeight,
+      newBaseAssetWeight
+    ) = getSyncTerminalPrice(getOraclePrice(), qtAstRAfter, bsAstRAfter)
+
+    updateAmmReserves(qtAstRAfter, bsAstRAfter)
+    ++
+    updateAmmWeights(newQuoteAssetWeight, newBaseAssetWeight)
+  }
+}
+
+# Removes specified amount of liquidity to the market.
+#
+# @param _quoteAssetAmount Amount of liquidity to remove (in quote asset, 6 decimals)
+# @notice admin only
+@Callable(i)
+func removeLiquidity(_quoteAssetAmount: Int) = {
+  if (
+    i.caller != adminAddress()
+    || _quoteAssetAmount >= 0
+  ) then {
+    throw("Invalid removeLiquidity params")
+  } else {
+    let _qtAstR = qtAstR()
+    let _bsAstR = bsAstR()
+    let _qtAstW = qtAstW()
+    let _bsAstW = bsAstW()
+    let price = divd(_qtAstR.muld(_qtAstW), _bsAstR.muld(_bsAstW))
+
+    let qtAstRAfter = _qtAstR - _quoteAssetAmount
+    let baseAssetAmountToRemove = abs(divd(qtAstRAfter.muld(_qtAstW), price) - _bsAstR)
+
+    let bsAstRAfter = _bsAstR - baseAssetAmountToRemove
+
+    let (
+      newQuoteAssetWeight,
+      newBaseAssetWeight
+    ) = getSyncTerminalPrice(getOraclePrice(), qtAstRAfter, bsAstRAfter)
+
+    updateAmmReserves(qtAstRAfter, bsAstRAfter)
+    ++
+    updateAmmWeights(newQuoteAssetWeight, newBaseAssetWeight)
+  }
+}
+
+# Changes the settings of the contract.
+#
+# @param _initMarginRatio The initial margin ratio for the contract.
+# @param _mmr The maintenance margin ratio for the contract.
+# @param _liquidationFeeRatio The liquidation fee ratio for the contract.
+# @param _fundingPeriod The funding period for the contract.
+# @param _fee The fee for the contract.
+# @param _spreadLimit The spread limit for the contract.
+# @param _maxPriceImpact The maximum price impact for the contract.
+# @param _partialLiquidationRatio The partial liquidation ratio for the contract.
+# @param _maxPriceSpread The maximum oracle / market price spread for the contract.
+# @param _feeToStakersPercent The fee to stakers percent for the contract.
+# @param _maxOracleDelay The maximum oracle delay (blocks) for the contract.
+# @param _rolloverFee The rollover fee for the contract.
+# @param _fundingMode Symmetric or asymmetric funding.
+#
+# @notice admin only
+@Callable(i)
+func changeSettings(
+  _spreadLimit: Int,
+  _maxPriceImpact: Int,
+  _maxPriceSpread: Int,
+  _maxOracleDelay: Int
+) = {
+  if (
+    _spreadLimit <= 0
+    || _maxPriceImpact <= 0
+    || _maxPriceSpread <= 0
+    || _maxOracleDelay <= 0
+    || !initialized()
+    || i.caller != adminAddress()
+  ) then {
+    throw("Invalid changeSettings params")
+  } else {
+    updateSettings(
+      _spreadLimit, 
+      _maxPriceImpact,
+      _maxPriceSpread,
+      _maxOracleDelay
+    )
+  }
+}
+
+@Callable(i)
+func initialize(
+  _qtAstR: Int,
+  _bsAstR: Int,
+  _baseOracleData: String,
+  _coordinator: String,
+  _spreadLimit: Int,
+  _maxPriceImpact: Int,
+  _maxPriceSpread: Int,
+  _maxOracleDelay: Int
+) = {
+  if (
+    _qtAstR <= 0
+    || _bsAstR <= 0
+    || _spreadLimit <= 0
+    || _maxPriceImpact <= 0
+    || _maxPriceSpread <= 0
+    || _maxOracleDelay <= 0
+    || initialized()
+    || i.caller != this
+  ) then {
+    throw("Invalid initialize parameters")
+  } else {
+    updateAmm(_qtAstR, _bsAstR, 0)
+    ++
+    updateSettings(
+      _spreadLimit, 
+      _maxPriceImpact,
+      _maxPriceSpread,
+      _maxOracleDelay
+    )
+    ++
+    [
+      BooleanEntry(k_initialized, true),
+      StringEntry(k_baseOracle, _baseOracleData),
+      StringEntry(k_coordinatorAddress, addressFromStringValue(_coordinator).toString())
+    ]
+  }
+}
+
+@Callable(i)
+func swapToBase(
+  _amount: Int,
+  _minBaseAssetAmount: Int
+) = {
+  strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
+  strict ensureCalledOnce = invoke(this, "ensureCalledOnce", [], [])
+
+  if (
+    !initialized()
+    || paused()
+    || !isSpot(i.caller.toString())
+  ) then {
+    throw("Invalid swapToBase parameters")
+  } else {
+  
+    let ( 
+      amountBaseAssetBought,
+      quoteAssetReserveAfter, 
+      baseAssetReserveAfter,
+      totalPositionSizeAfter
+    ) = swapInput(true, _amount)
+       
+    
+    let update = updateAmm(
+      quoteAssetReserveAfter,
+      baseAssetReserveAfter,
+      totalPositionSizeAfter
+    )
+
+    (update, amountBaseAssetBought)
+  }
+}
+
+@Callable(i)
+func swapToQuote(
+  _amount: Int,
+  _minQuoteAssetAmount: Int
+) = {
+  strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
+  strict ensureCalledOnce = invoke(this, "ensureCalledOnce", [], [])
+
+  if (
+    !initialized()
+    || paused()
+    || !isSpot(i.caller.toString())
+  ) then {
+    throw("Invalid swapToQuote parameters")
+  } else {
+  
+    let (
+      amountQuoteAssetBought,
+      quoteAssetReserveAfter, 
+      baseAssetReserveAfter
+    ) = swapOutput(
+      true,
+      _amount,
+      true
+    )
+    
+    let totalPositionSizeAfter = totalPositionSize() - _amount
+    
+    let update = updateAmm(
+      quoteAssetReserveAfter,
+      baseAssetReserveAfter,
+      totalPositionSizeAfter
+    )
+
+    (update, amountQuoteAssetBought)
+  }
+}
+
+# Function to sync exchange terminal price to index price (Oracle price). 
+# This method can be called by anyone, but usually is called by an exchange's keeper bot.
+# Additionally it's called automatically prior to any interaction with exchange to ensure
+# that every call relies to actual AMM state 
+@Callable(i)  
+func syncTerminalPriceToOracle() = {
+  let _qtAstR = qtAstR()
+  let _bsAstR = bsAstR()
+  let (
+    newQuoteAssetWeight,
+    newBaseAssetWeight
+  ) = getSyncTerminalPrice(getOraclePrice(), _qtAstR, _bsAstR)
+
+  updateAmmWeights(newQuoteAssetWeight, newBaseAssetWeight)
+}
+
+# Function to ensure that this contract can only be called once in transaction, preventing front-running
+# @notice may only be called by contract itself
+@Callable(i)  
+func ensureCalledOnce() = {
+  if (i.caller != this) then {
+    throw("Invalid saveCurrentTxId parameters")
+  } else {
+    let txId = i.transactionId.toBase58String()
+    let lastTx = this.getString(k_lastTx).valueOrElse("")
+    if (lastTx != txId) then {
+      [
+        StringEntry(k_lastTx, txId)
+      ]
+    } else {
+      throw("Can not call vAMM methods twice in one tx")
+    }
+  }
+}
+
+# View function. Return current price, AMM is synced to in it's throws message.
+@Callable(i)
+func view_getTerminalAmmPrice() = {
+  let (terminalQuoteAssetReserve, terminalBaseAssetReserve) = getTerminalAmmState()
+  let price = divd(terminalQuoteAssetReserve.muld(qtAstW()), terminalBaseAssetReserve.muld(bsAstW()))
+  throw(price.toString())
+}
+
+# View callable functions exposed for another d-Apps
+
+# Compute function. Returns current spot price in a way that can be used in dApp-to-dApp calls.
+# Returns current spot price in 6 decimals.
+@Callable(i)
+func computeSpotPrice() = {
+  strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
+  let result = getSpotPrice()
+
+  ([], result)
+}
+
+@Verifier(tx)
+func verify() = {
+  let coordinatorStr = this.getString(k_coordinatorAddress)
+  if (coordinatorStr.isDefined()) then {
+    let admin = addressFromStringValue(coordinatorStr.value()).getString(k_admin_address)
+    if (admin.isDefined()) then {
+      admin.value().addressFromStringValue().getBoolean("status_" + this.toString() + "_" + tx.id.toBase58String() ).valueOrElse(false)
+    } else { 
+      # Admin is not defined in coordinator, set admin first
+      throw("unable to verify: admin not set in coordinator")
+    }
+  } else {
+    # Coordinator not set, use native verify
+    sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)
+  }
+}
