@@ -1261,10 +1261,14 @@ func updateAmmReserves(
   _qtAstR: Int,
   _bsAstR: Int
 ) = {
-  [
-    IntegerEntry(k_quoteAssetReserve, _qtAstR),
-    IntegerEntry(k_baseAssetReserve, _bsAstR)
-  ]
+  if (_qtAstR < 0 || _bsAstR < 0) then {
+    throw("Invalid amount to update reserves")
+  } else {
+    [
+      IntegerEntry(k_quoteAssetReserve, _qtAstR),
+      IntegerEntry(k_baseAssetReserve, _bsAstR)
+    ]
+  }
 }
 
 func updateAmmWeights(
@@ -1421,17 +1425,17 @@ func unsetCloseOnly() = {
   }
 }
 
-# Adds specified amount of liquidity to the market.
+# Change specified amount of liquidity to the market.
 # 
 # @param _quoteAssetAmount Amount of liquidity to add (in quote asset, 6 decimals)
 # @notice admin only
 @Callable(i)
-func addLiquidity(_quoteAssetAmount: Int) = {
+func changeLiquidity(_quoteAssetAmount: Int) = {
   if (
     i.caller != adminAddress()
-    || _quoteAssetAmount <= 0
+    || _quoteAssetAmount == 0
   ) then {
-    throw("Invalid addLiquidity params")
+    throw("Invalid changeLiquidity params")
   } else {
     let _qtAstR = qtAstR()
     let _bsAstR = bsAstR()
@@ -1443,53 +1447,6 @@ func addLiquidity(_quoteAssetAmount: Int) = {
     let baseAssetAmountToAdd = divd(qtAstRAfter.muld(_qtAstW), price) - _bsAstR
 
     let bsAstRAfter = _bsAstR + baseAssetAmountToAdd
-
-    let (
-      newQuoteAssetWeight,
-      newBaseAssetWeight,
-      marginToVault
-    ) = getSyncTerminalPrice(getOraclePrice(), qtAstRAfter, bsAstRAfter)
-
-    strict doExchangePnL = if (marginToVault != 0) then {
-      strict doExchangePnL = invoke(
-        vaultAddress(),
-        "exchangeFreeAndLocked",
-        [marginToVault],
-        []
-      )
-      []
-    } else {
-      []
-    }
-
-    updateAmmReserves(qtAstRAfter, bsAstRAfter)
-    ++
-    updateAmmWeights(newQuoteAssetWeight, newBaseAssetWeight)
-  }
-}
-
-# Removes specified amount of liquidity to the market.
-#
-# @param _quoteAssetAmount Amount of liquidity to remove (in quote asset, 6 decimals)
-# @notice admin only
-@Callable(i)
-func removeLiquidity(_quoteAssetAmount: Int) = {
-  if (
-    i.caller != adminAddress()
-    || _quoteAssetAmount >= 0
-  ) then {
-    throw("Invalid removeLiquidity params")
-  } else {
-    let _qtAstR = qtAstR()
-    let _bsAstR = bsAstR()
-    let _qtAstW = qtAstW()
-    let _bsAstW = bsAstW()
-    let price = divd(_qtAstR.muld(_qtAstW), _bsAstR.muld(_bsAstW))
-
-    let qtAstRAfter = _qtAstR - _quoteAssetAmount
-    let baseAssetAmountToRemove = abs(divd(qtAstRAfter.muld(_qtAstW), price) - _bsAstR)
-
-    let bsAstRAfter = _bsAstR - baseAssetAmountToRemove
 
     let (
       newQuoteAssetWeight,

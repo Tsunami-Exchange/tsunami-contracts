@@ -567,25 +567,6 @@
   }
 
   @Callable(i)
-  func getFeeRate(_change: Int) = {
-    if (
-      !initialized()
-    ) then {
-      throw("Invalid getFeeRate params")
-    } else {
-      let amountOfQuoteAsset = _change.assetToDecimals()
-      let oldExcessBalance = excessBalance()
-      let newExcessBalance = oldExcessBalance + _change
-      
-      if (abs(newExcessBalance) < abs(oldExcessBalance)) then {
-        ([], DECIMAL_UNIT * 70 / 100 / 100) # TODO: Better compute fee rate
-      } else {
-        ([], DECIMAL_UNIT * 130 / 100 / 100)
-      }
-    }
-  }
-
-  @Callable(i)
   func borrow(_amount: Int) = {
     if (
       !initialized()

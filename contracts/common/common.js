@@ -1446,6 +1446,7 @@ class Environment {
           arguments: [
             address(this.seeds.coordinator),
             Math.round(0.003 * decimals),
+            Math.round(0.1 * decimals),
           ],
         },
         this.seeds.spot
@@ -3151,6 +3152,24 @@ class AMM {
     );
 
     console.log("Paid funding tx: " + payFundingTx.id);
+
+    await broadcast(payFundingTx);
+    await waitForTx(payFundingTx.id);
+
+    return payFundingTx;
+  }
+
+  async changeLiquidity(_amount) {
+    const payFundingTx = invokeScript(
+      {
+        dApp: address(this.e.seeds.amms[this.address]),
+        call: {
+          function: "changeLiquidity",
+          args: [{ type: "integer", value: Math.round(_amount * decimals) }],
+        },
+      },
+      this.e.seeds.admin
+    );
 
     await broadcast(payFundingTx);
     await waitForTx(payFundingTx.id);
@@ -5139,107 +5158,83 @@ class Spot {
     return tx;
   }
 
-  async setOraclePublicKeys(_keys) {
-    let tx = await invoke(
+  async estimateSwap(_sourceAmount, _sourceToken, _targetToken) {
+    let sd = _sourceToken == "WAVES" ? 8 : 6;
+    let td = _targetToken == "WAVES" ? 8 : 6;
+
+    const invokeTx = invokeScript(
       {
-        dApp: address(this.e.seeds.oracleJit),
-        functionName: "setOraclePublicKeys",
-        arguments: [_keys.join(",")],
-        payment: [],
+        dApp: address(this.e.seeds.spot),
+        call: {
+          function: "view_estimateSwap",
+          args: [
+            { type: "integer", value: Math.round(_sourceAmount * 10 ** sd) },
+            { type: "string", value: _sourceToken },
+            { type: "string", value: _targetToken },
+          ],
+        },
       },
       this.e.seeds.admin
     );
 
-    await waitForTx(tx.id);
-    return tx;
-  }
+    try {
+      await broadcast(invokeTx);
+    } catch (e) {
+      let { message } = JSON.parse(JSON.stringify(e));
+      console.log(message);
+      if (message.includes("xxx")) {
+        throw Error(message);
+      }
+      let parts = message
+        .replace("Error while executing account-script: ", "")
+        .split(",");
 
-  async updateData(_data) {
-    let tx = await invoke(
-      {
-        dApp: address(this.e.seeds.oracleJit),
-        functionName: "updateData",
-        arguments: [_data],
-        payment: [],
-      },
-      this.e.seeds.admin
-    );
+      let targetAmount = Number.parseFloat(
+        (parseInt(parts[0]) / 10 ** td).toFixed(4)
+      );
+      let feeInTargetToken = Number.parseFloat(
+        (parseInt(parts[1]) / 10 ** td).toFixed(4)
+      );
+      let resultTargetAssetAmount = Number.parseFloat(
+        (parseInt(parts[2]) / 10 ** td).toFixed(4)
+      );
 
-    await waitForTx(tx.id);
-    return tx;
-  }
+      let baseFee = Number.parseFloat(
+        (parseInt(parts[3]) / 10 ** 6).toFixed(4)
+      );
+      let actualFee = Number.parseFloat(
+        (parseInt(parts[4]) / 10 ** 6).toFixed(4)
+      );
+      let rebate = Number.parseFloat((parseInt(parts[5]) / 10 ** 6).toFixed(4));
+      let tax = Number.parseFloat((parseInt(parts[6]) / 10 ** 6).toFixed(4));
 
-  async pause(_id) {
-    let tx = await invoke(
-      {
-        dApp: address(this.e.seeds.oracleJit),
-        functionName: "pause",
-        arguments: [_id],
-        payment: [],
-      },
-      this.e.seeds.admin
-    );
+      let addImbalanceUSD = Number.parseFloat(
+        (parseInt(parts[7]) / 10 ** 6).toFixed(4)
+      );
+      let addVaultBalanceUSD = Number.parseFloat(
+        (parseInt(parts[8]) / 10 ** 6).toFixed(4)
+      );
+      let removeImbalanceUSD = Number.parseFloat(
+        (parseInt(parts[9]) / 10 ** 6).toFixed(4)
+      );
+      let removeVaultBalanceUSD = Number.parseFloat(
+        (parseInt(parts[10]) / 10 ** 6).toFixed(4)
+      );
 
-    await waitForTx(tx.id);
-    return tx;
-  }
-
-  async unPause(_id) {
-    let tx = await invoke(
-      {
-        dApp: address(this.e.seeds.oracleJit),
-        functionName: "unPause",
-        arguments: [_id],
-        payment: [],
-      },
-      this.e.seeds.admin
-    );
-
-    await waitForTx(tx.id);
-    return tx;
-  }
-
-  async getStreamData(_id) {
-    const price = await accountDataByKey(
-      `k_stream_data_price_${_id}`,
-      address(this.e.seeds.oracleJit)
-    ).then((x) => x.value);
-
-    const timestamp = await accountDataByKey(
-      `k_stream_data_timestamp_${_id}`,
-      address(this.e.seeds.oracleJit)
-    ).then((x) => x.value);
-
-    return {
-      price,
-      timestamp,
-    };
-  }
-
-  setPrice(_stream, _price, _seeds = [this.e.seeds.admin]) {
-    let sec = 1000;
-    const signData = (_signers, _data) => {
-      let data = _data.join(",");
-      let signatures = _signers.map((s) => {
-        let sig = signBytes(s, new TextEncoder().encode(data));
-        return `${publicKey(s)}=${sig}`;
-      });
-
-      return signatures.join(":");
-    };
-
-    let data = [
-      _stream,
-      this.e.now + 1 * sec,
-      Math.round(_price * decimals),
-      Math.round(_price * decimals * 0.005),
-    ];
-    let signature = signData(_seeds, data);
-
-    let update = [...data, signature].join("__");
-    this.lastPrice = update;
-
-    return this.lastPrice;
+      return {
+        targetAmount,
+        feeInTargetToken,
+        resultTargetAssetAmount,
+        baseFee,
+        actualFee,
+        rebate,
+        tax,
+        addImbalanceUSD,
+        addVaultBalanceUSD,
+        removeImbalanceUSD,
+        removeVaultBalanceUSD,
+      };
+    }
   }
 }
 
@@ -5247,4 +5242,5 @@ module.exports = {
   Environment,
   AMM,
   Vault,
+  Spot,
 };

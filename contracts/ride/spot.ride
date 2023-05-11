@@ -12,9 +12,14 @@ let k_paused = "k_paused"                                 # If all AMM operation
 
 # Exchange settings
 let k_fee = "k_fee"                                       # Exchange fee. Default is 0.3%. 1/3 goes to stakers, 2/3 goes to vault
+let k_rebate = "k_rebate"                                 # Max rebate of exchange fee. Default is 0.1%.
 
 # Coordinator
 let k_coordinatorAddress = "k_coordinatorAddress"         # Address of Coordinator (base contract that keeps references to all infrastructure)
+
+# Vault
+let k_excessBalance = "k_excessBalance"
+let k_freeBalance = "k_freeBalance"
 
 # Own keys
 let k_amm = "k_amm"
@@ -34,24 +39,9 @@ func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_add
 func isAdmin(i: Invocation) = if (i.caller == adminAddress()) then unit else throw("Only the Admin itself can invoke this function")
 func getAddressIfValid(address: String) = address.addressFromString().valueOrErrorMessage("Can't parse \"" + address + "\" as address").toString()
 
-##### NFT Artifacts #####
-let k_token_param = "k_token_param"
-let k_token_type = "k_token_type"
-let FEE_REDUCTION_TOKEN_TYPE = "fee_reduction"
-
 ##### Core constants #####
-
-let DIR_LONG          = 1
-let DIR_SHORT         = 2
-let SECONDS           = 1000
 let DECIMAL_NUMBERS   = 6
 let DECIMAL_UNIT      = 1 * (10 * 10 * 10 * 10 * 10 * 10)
-let MINUTES_IN_YEAR   = 525600 * DECIMAL_UNIT
-let ONE_DAY           = 86400 * DECIMAL_UNIT
-let PNL_OPTION_SPOT   = 1
-let PNL_OPTION_ORACLE = 2
-let FUNDING_ASYMMETRIC = 1
-let FUNDING_SYMMETRIC  = 2
 
 ##### Helper functions #####
 
@@ -59,27 +49,15 @@ func s(_x: Int) = _x.toString() + ","
 
 func divd(_x: Int, _y: Int) = fraction(_x, DECIMAL_UNIT, _y, HALFEVEN)
 func muld(_x: Int, _y: Int) = fraction(_x, _y, DECIMAL_UNIT, HALFEVEN)
-
-func bdivd(_x: BigInt, _y: BigInt) = fraction(_x, DECIMAL_UNIT.toBigInt(), _y, HALFEVEN)
-func bmuld(_x: BigInt, _y: BigInt) = fraction(_x, _y, DECIMAL_UNIT.toBigInt(), HALFEVEN)
-
 func abs(_x: Int) = if (_x > 0) then _x else -_x
 func vmax(_x: Int, _y: Int) = if (_x >= _y) then _x else _y
+func vmin(_x: Int, _y: Int) = if (_x <= _y) then _x else _y
 
 ##### Accessor functions #####
 func int(k: String) = this.getInteger(k).valueOrErrorMessage("no value for " + k)
-func intOr(k: String, def: Int) = this.getInteger(k).valueOrElse(def)
-func strA(_address: Address, _key: String) = {
-  let val = _address.getString(_key).valueOrErrorMessage("No value for key " + _key)
-  val
-}
-
-func intA(_address: Address, _key: String) = {
-  let val = _address.getInteger(_key).valueOrErrorMessage("No value for key " + _key)
-  val
-}
 
 func fee() = int(k_fee)
+func feeRebate() = int(k_rebate)
 
 func getMarket(_assetId: String) = addressFromString(
   this.getString(k_asset_amm.toCompositeKey(_assetId)).valueOrElse("No market for: " + _assetId)
@@ -89,16 +67,132 @@ func getVault(_assetId: String) = addressFromString(
   this.getString(k_asset_vault.toCompositeKey(_assetId)).valueOrElse("No vault for: " + _assetId)
 ).valueOrErrorMessage("Invalid vault address for: " + _assetId)
 
+func getExcessBalance(_vault: Address) = {
+  _vault.getInteger(k_excessBalance).valueOrElse(0)
+}
+
+func getFreeBalance(_vault: Address) = {
+  _vault.getInteger(k_freeBalance).valueOrElse(0)
+}
+
+func getImbalanceCostUSD(_vault: Address, _amm: Address, _decimals: Int, _amount: Int) = {
+  # Note, _amount is always in _decimals, and _vault operates in 10^8, so adjust first
+  let amount = if (_decimals == 8) then _amount
+               else if (_decimals == 6) then _amount * 100 
+               else throw("Invalid decimals")
+
+  let oldImbalance = getExcessBalance(_vault) # This is in 10^8 always
+  let newImbalance = oldImbalance + amount
+  let imbalanceDeltaInAmmDecimals = (abs(newImbalance) - abs(oldImbalance)) / 100
+  
+  # Note, imbalanceDeltaInAmmDecimals can be positive (imbalance increase) 
+  # or negative (imbalance decrease). But it's in token. Multiply it by price to get
+  # imbalance value in USD
+  #
+  strict priceR = invoke(_amm, "computeSpotPrice", [], [])
+  let price = match (priceR) {
+    case t: Int => t
+    case _ => throw("Invalid computeSpotPrice result for " + _amm.toString())
+  }
+
+  let imbalanceDeltaInUSD = muld(imbalanceDeltaInAmmDecimals, price)
+  
+  # Now compute a total value of assets in vault
+  #
+  let freeBalanceInAmmDecimal = getFreeBalance(_vault) / 100
+  let vaultBalanceInUSD = muld(freeBalanceInAmmDecimal, price)
+
+  (imbalanceDeltaInUSD, vaultBalanceInUSD)
+}
+
+func estimateSwap(
+  _amount: Int,
+  _assetId: String,
+  _targetAsset: String
+) = {
+  let sourceDecimals = if (_assetId == "WAVES") then 8 else assetInfo(fromBase58String(_assetId)).valueOrErrorMessage("Invalid asset: " + _assetId).decimals
+  let targetDecimals = if (_targetAsset == "WAVES") then 8 else assetInfo(fromBase58String(_targetAsset)).valueOrErrorMessage("Invalid asset: " + _targetAsset).decimals
+  let sourceAmountInAmmDecimals = if (sourceDecimals == 8) then _amount / 100 else if (sourceDecimals == 6) then _amount else throw("Invalid decimals (source)")
+
+  # 1. Find market for source asset
+  let sellMarket = getMarket(_assetId)
+
+  # 2. Sell it for USD
+  strict s1 = invoke(sellMarket, "swapToQuote", [sourceAmountInAmmDecimals, 0], [])
+  let usdAmount = match (s1) {
+    case t: Int => t
+    case _ => throw("Invalid swapToQuote result")
+  }
+
+  # 3. Find market for target asset
+  let buyMarket = getMarket(_targetAsset)
+
+  # 4. Buy it for USD
+  strict s2 = invoke(buyMarket, "swapToBase", [usdAmount, 0], [])
+  let targetAmount = match (s2) {
+    case t: Int => if (targetDecimals == 8) then t * 100 else if (targetDecimals == 6) then t else throw("Invalid decimals (target)")
+    case _ => throw("Invalid swapToBase result")
+  }
+
+  # 5. Get the imbalance for source asset addition
+  let vaultToAdd = getVault(_assetId)
+  let (addImbalanceUSD   , addVaultBalanceUSD)    = getImbalanceCostUSD(vaultToAdd, sellMarket, sourceDecimals, _amount)
+
+  # 6. Get the fee for target asset depletion
+  let vaultToRemove = getVault(_targetAsset)
+  let (removeImbalanceUSD, removeVaultBalanceUSD) = getImbalanceCostUSD(vaultToRemove, buyMarket, targetDecimals, -targetAmount)
+
+  # 7. Compute the fee (if overall imbalance improves - rebate the fee, otherwise increase the fee)
+  let resultImbalanceInUSD = addImbalanceUSD + removeImbalanceUSD
+  let baseFee = fee()
+  let (actualFee, rebate, tax) = if (resultImbalanceInUSD < 0) then {
+      let mostLiquid = vmax(addVaultBalanceUSD, removeVaultBalanceUSD)
+      let rebateRate = divd(abs(resultImbalanceInUSD), mostLiquid)
+      let rebate     = feeRebate().muld(rebateRate)
+      let actualFee  = if (rebate > baseFee) then 0 else baseFee - rebate
+
+      (actualFee, rebate, 0)
+  } else {
+    let leastLiquid = vmin(addVaultBalanceUSD, removeVaultBalanceUSD)
+    let taxRate     = divd(abs(resultImbalanceInUSD), leastLiquid)
+    let tax         = feeRebate().muld(taxRate)
+    let actualFee   = baseFee + tax
+
+    (actualFee, 0, tax)
+  }
+
+  let feeInTargetToken = muld(targetAmount, actualFee)
+  let resultTargetAssetAmount = targetAmount - feeInTargetToken
+
+  (
+    targetAmount, 
+    feeInTargetToken, 
+    resultTargetAssetAmount, 
+    baseFee, 
+    actualFee, 
+    rebate, 
+    tax, 
+    vaultToRemove, 
+    vaultToAdd,
+    addImbalanceUSD, 
+    addVaultBalanceUSD,
+    removeImbalanceUSD,
+    removeVaultBalanceUSD
+  )
+}
+
 # Checks if AMM was properly initialized
 #
 func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
 
 ##### Update functions #####
 func updateSettings(
-  _fee: Int
+  _fee: Int,
+  _rebate: Int
 ) = {
   [
-    IntegerEntry(k_fee, _fee)
+    IntegerEntry(k_fee, _fee),
+    IntegerEntry(k_rebate, _rebate)
   ]
 }
 
@@ -135,34 +229,25 @@ func unpause() = {
 
 # Changes the settings of the contract.
 #
-# @param _initMarginRatio The initial margin ratio for the contract.
-# @param _mmr The maintenance margin ratio for the contract.
-# @param _liquidationFeeRatio The liquidation fee ratio for the contract.
-# @param _fundingPeriod The funding period for the contract.
 # @param _fee The fee for the contract.
-# @param _spreadLimit The spread limit for the contract.
-# @param _maxPriceImpact The maximum price impact for the contract.
-# @param _partialLiquidationRatio The partial liquidation ratio for the contract.
-# @param _maxPriceSpread The maximum oracle / market price spread for the contract.
-# @param _feeToStakersPercent The fee to stakers percent for the contract.
-# @param _maxOracleDelay The maximum oracle delay (blocks) for the contract.
-# @param _rolloverFee The rollover fee for the contract.
-# @param _fundingMode Symmetric or asymmetric funding.
 #
 # @notice admin only
 @Callable(i)
 func changeSettings(
-  _fee: Int
+  _fee: Int,
+  _rebate: Int
 ) = {
   if (
     _fee <= 0
+    || _rebate <= 0
     || !initialized()
     || i.caller != adminAddress()
   ) then {
     throw("Invalid changeSettings params")
   } else {
     updateSettings(
-      _fee
+      _fee,
+      _rebate
     )
   }
 }
@@ -198,17 +283,20 @@ func removeAmm(
 @Callable(i)
 func initialize(
   _coordinator: String,
-  _fee: Int
+  _fee: Int,
+  _rebate: Int
 ) = {
   if (
     _fee <= 0
+    || _rebate <= 0
     || initialized()
     || i.caller != this
   ) then {
     throw("Invalid initialize parameters")
   } else {
     updateSettings( 
-      _fee
+      _fee,
+      _rebate
     )
     ++
     [
@@ -227,79 +315,81 @@ func swap(
   let _assetId = i.payments[0].assetId
 
   let assetId = if (_assetId.isDefined()) then _assetId.value().toBase58String() else "WAVES"
-  let sourceDecimals = if (_assetId.isDefined()) then assetInfo(_assetId.value()).value().decimals else 8
-  let targetDecimals = if (_targetAsset == "WAVES") then 8 else assetInfo(fromBase58String(_targetAsset)).valueOrErrorMessage("Invalid asset: " + _targetAsset).decimals
-  let sourceAmountInAmmDecimals = if (sourceDecimals == 8) then _amount / 100 else if (sourceDecimals == 6) then _amount else throw("Invalid decimals (source)")
 
-  # 1. Find market for source asset
-  let sellMarket = getMarket(assetId)
-
-  # 2. Sell it for USD
-  strict s1 = invoke(sellMarket, "swapToQuote", [sourceAmountInAmmDecimals, 0], [])
-  let usdAmount = match (s1) {
-    case t: Int => t
-    case _ => throw("Invalid swapToQuote result")
-  }
-
-  # 3. Find market for target asset
-  let buyMarket = getMarket(_targetAsset)
-
-  # 4. Buy it for USD
-  strict s2 = invoke(buyMarket, "swapToBase", [usdAmount, _minTargetAmount], [])
-  let targetAmount = match (s2) {
-    case t: Int => if (targetDecimals == 8) then t * 100 else if (targetDecimals == 6) then t else throw("Invalid decimals (target)")
-    case _ => throw("Invalid swapToBase result")
-  }
-
-  # 5. Get the fee for source asset addition
-  let vaultToAdd = getVault(assetId)
-
-  strict s3 = invoke(vaultToAdd, "getFeeRate", [_amount], [])
-  let addFee = match (s3) {
-    case t: Int => t
-    case _ => throw("Invalid getFeeRate (add) result")
-  }
-
-  # 6. Get the fee for target asset depletion
-  let vaultToRemove = getVault(_targetAsset)
-
-  strict s4 = invoke(vaultToRemove, "getFeeRate", [-targetAmount], [])
-  let removeFee = match (s4) {
-    case t: Int => t
-    case _ => throw("Invalid getFeeRate (remove) result")
-  }
-
-  # 7. Compute the fee as max fee from both
-  let feeRate = if (addFee > removeFee) then addFee else removeFee
-  let adjFee = fee().muld(feeRate)
-  let feeInTargetToken = muld(targetAmount, fee().muld(feeRate))
-
-  # strict xxx = throw("feeRate=" + feeRate.toString() 
-  #  + " adjFee=" + adjFee.toString() 
-  #  + " feeInTargetToken=" + feeInTargetToken.toString() 
-  #  + " targetAmount=" + targetAmount.toString()
-  #)
+  strict (
+    targetAmount, 
+    feeInTargetToken,
+    resultTargetAssetAmount,
+    baseFee, 
+    actualFee, 
+    rebate, 
+    tax, 
+    vaultToRemove, 
+    vaultToAdd
+  ) = estimateSwap(_amount, assetId, _targetAsset)
   
   # 8. Withdraw full amount of tokens to withdraw and deposit full amount of tokens to deposit
   #
   strict doWithdraw = invoke(vaultToRemove, "borrow", [targetAmount], [])
   strict doDeposit  = invoke(vaultToAdd   , "repay" , []            , [i.payments[0]])
 
-  # 9. Distribute fee to LP
+  # 9. Distribute fee to LP, basically remove fee back, but it belongs to LP now
   let targetAsset = if (_targetAsset == "WAVES") then unit else fromBase58String(_targetAsset)
   strict doCollectFee = invoke(vaultToRemove, "addFree", [], [
     AttachedPayment(targetAsset, feeInTargetToken)
   ])
   
-
   # 9. Distribute fee to TSN holders
   # TBD
   
-  # 10. Finish swap
+  # 10. Finish swap, but check slippage first
   #
-  [
-    ScriptTransfer(i.caller, (targetAmount - feeInTargetToken), targetAsset)
-  ]
+  if (_minTargetAmount > 0 && resultTargetAssetAmount < _minTargetAmount) then {
+    throw("Can not swap due to slippage: " + resultTargetAssetAmount.toString() + " < " + _minTargetAmount.toString())
+  } else {
+    ([
+      ScriptTransfer(i.caller, (targetAmount - feeInTargetToken), targetAsset)
+    ], (_amount, resultTargetAssetAmount, baseFee, actualFee, rebate, tax))
+  }
+}
+
+@Callable(i)
+func view_estimateSwap(
+  _sourceAmount: Int,
+  _sourceAsset: String,
+  _targetAsset: String
+) = {
+  strict (
+    targetAmount, 
+    feeInTargetToken,
+    resultTargetAssetAmount,
+    baseFee, 
+    actualFee, 
+    rebate, 
+    tax, 
+    vaultToRemove, 
+    vaultToAdd,
+    addImbalanceUSD, 
+    addVaultBalanceUSD,
+    removeImbalanceUSD,
+    removeVaultBalanceUSD
+  ) = estimateSwap(_sourceAmount, _sourceAsset, _targetAsset)
+  
+  let data = [
+    targetAmount.toString(),
+    feeInTargetToken.toString(),
+    resultTargetAssetAmount.toString(),
+    baseFee.toString(),
+    actualFee.toString(),
+    rebate.toString(),
+    tax.toString(),
+    addImbalanceUSD.toString(),
+    addVaultBalanceUSD.toString(),
+    removeImbalanceUSD.toString(),
+    removeVaultBalanceUSD.toString()
+  ].makeString(",")
+
+  throw(data)
 }
 
 @Verifier(tx)

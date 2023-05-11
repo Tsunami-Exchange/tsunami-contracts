@@ -9,6 +9,7 @@
     "ride-test:vAMM2:partial": "cd contracts && surfboard test vAMM2-partial.ride-test.js",
     "ride-test:vAMM2:largek": "cd contracts && surfboard test vAMM2-largek.ride-test.js",
     "ride-test:vAMM2:liquidation": "cd contracts && surfboard test vAMM2-liquidation.ride-test.js",
+    "ride-test:vAMM2:liquidity": "cd contracts && surfboard test vAMM2-liquidity.ride-test.js",
     "ride-test:vAMM2:impact": "cd contracts && surfboard test vAMM2-impact.ride-test.js",
     "ride-test:vAMM2:spread": "cd contracts && surfboard test vAMM2-spread.ride-test.js",
     "ride-test:vAMM2:orders": "cd contracts && surfboard test vAMM2-orders.ride-test.js",
