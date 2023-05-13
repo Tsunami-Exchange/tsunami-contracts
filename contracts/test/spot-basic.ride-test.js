@@ -59,16 +59,20 @@ describe("Spot vAMM should swap Waves <-> USDN", async function () {
       [usdt_lp]: 1000,
     });
 
-    waves_spot = await e.deploySpotAmm(100000, 55, {
+    waves_spot = await e.deploySpotAmm(1, 55, {
       asset: "WAVES",
     });
-    usdn_spot = await e.deploySpotAmm(10000000, 1, {
+    usdn_spot = await e.deploySpotAmm(1, 1, {
       asset: e.assets.neutrino,
+      maxPriceSpread: 0.005,
+      maxUtilizationRate: 0.55,
     });
   });
 
   it("Can LP Waves", async function () {
     await waves_spot.vault.as(waves_lp).stake(100);
+    let { baseChangeAmount } = await e.spot.estimateProjectedLiquidity("WAVES");
+    expect(baseChangeAmount).to.be.eq(0);
   });
 
   it("Can LP USDN", async function () {
@@ -111,9 +115,11 @@ describe("Spot vAMM should swap Waves <-> USDN", async function () {
     let estimation = await e.spot.estimateSwap(10, "WAVES", e.assets.neutrino);
     console.log(JSON.stringify(estimation));
 
-    expect(estimation.tax).to.be.closeTo(0.1091, 0.001);
+    expect(estimation.tax).to.be.closeTo(0.1076, 0.001);
 
     await e.spot.as(waves_trader).swap("WAVES", 10, e.assets.neutrino, 0);
+    let { baseChangeAmount } = await e.spot.estimateProjectedLiquidity("WAVES");
+    expect(baseChangeAmount).to.be.eq(0);
 
     {
       let wavesBalance = await waves_spot.vault.usdnBalanceOf(waves_lp);
@@ -140,13 +146,13 @@ describe("Spot vAMM should swap Waves <-> USDN", async function () {
 
     {
       let price = await waves_spot.amm.getMarketPrice();
-      expect(price).to.be.equal(54.4);
+      expect(price).to.be.equal(53.9778);
 
       let rateWaves = await waves_spot.vault.rate();
       expect(rateWaves).to.be.equal(1);
 
       let rateUsdn = await usdn_spot.vault.rate();
-      expect(rateUsdn).to.be.equal(1.0613);
+      expect(rateUsdn).to.be.equal(1.06);
     }
 
     // TODO: Check swap amounts
@@ -188,13 +194,13 @@ describe("Spot vAMM should swap Waves <-> USDN", async function () {
 
     {
       let price = await waves_spot.amm.getMarketPrice();
-      expect(price).to.be.equal(55);
+      expect(price).to.be.equal(55.009);
 
       let rateWaves = await waves_spot.vault.rate();
       expect(rateWaves).to.be.equal(1);
 
       let rateUsdn = await usdn_spot.vault.rate();
-      expect(rateUsdn).to.be.equal(1.0613);
+      expect(rateUsdn).to.be.equal(1.06);
     }
   });
 

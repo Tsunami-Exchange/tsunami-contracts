@@ -1410,7 +1410,11 @@ class Environment {
         {
           dApp: address(this.seeds.vault),
           functionName: "initialize",
-          arguments: [address(this.seeds.coordinator), this.assets.neutrino],
+          arguments: [
+            address(this.seeds.coordinator),
+            this.assets.neutrino,
+            0 * wvs,
+          ],
         },
         this.seeds.vault
       );
@@ -2408,7 +2412,11 @@ class Environment {
           {
             dApp: address(vaultSeed),
             functionName: "initialize",
-            arguments: [address(this.seeds.coordinator), options.asset],
+            arguments: [
+              address(this.seeds.coordinator),
+              options.asset,
+              Math.round((options.maxUtilizationRate || 0.5) * wvs),
+            ],
           },
           vaultSeed
         );
@@ -2453,15 +2461,11 @@ class Environment {
               { type: "string", value: address(this.seeds.coordinator) }, // Coordinator address,
               {
                 type: "integer",
-                value: Math.round((options.spreadLimit || 0.1) * decimals),
-              }, // _spreadLimit 10%
-              {
-                type: "integer",
                 value: Math.round((options.maxPriceImpact || 0.08) * decimals),
               }, // _maxPriceImpact 8%
               {
                 type: "integer",
-                value: Math.round((options.maxPriceSpread || 0.4) * decimals),
+                value: Math.round((options.maxPriceSpread || 0.045) * decimals),
               },
               {
                 type: "integer",
@@ -5233,6 +5237,47 @@ class Spot {
         addVaultBalanceUSD,
         removeImbalanceUSD,
         removeVaultBalanceUSD,
+      };
+    }
+  }
+
+  async estimateProjectedLiquidity(_sourceToken, _tokenDelta = 0) {
+    const invokeTx = invokeScript(
+      {
+        dApp: address(this.e.seeds.spot),
+        call: {
+          function: "view_estimateProjectedLiquidity",
+          args: [
+            { type: "string", value: _sourceToken },
+            { type: "integer", value: Math.round(_tokenDelta * 10 ** 8) },
+          ],
+        },
+      },
+      this.e.seeds.admin
+    );
+
+    try {
+      await broadcast(invokeTx);
+    } catch (e) {
+      let { message } = JSON.parse(JSON.stringify(e));
+      console.log(JSON.stringify(e));
+      if (message.includes("xxx")) {
+        throw Error(message);
+      }
+      let parts = message
+        .replace("Error while executing account-script: ", "")
+        .split(",");
+
+      let baseChangeAmount = Number.parseFloat(
+        (parseInt(parts[0]) / 10 ** 8).toFixed(4)
+      );
+      let quoteChangeAmount = Number.parseFloat(
+        (parseInt(parts[1]) / 10 ** 8).toFixed(4)
+      );
+
+      return {
+        baseChangeAmount,
+        quoteChangeAmount,
       };
     }
   }

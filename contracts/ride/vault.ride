@@ -14,6 +14,9 @@
   let k_vaultAsset = "k_vaultAsset"
   let k_vaultAssetDecimals = "k_vaultAssetDecimals"
 
+  # Vault settings
+  let k_maxSpotUtilization = "k_maxSpotUtilization"
+
   # Global staking
   let k_rate = "k_rate" # Rate of exchange from Asset to v-Shares
   let k_lastUpdateTime = "k_lastUpdateTime"
@@ -49,7 +52,7 @@
   func coordinator() = addressFromString(this.getString(k_coordinatorAddress).valueOrErrorMessage("Coordinator not set")).valueOrErrorMessage("Coordinator address invalid")
   func adminAddress() = addressFromString(coordinator().getString(k_admin_address).valueOrErrorMessage("Admin address not set"))
   func isWhitelist(_address: String) = getBoolean(coordinator(), k_amm.toCompositeKey(_address)).valueOrElse(false)
-  func isSpot(_address: String) = getString(coordinator(), k_spot_address).valueOrErrorMessage("Spot address not set") == _address
+  func spotAddress() = addressFromString(getString(coordinator(), k_spot_address).valueOrErrorMessage("Spot address not set")).valueOrErrorMessage("Spot address invalid")
   func governanceAsset() = fromBase58String(coordinator().getString(k_governance_asset).valueOrErrorMessage("Governance asset not set"))
   func vaultAssetStr() = this.getString(k_vaultAsset).valueOrErrorMessage("Vault asset not set")
   func vaultAsset() = {
@@ -114,6 +117,7 @@
   func rewardBalance() = int0(k_rewardBalance)
   func rewards(_staker: String) = int0(k_userReward.toCompositeKey(_staker))
   func userRewardPerTokenPaid(_staker: String) = int0(k_userRewardPerToken.toCompositeKey(_staker))
+  func maxSpotUtilization() = int0(k_maxSpotUtilization)
 
   func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
 
@@ -230,12 +234,15 @@
   }
 
   func updateExcessBalance(_change: Int) = {
-    let balance = excessBalance()
-    # TODO: Check max imbalance
-    [
-      IntegerEntry(k_excessBalance, balance + _change)
-    ]
-
+    let newImbalance = excessBalance() + _change
+    let utilizationRate = divd(abs(newImbalance), freeBalance())
+    if (utilizationRate < maxSpotUtilization()) then {
+      [
+        IntegerEntry(k_excessBalance, newImbalance)
+      ]
+    } else {
+      throw("Vault: can not update excess balance. Balance: " + excessBalance().toString() + " change: " + _change.toString() + " utilization rate: " + utilizationRate.toString() + " max utilization rate: " + maxSpotUtilization().toString())
+    }
   }
 
   func updateTotalSupply(_change: Int) = {
@@ -299,9 +306,10 @@
   @Callable(i)
   func initialize(
     _coordinator: String,
-    _vaultAsset: String
+    _vaultAsset: String,
+    _maxSpotUtilization: Int
   ) = {
-    if (initialized() || i.caller != this) then {
+    if (initialized() || i.caller != this || _maxSpotUtilization < 0 || _maxSpotUtilization > DECIMAL_UNIT) then {
       throw("Unable to initialize")
     } else {
       let assetDecimals = if (_vaultAsset == "WAVES") then {
@@ -312,11 +320,11 @@
         info.decimals
       }
 
-      
       [
         StringEntry(k_coordinatorAddress, addressFromString(_coordinator).valueOrErrorMessage("Invalid coordinator address").toString()),
         StringEntry(k_vaultAsset, _vaultAsset),
         IntegerEntry(k_vaultAssetDecimals, assetDecimals),
+        IntegerEntry(k_maxSpotUtilization, _maxSpotUtilization),
         BooleanEntry(k_initialized, true)
       ]
     }
@@ -357,6 +365,13 @@
         "deposit",
         [],
         [AttachedPayment(vaultAsset(), _amount.assetFromDecimals())]
+      )
+
+      strict notify = invoke(
+        spotAddress(),
+        "notifyVaultBalanceChange",
+        [vaultAssetStr(), _amount],
+        []
       )
 
       updateUserRewards(_staker, stakerEarned, stakerRewardPerTokenPaid)
@@ -411,6 +426,13 @@
             managerAddress(),
             "withdraw",
             [vaultAssetStr(),  amountOfQuoteAsset.assetFromDecimals()],
+            []
+          )
+
+          strict notify = invoke(
+            spotAddress(),
+            "notifyVaultBalanceChange",
+            [vaultAssetStr(), -amountOfQuoteAsset],
             []
           )
 
@@ -471,7 +493,7 @@
       || !initialized()
       || !(
         isWhitelist(i.caller.toString())
-        || isSpot(i.caller.toString())
+        || i.caller == spotAddress()
         || i.caller == adminAddress()
       )
     ) then {
@@ -572,7 +594,7 @@
       !initialized()
       || _amount <= 0
       || !(
-        isSpot(i.caller.toString())
+        i.caller == spotAddress()
       )
     ) then {
       throw("Invalid borrow params")
@@ -602,7 +624,7 @@
       || i.payments.size() != 1
       || !initialized()
       || !(
-        isSpot(i.caller.toString()) 
+        i.caller == spotAddress()
         || i.caller == adminAddress()
       )
     ) then {

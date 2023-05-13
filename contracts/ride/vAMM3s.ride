@@ -15,7 +15,6 @@ let k_paused = "k_paused"                                 # If all AMM operation
 
 # Exchange settings
 let k_fee = "k_fee"                                       # Exchange fee. Default is 0.012%. 1/3 goes to stakers, 2/3 goes to vault
-let k_spreadLimit = "k_spreadLimit"                       # abs((marketPrice - oraclePrice) / oraclePrice). If over spread limit, liquidations consult oracle price
 let k_maxPriceImpact = "k_maxPriceImpact"                 # maximum price impact per order
 let k_maxPriceSpread = "k_maxPriceSpread"                 # max spread between Index and Market Price
 let k_maxOracleDelay = "k_maxOracleDelay"                 # max delay in oracle data
@@ -49,7 +48,7 @@ func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)
 func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
 func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
 func stakingAddress() = addressFromString(coordinator().getStringValue(k_staking_address)).valueOrErrorMessage("Staking not set")
-func isSpot(_address: String) = getString(coordinator(), k_spot_address).valueOrErrorMessage("Spot address not set") == _address
+func spotAddress() = addressFromString(getString(coordinator(), k_spot_address).valueOrErrorMessage("Spot address not set"))
 func referralAddress() = addressFromString(coordinator().getStringValue(k_referral_address)).valueOrErrorMessage("Referral not set")
 func nftManagerAddress() = addressFromString(coordinator().getStringValue(k_nft_manager_address)).valueOrErrorMessage("NFT Manager not set")
 
@@ -104,7 +103,6 @@ func bsAstR() = int(k_baseAssetReserve)
 func qtAstW() = intOr(k_quoteAssetWeight, DECIMAL_UNIT)
 func bsAstW() = intOr(k_baseAssetWeight, DECIMAL_UNIT)
 func totalPositionSize() = int(k_totalPositionSize)
-func spreadLimit() = int(k_spreadLimit)
 func maxPriceImpact() = int(k_maxPriceImpact)
 func maxPriceSpread() = int(k_maxPriceSpread)
 func maxOracleDelay() = int(k_maxOracleDelay)
@@ -357,22 +355,6 @@ func absPriceDiff(
   absPriceDiff
 }
 
-# Checks that the result of operation is not bringing AMM over the spread limit.
-# Note, that this method will allow any operation that is actually IMPROVING spread.
-#
-func requireNotOverSpreadLimit(_quoteAssetReserve: Int, _baseAssetReserve: Int) = {
-  let oraclePrice = getOraclePrice()
-  let _qtAstW = qtAstW()
-  let _bsAstW = bsAstW()
-  let absPriceDiffBefore = absPriceDiff(oraclePrice, qtAstR(), bsAstR(), _qtAstW, _bsAstW)
-  let absPriceDiffAfter = absPriceDiff(oraclePrice, _quoteAssetReserve, _baseAssetReserve, _qtAstW, _bsAstW)
-  if (absPriceDiffAfter > maxPriceSpread() && absPriceDiffAfter > absPriceDiffBefore) then {
-      throw("Price spread " + absPriceDiffAfter.toString() + " > max price spread " + maxPriceSpread().toString())
-  } else {
-    true
-  }
-}
-
 # Returns current spot price
 #
 func getSpotPrice() = {
@@ -381,15 +363,6 @@ func getSpotPrice() = {
   let _qtAstW = qtAstW()
   let _bsAstW = bsAstW()
   divd(_quoteAssetReserve.muld(_qtAstW), _baseAssetReserve.muld(_bsAstW))
-}
-
-# Checks if stop price and index price diverge more then spreadLimit. Used to determine what price to use
-# to compute liquidation. When isOverFluctuationLimit() == true, best of mark/index MR will be used 
-#
-func isOverFluctuationLimit() = {
-  let oraclePrice = getOraclePrice()
-  let currentPrice = getSpotPrice()
-  divd(abs(oraclePrice - currentPrice), oraclePrice) > spreadLimit()
 }
 
 func getTerminalAmmState() = {
@@ -479,13 +452,11 @@ func getAdjustedFee(_artifactId: String, _baseFeeDiscount: Int) = {
 }
 
 func updateSettings(
-  _spreadLimit: Int,
   _maxPriceImpact: Int,
   _maxPriceSpread: Int,
   _maxOracleDelay: Int
 ) = {
   [
-    IntegerEntry(k_spreadLimit, _spreadLimit),
     IntegerEntry(k_maxPriceImpact, _maxPriceImpact),
     IntegerEntry(k_maxPriceSpread, _maxPriceSpread),    
     IntegerEntry(k_maxOracleDelay, _maxOracleDelay)
@@ -575,17 +546,19 @@ func unpause() = {
   }
 }
 
-# Adds specified amount of liquidity to the market.
+# Change specified amount of liquidity to the market.
 # 
 # @param _quoteAssetAmount Amount of liquidity to add (in quote asset, 6 decimals)
 # @notice admin only
 @Callable(i)
-func addLiquidity(_quoteAssetAmount: Int) = {
+func changeLiquidity(_quoteAssetAmount: Int) = {
   if (
-    i.caller != adminAddress()
-    || _quoteAssetAmount <= 0
+    !(
+        i.caller == spotAddress()
+        || i.caller == adminAddress()
+      )
   ) then {
-    throw("Invalid addLiquidity params")
+    throw("Invalid changeLiquidity params")
   } else {
     let _qtAstR = qtAstR()
     let _bsAstR = bsAstR()
@@ -609,40 +582,6 @@ func addLiquidity(_quoteAssetAmount: Int) = {
   }
 }
 
-# Removes specified amount of liquidity to the market.
-#
-# @param _quoteAssetAmount Amount of liquidity to remove (in quote asset, 6 decimals)
-# @notice admin only
-@Callable(i)
-func removeLiquidity(_quoteAssetAmount: Int) = {
-  if (
-    i.caller != adminAddress()
-    || _quoteAssetAmount >= 0
-  ) then {
-    throw("Invalid removeLiquidity params")
-  } else {
-    let _qtAstR = qtAstR()
-    let _bsAstR = bsAstR()
-    let _qtAstW = qtAstW()
-    let _bsAstW = bsAstW()
-    let price = divd(_qtAstR.muld(_qtAstW), _bsAstR.muld(_bsAstW))
-
-    let qtAstRAfter = _qtAstR - _quoteAssetAmount
-    let baseAssetAmountToRemove = abs(divd(qtAstRAfter.muld(_qtAstW), price) - _bsAstR)
-
-    let bsAstRAfter = _bsAstR - baseAssetAmountToRemove
-
-    let (
-      newQuoteAssetWeight,
-      newBaseAssetWeight
-    ) = getSyncTerminalPrice(getOraclePrice(), qtAstRAfter, bsAstRAfter)
-
-    updateAmmReserves(qtAstRAfter, bsAstRAfter)
-    ++
-    updateAmmWeights(newQuoteAssetWeight, newBaseAssetWeight)
-  }
-}
-
 # Changes the settings of the contract.
 #
 # @param _initMarginRatio The initial margin ratio for the contract.
@@ -650,7 +589,6 @@ func removeLiquidity(_quoteAssetAmount: Int) = {
 # @param _liquidationFeeRatio The liquidation fee ratio for the contract.
 # @param _fundingPeriod The funding period for the contract.
 # @param _fee The fee for the contract.
-# @param _spreadLimit The spread limit for the contract.
 # @param _maxPriceImpact The maximum price impact for the contract.
 # @param _partialLiquidationRatio The partial liquidation ratio for the contract.
 # @param _maxPriceSpread The maximum oracle / market price spread for the contract.
@@ -662,14 +600,12 @@ func removeLiquidity(_quoteAssetAmount: Int) = {
 # @notice admin only
 @Callable(i)
 func changeSettings(
-  _spreadLimit: Int,
   _maxPriceImpact: Int,
   _maxPriceSpread: Int,
   _maxOracleDelay: Int
 ) = {
   if (
-    _spreadLimit <= 0
-    || _maxPriceImpact <= 0
+    _maxPriceImpact <= 0
     || _maxPriceSpread <= 0
     || _maxOracleDelay <= 0
     || !initialized()
@@ -678,7 +614,6 @@ func changeSettings(
     throw("Invalid changeSettings params")
   } else {
     updateSettings(
-      _spreadLimit, 
       _maxPriceImpact,
       _maxPriceSpread,
       _maxOracleDelay
@@ -692,7 +627,6 @@ func initialize(
   _bsAstR: Int,
   _baseOracleData: String,
   _coordinator: String,
-  _spreadLimit: Int,
   _maxPriceImpact: Int,
   _maxPriceSpread: Int,
   _maxOracleDelay: Int
@@ -700,7 +634,6 @@ func initialize(
   if (
     _qtAstR <= 0
     || _bsAstR <= 0
-    || _spreadLimit <= 0
     || _maxPriceImpact <= 0
     || _maxPriceSpread <= 0
     || _maxOracleDelay <= 0
@@ -712,7 +645,6 @@ func initialize(
     updateAmm(_qtAstR, _bsAstR, 0)
     ++
     updateSettings(
-      _spreadLimit, 
       _maxPriceImpact,
       _maxPriceSpread,
       _maxOracleDelay
@@ -737,7 +669,7 @@ func swapToBase(
   if (
     !initialized()
     || paused()
-    || !isSpot(i.caller.toString())
+    || i.caller != spotAddress()
   ) then {
     throw("Invalid swapToBase parameters")
   } else {
@@ -771,7 +703,7 @@ func swapToQuote(
   if (
     !initialized()
     || paused()
-    || !isSpot(i.caller.toString())
+    || i.caller != spotAddress()
   ) then {
     throw("Invalid swapToQuote parameters")
   } else {
@@ -851,6 +783,16 @@ func computeSpotPrice() = {
   let result = getSpotPrice()
 
   ([], result)
+}
+
+# Compute function. Return current index price in a way that can be used in dApp-to-dApp calls.
+# Returns current index price in 6 decimals.
+@Callable(i)
+func computeTerminalAmmPrice() = {
+  let (terminalQuoteAssetReserve, terminalBaseAssetReserve) = getTerminalAmmState()
+  let price = divd(terminalQuoteAssetReserve.muld(qtAstW()), terminalBaseAssetReserve.muld(bsAstW()))
+  
+  ([], price)
 }
 
 @Verifier(tx)

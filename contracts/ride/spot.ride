@@ -20,6 +20,13 @@ let k_coordinatorAddress = "k_coordinatorAddress"         # Address of Coordinat
 # Vault
 let k_excessBalance = "k_excessBalance"
 let k_freeBalance = "k_freeBalance"
+let k_maxSpotUtilization = "k_maxSpotUtilization"
+
+# AMMs
+let k_maxPriceSpread = "k_maxPriceSpread"
+let k_baseAssetReserve = "k_bsAstR"
+let k_quoteAssetWeight = "k_qtAstW"           
+let k_totalPositionSize = "k_totalPositionSize"
 
 # Own keys
 let k_amm = "k_amm"
@@ -75,6 +82,28 @@ func getFreeBalance(_vault: Address) = {
   _vault.getInteger(k_freeBalance).valueOrElse(0)
 }
 
+func getMaxUtilization(_vault: Address) = {
+  _vault.getInteger(k_maxSpotUtilization).valueOrErrorMessage("Max spot utilization not set for: " + _vault.toString())
+}
+
+func getMaxPriceSpread(_amm: Address) = {
+  _amm.getInteger(k_maxPriceSpread).valueOrErrorMessage("Max price spread not set for: " + _amm.toString())
+}
+
+func getOldProjectedLiquidityAndTerminalPrice(_amm: Address) = {
+  strict priceR = invoke(_amm, "computeTerminalAmmPrice", [], [])
+  let price = match (priceR) {
+    case t: Int => t
+    case _ => throw("Invalid computeTerminalAmmPrice result for " + _amm.toString())
+  }
+  
+  strict currentBaseAssetAmount = _amm.getInteger(k_baseAssetReserve).valueOrErrorMessage("Key " + k_baseAssetReserve + " not set for " + _amm.toString())
+  strict baseAssetAmountDelta = _amm.getInteger(k_totalPositionSize).valueOrElse(0)
+  strict quoteAssetWeight = _amm.getInteger(k_quoteAssetWeight).valueOrElse(DECIMAL_UNIT)
+  
+  (currentBaseAssetAmount + baseAssetAmountDelta, price, quoteAssetWeight)
+}
+
 func getImbalanceCostUSD(_vault: Address, _amm: Address, _decimals: Int, _amount: Int) = {
   # Note, _amount is always in _decimals, and _vault operates in 10^8, so adjust first
   let amount = if (_decimals == 8) then _amount
@@ -110,11 +139,12 @@ func estimateSwap(
   _assetId: String,
   _targetAsset: String
 ) = {
+
   let sourceDecimals = if (_assetId == "WAVES") then 8 else assetInfo(fromBase58String(_assetId)).valueOrErrorMessage("Invalid asset: " + _assetId).decimals
   let targetDecimals = if (_targetAsset == "WAVES") then 8 else assetInfo(fromBase58String(_targetAsset)).valueOrErrorMessage("Invalid asset: " + _targetAsset).decimals
   let sourceAmountInAmmDecimals = if (sourceDecimals == 8) then _amount / 100 else if (sourceDecimals == 6) then _amount else throw("Invalid decimals (source)")
 
-  # 1. Find market for source asset
+  # 1. Find market for source asset and
   let sellMarket = getMarket(_assetId)
 
   # 2. Sell it for USD
@@ -142,7 +172,7 @@ func estimateSwap(
   let vaultToRemove = getVault(_targetAsset)
   let (removeImbalanceUSD, removeVaultBalanceUSD) = getImbalanceCostUSD(vaultToRemove, buyMarket, targetDecimals, -targetAmount)
 
-  # 7. Compute the fee (if overall imbalance improves - rebate the fee, otherwise increase the fee)
+  # 7. Compute the fee (if overall imbalance improves - rebate (reduce) the fee, otherwise increase the fee)
   let resultImbalanceInUSD = addImbalanceUSD + removeImbalanceUSD
   let baseFee = fee()
   let (actualFee, rebate, tax) = if (resultImbalanceInUSD < 0) then {
@@ -179,6 +209,19 @@ func estimateSwap(
     removeImbalanceUSD,
     removeVaultBalanceUSD
   )
+}
+
+func estimateProjectedLiquidity(_vault: Address, _amm: Address, _change: Int) = {
+  let vaultReserve = (getFreeBalance(_vault) / 100) + (_change / 100) # Vault is in 10^8
+  let vaultUtilization = getMaxUtilization(_vault) / 100 # Vault is in 10^8
+  let maxPriceSpread = getMaxPriceSpread(_amm)
+  let actualLiquidityInBaseAsset = vaultReserve.muld(vaultUtilization)
+  let newBaseAssetAmount = divd((actualLiquidityInBaseAsset - maxPriceSpread.muld(actualLiquidityInBaseAsset)), maxPriceSpread)
+  strict (oldBaseAssetAmount, price, q) = getOldProjectedLiquidityAndTerminalPrice(_amm)
+  let baseAssetAmountDelta = newBaseAssetAmount - oldBaseAssetAmount
+  let quoteAssetChange = muld(baseAssetAmountDelta, price).divd(q)
+
+  (baseAssetAmountDelta, quoteAssetChange)
 }
 
 # Checks if AMM was properly initialized
@@ -351,6 +394,36 @@ func swap(
       ScriptTransfer(i.caller, (targetAmount - feeInTargetToken), targetAsset)
     ], (_amount, resultTargetAssetAmount, baseFee, actualFee, rebate, tax))
   }
+}
+
+@Callable(i)
+func notifyVaultBalanceChange(_asset: String, _change: Int) = {
+  let market = getMarket(_asset)
+  let vault  = getVault(_asset)
+
+  if (i.caller != vault) then {
+    throw("Invalid notifyVaultBalanceChange params")
+  } else {
+    strict (baseAssetAmountDelta, quoteAssetChange) = estimateProjectedLiquidity(vault, market, _change)
+    strict result = invoke(market, "changeLiquidity", [quoteAssetChange], [])
+    
+    []
+  }
+}
+
+@Callable(i)
+func view_estimateProjectedLiquidity(_asset: String, _change: Int) = {
+  let market = getMarket(_asset)
+  let vault  = getVault(_asset)
+
+  strict (baseAssetAmountDelta, quoteAssetChange) = estimateProjectedLiquidity(vault, market, _change)
+    
+  let data = [
+    baseAssetAmountDelta.toString(),
+    quoteAssetChange.toString()
+  ].makeString(",")
+
+  throw(data) 
 }
 
 @Callable(i)
