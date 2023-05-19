@@ -231,27 +231,28 @@
     let diff = if (lastPrice == 0) then 0 else abs((price - lastPrice).divd(lastPrice))
     let isValidDiff = diff < maxDeviation
 
-    if (streamLastTimestamp > timestamp) then {
-      ([], (lastPrice, lastSpread, streamLastTimestamp))
-    } else {
-      if (isQuorumReached && isValidTimestamp && iNotStopped && isValidDiff) then {
-        ([
-          IntegerEntry(k_stream_data_price.toCompositeKey(id)    , price),
-          IntegerEntry(k_stream_data_spread.toCompositeKey(id)   , spread),
-          IntegerEntry(k_stream_data_timestamp.toCompositeKey(id), timestamp),
-          IntegerEntry(k_stream_data_block.toCompositeKey(id)    , height)
-        ], (price, spread, timestamp))
+    
+    if (isQuorumReached && isValidTimestamp && iNotStopped && isValidDiff) then {
+      if (streamLastTimestamp > timestamp) then {
+        ([], (lastPrice, lastSpread, streamLastTimestamp))
       } else {
-        let reasons = [
-          if (!isValidTimestamp) then "invalid timestamp" else "",
-          if (!iNotStopped) then "stopped" else "",
-          if (!isValidDiff) then "invalid diff (too large)" else "",
-          if (!isQuorumReached) then "quorum not reached" else ""
-        ]
-
-        let reason = makeString(reasons, ", ")
-        throw("Invalid updateDate params: " + reason)
+      ([
+        IntegerEntry(k_stream_data_price.toCompositeKey(id)    , price),
+        IntegerEntry(k_stream_data_spread.toCompositeKey(id)   , spread),
+        IntegerEntry(k_stream_data_timestamp.toCompositeKey(id), timestamp),
+        IntegerEntry(k_stream_data_block.toCompositeKey(id)    , height)
+      ], (price, spread, timestamp))
       }
+    } else {
+      let reasons = [
+        if (!isValidTimestamp) then "invalid timestamp" else "",
+        if (!iNotStopped) then "stopped" else "",
+        if (!isValidDiff) then "invalid diff (too large)" else "",
+        if (!isQuorumReached) then "quorum not reached" else ""
+      ]
+
+      let reason = makeString(reasons, ", ")
+      throw("Invalid updateDate params: " + reason)
     }
   }
 

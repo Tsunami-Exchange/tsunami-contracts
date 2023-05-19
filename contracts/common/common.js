@@ -37,6 +37,9 @@ class Environment {
   /** @type {Spot} */
   spot = null;
 
+  /** @type {boolean} */
+  isChild = false;
+
   constructor(admin) {
     this.seeds = {};
     this.assets = {};
@@ -1808,6 +1811,60 @@ class Environment {
 
       await waitForTx(initVaultTx.id);
       console.log("Vault initialized in " + initVaultTx.id);
+    }
+  }
+
+  async deployJitOracle(oraclePublicKeys) {
+    if (!this.seeds.jitOracle) {
+      throw Error(`No seed for Oracle contract`);
+    }
+
+    if (!oraclePublicKeys || !oraclePublicKeys.length) {
+      throw Error(`oraclePublicKeys should be array of keys`);
+    }
+
+    let coordinatorAddress =
+      this.addresses.coordinator || address(this.seeds.coordinator);
+    let oracleAddress = address(this.seeds.jitOracle);
+    let fee = 3400000;
+
+    await this.ensureDeploymentFee(oracleAddress, fee);
+
+    await deploy("oracle.ride", fee, this.seeds.jitOracle, "JIT Oracle");
+
+    let oracle = await accountDataByKey(
+      `k_orders_address`,
+      coordinatorAddress
+    ).then((x) => x && x.value);
+    if (oracle !== oracleAddress) {
+      const setOracleTx = await invoke(
+        {
+          dApp: coordinatorAddress,
+          functionName: "setOracleAddress",
+          arguments: [oracleAddress],
+        },
+        this.seeds.admin
+      );
+
+      console.log(`setOracleAddress in ${setOracleTx.id}`);
+    }
+
+    let initialized = await accountDataByKey(
+      `k_initialized`,
+      oracleAddress
+    ).then((x) => x && x.value);
+    if (!initialized) {
+      const initOracleTx = await invoke(
+        {
+          dApp: oracleAddress,
+          functionName: "initialize",
+          arguments: [coordinatorAddress, oraclePublicKeys.join(",")],
+        },
+        this.seeds.jitOracle
+      );
+
+      await waitForTx(initOracleTx.id);
+      console.log("Oracle initialized in " + initOracleTx.id);
     }
   }
 

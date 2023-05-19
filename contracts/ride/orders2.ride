@@ -566,7 +566,7 @@
         throw("Invalid increasePositionWithStopLoss parameters: only new position")
       } else {
         strict doSetContext = invoke(this, "setContext", [_trader], [])
-        strict doClosePosition = invoke(
+        strict doOpenPosition = invoke(
           addressFromStringValue(_amm), 
           "increasePosition",
           [_direction, _leverage, _minBaseAssetAmount, _refLink, _priceData],

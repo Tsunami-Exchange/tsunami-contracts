@@ -339,22 +339,6 @@ func getOraclePrice() = {
   divd(baseOraclePrice, quoteOraclePrice)
 }
 
-# Computes price diff in % between current and oracle price
-#
-func absPriceDiff(
-  _oraclePrice: Int,
-  _quoteAssetReserve: Int, 
-  _baseAssetReserve: Int,
-  _qtAstW: Int,
-  _bsAstW: Int
-) = {
-  let priceAfter = divd(_quoteAssetReserve.muld(_qtAstW), _baseAssetReserve.muld(_bsAstW))
-  let averagePrice = divd(_oraclePrice + priceAfter, 2 * DECIMAL_UNIT)
-  let absPriceDiff = divd(abs(_oraclePrice - priceAfter), averagePrice)
-
-  absPriceDiff
-}
-
 # Returns current spot price
 #
 func getSpotPrice() = {
@@ -411,17 +395,9 @@ func getSyncTerminalPrice(_terminalPrice: Int, _qtAstR: Int, _bsAstR: Int) = {
     let newQtAstW = divd(_terminalPrice.muld(_bsAstR), _qtAstR)
     (
       newQtAstW,
-      DECIMAL_UNIT,
-      0
+      DECIMAL_UNIT
     )
   } else {
-    let direction = _positionSize > 0
-    let currentNetMarketValue = swapOutput(
-      direction,
-      abs(_positionSize),
-      false
-    )._1
-
     # Compute new qW and bW
     let newQtAstW = getQuoteAssetWeight(_bsAstR, _positionSize, _qtAstR, _terminalPrice)
     let newBsAstW = DECIMAL_UNIT
@@ -431,24 +407,6 @@ func getSyncTerminalPrice(_terminalPrice: Int, _qtAstR: Int, _bsAstR: Int) = {
       newBsAstW
     )
   }
-}
-
-func getAdjustedFee(_artifactId: String, _baseFeeDiscount: Int) = {
-  let baseFeeRaw = fee()
-  let baseFee = muld(baseFeeRaw, _baseFeeDiscount)
-  let (adjustedFee, burnArtifact) = if (_artifactId != "") then {
-      let artifactKind = strA(nftManagerAddress(), k_token_type.toCompositeKey(_artifactId))
-      if (artifactKind == FEE_REDUCTION_TOKEN_TYPE) then {
-        let reduction = intA(nftManagerAddress(), k_token_param.toCompositeKey(_artifactId))
-        let adjustedFee = muld(baseFee, reduction)
-        (adjustedFee, true)
-      } else {
-        throw("Invalid attached artifact")
-      }
-    } else {
-      (baseFee, false)
-    }
-  (adjustedFee, burnArtifact)
 }
 
 func updateSettings(
@@ -497,22 +455,6 @@ func updateAmm(
     IntegerEntry(k_totalPositionSize, _totalPositionSizeAfter)
 
   ]
-}
-
-func transferFee(i: Int) = {
-  [
-    ScriptTransfer(stakingAddress(), i, quoteAsset())
-  ]
-}
-
-func doBurnArtifact(_burnArtifact: Boolean, i: Invocation) = {
-  if (_burnArtifact) then {
-    [
-      Burn(i.payments[1].assetId.valueOrErrorMessage("Invalid artifact"), 1)
-    ]
-  } else {
-    []
-  }
 }
 
 ##### Callable functions #####

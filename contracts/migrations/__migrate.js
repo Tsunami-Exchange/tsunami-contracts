@@ -102,7 +102,7 @@ const run = async () => {
         for (let child of children) {
           e = new Environment(process.env[`${chainId}_ADMIN_SEED`]);
           await e.load(child);
-
+          e.isChild = true;
           await m.migrate(e);
         }
       } catch (e) {

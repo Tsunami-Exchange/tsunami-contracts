@@ -115,7 +115,7 @@ describe("Spot vAMM should swap Waves <-> USDN", async function () {
     let estimation = await e.spot.estimateSwap(10, "WAVES", e.assets.neutrino);
     console.log(JSON.stringify(estimation));
 
-    expect(estimation.tax).to.be.closeTo(0.1076, 0.001);
+    expect(estimation.tax).to.be.closeTo(0.017, 0.001);
 
     await e.spot.as(waves_trader).swap("WAVES", 10, e.assets.neutrino, 0);
     let { baseChangeAmount } = await e.spot.estimateProjectedLiquidity("WAVES");
@@ -152,7 +152,7 @@ describe("Spot vAMM should swap Waves <-> USDN", async function () {
       expect(rateWaves).to.be.equal(1);
 
       let rateUsdn = await usdn_spot.vault.rate();
-      expect(rateUsdn).to.be.equal(1.06);
+      expect(rateUsdn).to.be.equal(1.0108);
     }
 
     // TODO: Check swap amounts
@@ -200,7 +200,7 @@ describe("Spot vAMM should swap Waves <-> USDN", async function () {
       expect(rateWaves).to.be.equal(1);
 
       let rateUsdn = await usdn_spot.vault.rate();
-      expect(rateUsdn).to.be.equal(1.06);
+      expect(rateUsdn).to.be.equal(1.0108);
     }
   });
 

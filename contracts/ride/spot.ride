@@ -43,7 +43,6 @@ func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
 ##### Coordinator data ##### 
 func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
 func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
-func isAdmin(i: Invocation) = if (i.caller == adminAddress()) then unit else throw("Only the Admin itself can invoke this function")
 func getAddressIfValid(address: String) = address.addressFromString().valueOrErrorMessage("Can't parse \"" + address + "\" as address").toString()
 
 ##### Core constants #####
@@ -66,13 +65,27 @@ func int(k: String) = this.getInteger(k).valueOrErrorMessage("no value for " + k
 func fee() = int(k_fee)
 func feeRebate() = int(k_rebate)
 
-func getMarket(_assetId: String) = addressFromString(
-  this.getString(k_asset_amm.toCompositeKey(_assetId)).valueOrElse("No market for: " + _assetId)
-).valueOrErrorMessage("Invalid market address for: " + _assetId)
+func getMarketMaybe(_assetId: String) = {
+  let addressStr = this.getString(k_asset_amm.toCompositeKey(_assetId))
+  if (addressStr.isDefined()) then {
+    addressFromString(addressStr.value()).valueOrErrorMessage("Invalid vault address for: " + _assetId)
+  } else {
+    unit
+  }
+}
 
-func getVault(_assetId: String) = addressFromString(
-  this.getString(k_asset_vault.toCompositeKey(_assetId)).valueOrElse("No vault for: " + _assetId)
-).valueOrErrorMessage("Invalid vault address for: " + _assetId)
+func getVaultMaybe(_assetId: String) = {
+  let addressStr = this.getString(k_asset_vault.toCompositeKey(_assetId))
+  if (addressStr.isDefined()) then {
+    addressFromString(addressStr.value()).valueOrErrorMessage("Invalid market address for: " + _assetId)
+  } else {
+    unit
+  }
+}
+
+func getMarket(_assetId: String) = getMarketMaybe(_assetId).valueOrErrorMessage("No market for: " + _assetId)
+
+func getVault(_assetId: String) = getVaultMaybe(_assetId).valueOrErrorMessage("No vault for: " + _assetId)
 
 func getExcessBalance(_vault: Address) = {
   _vault.getInteger(k_excessBalance).valueOrElse(0)
@@ -91,15 +104,17 @@ func getMaxPriceSpread(_amm: Address) = {
 }
 
 func getOldProjectedLiquidityAndTerminalPrice(_amm: Address) = {
-  strict priceR = invoke(_amm, "computeTerminalAmmPrice", [], [])
+  strict sync   = invoke(_amm, "syncTerminalPriceToOracle", [], [])
+  strict priceR = invoke(_amm, "computeTerminalAmmPrice"  , [], [])
+
   let price = match (priceR) {
     case t: Int => t
     case _ => throw("Invalid computeTerminalAmmPrice result for " + _amm.toString())
   }
   
   strict currentBaseAssetAmount = _amm.getInteger(k_baseAssetReserve).valueOrErrorMessage("Key " + k_baseAssetReserve + " not set for " + _amm.toString())
-  strict baseAssetAmountDelta = _amm.getInteger(k_totalPositionSize).valueOrElse(0)
-  strict quoteAssetWeight = _amm.getInteger(k_quoteAssetWeight).valueOrElse(DECIMAL_UNIT)
+  strict baseAssetAmountDelta   = _amm.getInteger(k_totalPositionSize).valueOrElse(0)
+  strict quoteAssetWeight       = _amm.getInteger(k_quoteAssetWeight).valueOrElse(DECIMAL_UNIT)
   
   (currentBaseAssetAmount + baseAssetAmountDelta, price, quoteAssetWeight)
 }
@@ -139,7 +154,6 @@ func estimateSwap(
   _assetId: String,
   _targetAsset: String
 ) = {
-
   let sourceDecimals = if (_assetId == "WAVES") then 8 else assetInfo(fromBase58String(_assetId)).valueOrErrorMessage("Invalid asset: " + _assetId).decimals
   let targetDecimals = if (_targetAsset == "WAVES") then 8 else assetInfo(fromBase58String(_targetAsset)).valueOrErrorMessage("Invalid asset: " + _targetAsset).decimals
   let sourceAmountInAmmDecimals = if (sourceDecimals == 8) then _amount / 100 else if (sourceDecimals == 6) then _amount else throw("Invalid decimals (source)")
@@ -175,20 +189,19 @@ func estimateSwap(
   # 7. Compute the fee (if overall imbalance improves - rebate (reduce) the fee, otherwise increase the fee)
   let resultImbalanceInUSD = addImbalanceUSD + removeImbalanceUSD
   let baseFee = fee()
+  let totalLiquid = addVaultBalanceUSD + removeVaultBalanceUSD
   let (actualFee, rebate, tax) = if (resultImbalanceInUSD < 0) then {
-      let mostLiquid = vmax(addVaultBalanceUSD, removeVaultBalanceUSD)
-      let rebateRate = divd(abs(resultImbalanceInUSD), mostLiquid)
+      let rebateRate = divd(abs(resultImbalanceInUSD), totalLiquid)
       let rebate     = feeRebate().muld(rebateRate)
       let actualFee  = if (rebate > baseFee) then 0 else baseFee - rebate
 
       (actualFee, rebate, 0)
   } else {
-    let leastLiquid = vmin(addVaultBalanceUSD, removeVaultBalanceUSD)
-    let taxRate     = divd(abs(resultImbalanceInUSD), leastLiquid)
+    let taxRate     = divd(abs(resultImbalanceInUSD), totalLiquid)
     let tax         = feeRebate().muld(taxRate)
     let actualFee   = baseFee + tax
 
-    (actualFee, 0, tax)
+    (actualFee, 0, tax) 
   }
 
   let feeInTargetToken = muld(targetAmount, actualFee)
@@ -301,27 +314,35 @@ func addAmm(
   _vaultAddress: String,
   _vaultAsset: String,
   _data: String
-) = isAdmin(i).valueOrElse({
-  strict ammAddress = getAddressIfValid(_ammAddress)
-  strict vaultAddress = getAddressIfValid(_vaultAddress)
+) = {
+  if (i.caller != adminAddress()) then {
+    throw("Invalid addAmm params")
+  } else {
+    strict ammAddress = getAddressIfValid(_ammAddress)
+    strict vaultAddress = getAddressIfValid(_vaultAddress)
 
-  [
-    BooleanEntry(k_amm.toCompositeKey(_ammAddress), true),
-    BooleanEntry(k_vault.toCompositeKey(_vaultAddress), true),
-    StringEntry(k_asset_vault.toCompositeKey(_vaultAsset), _vaultAddress),
-    StringEntry(k_asset_amm.toCompositeKey(_vaultAsset), _ammAddress),
-    StringEntry(k_amm_data.toCompositeKey(_ammAddress), _data)
-  ]
-})
+    [
+      BooleanEntry(k_amm.toCompositeKey(_ammAddress), true),
+      BooleanEntry(k_vault.toCompositeKey(_vaultAddress), true),
+      StringEntry(k_asset_vault.toCompositeKey(_vaultAsset), _vaultAddress),
+      StringEntry(k_asset_amm.toCompositeKey(_vaultAsset), _ammAddress),
+      StringEntry(k_amm_data.toCompositeKey(_ammAddress), _data)
+    ]
+  }
+}
 
 @Callable(i)
 func removeAmm(
   _ammAddress: String
-) = isAdmin(i).valueOrElse({
-  [
-    DeleteEntry(k_amm.toCompositeKey(_ammAddress))
-  ]
-})
+) = {
+  if (i.caller != adminAddress()) then {
+    throw("Invalid removeAmm params")
+  } else {
+    [
+      DeleteEntry(k_amm.toCompositeKey(_ammAddress))
+    ]
+  }
+}
 
 @Callable(i)
 func initialize(
@@ -354,10 +375,14 @@ func swap(
   _targetAsset: String,
   _minTargetAmount: Int
 ) = {
+  strict checkPaymentCount = if (i.payments.size() != 1) then throw("Invalid swap params: payment count") else true 
+
   let _amount = i.payments[0].amount
   let _assetId = i.payments[0].assetId
 
   let assetId = if (_assetId.isDefined()) then _assetId.value().toBase58String() else "WAVES"
+
+  strict checkNotSameAsset = if (_targetAsset == assetId) then throw("Invalid swap params: same asset") else true
 
   strict (
     targetAmount, 
@@ -373,8 +398,8 @@ func swap(
   
   # 8. Withdraw full amount of tokens to withdraw and deposit full amount of tokens to deposit
   #
-  strict doWithdraw = invoke(vaultToRemove, "borrow", [targetAmount], [])
   strict doDeposit  = invoke(vaultToAdd   , "repay" , []            , [i.payments[0]])
+  strict doWithdraw = invoke(vaultToRemove, "borrow", [targetAmount], [])
 
   # 9. Distribute fee to LP, basically remove fee back, but it belongs to LP now
   let targetAsset = if (_targetAsset == "WAVES") then unit else fromBase58String(_targetAsset)
@@ -387,26 +412,30 @@ func swap(
   
   # 10. Finish swap, but check slippage first
   #
-  if (_minTargetAmount > 0 && resultTargetAssetAmount < _minTargetAmount) then {
+  if (resultTargetAssetAmount < _minTargetAmount) then {
     throw("Can not swap due to slippage: " + resultTargetAssetAmount.toString() + " < " + _minTargetAmount.toString())
   } else {
     ([
-      ScriptTransfer(i.caller, (targetAmount - feeInTargetToken), targetAsset)
+      ScriptTransfer(i.caller, resultTargetAssetAmount, targetAsset)
     ], (_amount, resultTargetAssetAmount, baseFee, actualFee, rebate, tax))
   }
 }
 
 @Callable(i)
 func notifyVaultBalanceChange(_asset: String, _change: Int) = {
-  let market = getMarket(_asset)
-  let vault  = getVault(_asset)
+  let market = getMarketMaybe(_asset)
+  let vault  = getVaultMaybe(_asset)
 
-  if (i.caller != vault) then {
-    throw("Invalid notifyVaultBalanceChange params")
+  if (market.isDefined() && vault.isDefined()) then {
+    if (i.caller != vault) then {
+      throw("Invalid notifyVaultBalanceChange params")
+    } else {
+      strict (baseAssetAmountDelta, quoteAssetChange) = estimateProjectedLiquidity(vault.value(), market.value(), _change)
+      strict result = invoke(market.value(), "changeLiquidity", [quoteAssetChange], [])
+      
+      []
+    }
   } else {
-    strict (baseAssetAmountDelta, quoteAssetChange) = estimateProjectedLiquidity(vault, market, _change)
-    strict result = invoke(market, "changeLiquidity", [quoteAssetChange], [])
-    
     []
   }
 }
