@@ -1041,9 +1041,13 @@ func getFunding() = {
   let premium = spotPrice - underlyingPrice
   
   if (
-    totalShortPositionSize() == 0 
-    || totalLongPositionSize() == 0
-    || isMarketClosed()
+    isMarketClosed()
+    || (fundingMode() == FUNDING_ASYMMETRIC 
+        && (
+             totalShortPositionSize() == 0
+          || totalLongPositionSize()  == 0
+        )
+       )
   ) then {
     (0, 0, 0)
   } else {
