@@ -52,8 +52,9 @@
   func coordinator() = addressFromString(this.getString(k_coordinatorAddress).valueOrErrorMessage("Coordinator not set")).valueOrErrorMessage("Coordinator address invalid")
   func adminAddress() = addressFromString(coordinator().getString(k_admin_address).valueOrErrorMessage("Admin address not set"))
   func isWhitelist(_address: String) = getBoolean(coordinator(), k_amm.toCompositeKey(_address)).valueOrElse(false)
-  func spotAddress() = addressFromString(getString(coordinator(), k_spot_address).valueOrErrorMessage("Spot address not set")).valueOrErrorMessage("Spot address invalid")
+  # func spotAddress() = addressFromString(getString(coordinator(), k_spot_address).valueOrErrorMessage("Spot address not set")).valueOrErrorMessage("Spot address invalid")
   func governanceAsset() = fromBase58String(coordinator().getString(k_governance_asset).valueOrErrorMessage("Governance asset not set"))
+  func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
   func vaultAssetStr() = this.getString(k_vaultAsset).valueOrErrorMessage("Vault asset not set")
   func vaultAsset() = {
     let _assetIdStr = vaultAssetStr()
@@ -304,6 +305,28 @@
   }
 
   @Callable(i)
+  func migrate() = {
+    if (i.caller != adminAddress()) then {
+      throw("Invalid migrate parameters")
+    } else {
+      let _vaultAsset = quoteAsset().toBase58String()
+      let assetDecimals = if (_vaultAsset == "WAVES") then {
+        8
+      } else {
+        let info = assetInfo(fromBase58String(_vaultAsset)).valueOrErrorMessage("Invalid token id: " + _vaultAsset)
+        
+        info.decimals
+      }
+
+      [
+        StringEntry(k_vaultAsset, _vaultAsset),
+        IntegerEntry(k_vaultAssetDecimals, assetDecimals),
+        IntegerEntry(k_maxSpotUtilization, 0)
+      ]
+    }
+  }
+
+  @Callable(i)
   func initialize(
     _coordinator: String,
     _vaultAsset: String,
@@ -367,12 +390,12 @@
         [AttachedPayment(vaultAsset(), _amount.assetFromDecimals())]
       )
 
-      strict notify = invoke(
-        spotAddress(),
-        "notifyVaultBalanceChange",
-        [vaultAssetStr(), _amount],
-        []
-      )
+      # strict notify = invoke(
+      #  spotAddress(),
+      #  "notifyVaultBalanceChange",
+      #  [vaultAssetStr(), _amount],
+      #  []
+      # )
 
       updateUserRewards(_staker, stakerEarned, stakerRewardPerTokenPaid)
       ++
@@ -429,12 +452,12 @@
             []
           )
 
-          strict notify = invoke(
-            spotAddress(),
-            "notifyVaultBalanceChange",
-            [vaultAssetStr(), -amountOfQuoteAsset],
-            []
-          )
+          # strict notify = invoke(
+          #   spotAddress(),
+          #   "notifyVaultBalanceChange",
+          #   [vaultAssetStr(), -amountOfQuoteAsset],
+          #   []
+          # )
 
           updateUserRewards(_staker, stakerEarned, stakerRewardPerTokenPaid)
           ++
@@ -493,7 +516,7 @@
       || !initialized()
       || !(
         isWhitelist(i.caller.toString())
-        || i.caller == spotAddress()
+        # || i.caller == spotAddress()
         || i.caller == adminAddress()
       )
     ) then {
@@ -588,57 +611,57 @@
     }
   }
 
-  @Callable(i)
-  func borrow(_amount: Int) = {
-    if (
-      !initialized()
-      || _amount <= 0
-      || !(
-        i.caller == spotAddress()
-      )
-    ) then {
-      throw("Invalid borrow params")
-    } else {
-      let amountOfQuoteAsset = _amount.assetToDecimals()
+  # @Callable(i)
+  # func borrow(_amount: Int) = {
+  #   if (
+  #     !initialized()
+  #     || _amount <= 0
+  #     || !(
+  #       i.caller == spotAddress()
+  #     )
+  #   ) then {
+  #     throw("Invalid borrow params")
+  #   } else {
+  #     let amountOfQuoteAsset = _amount.assetToDecimals()
+# 
+  #     strict unstake = invoke(
+  #       managerAddress(),
+  #       "withdraw",
+  #       [vaultAssetStr(),  amountOfQuoteAsset.assetFromDecimals()],
+  #       []
+  #     )
+# 
+  #     updateExcessBalance(-amountOfQuoteAsset)
+  #     ++
+  #     [
+  #       ScriptTransfer(i.caller, amountOfQuoteAsset.assetFromDecimals(), vaultAsset())
+  #     ]
+  #   }
+  # }
 
-      strict unstake = invoke(
-        managerAddress(),
-        "withdraw",
-        [vaultAssetStr(),  amountOfQuoteAsset.assetFromDecimals()],
-        []
-      )
-
-      updateExcessBalance(-amountOfQuoteAsset)
-      ++
-      [
-        ScriptTransfer(i.caller, amountOfQuoteAsset.assetFromDecimals(), vaultAsset())
-      ]
-    }
-  }
-
-  @Callable(i)
-  func repay() = {
-    let _amount = i.payments[0].amount.assetToDecimals()
-    if (
-      i.payments[0].assetId != vaultAsset()
-      || i.payments.size() != 1
-      || !initialized()
-      || !(
-        i.caller == spotAddress()
-        || i.caller == adminAddress()
-      )
-    ) then {
-      throw("Invalid repay params")
-    } else {
-      strict unstake = invoke(
-        managerAddress(),
-        "deposit",
-        [],
-        [AttachedPayment(vaultAsset(), _amount.assetFromDecimals())]
-      )
-      updateExcessBalance(_amount)
-    }
-  }
+  # @Callable(i)
+  # func repay() = {
+  #   let _amount = i.payments[0].amount.assetToDecimals()
+  #   if (
+  #     i.payments[0].assetId != vaultAsset()
+  #     || i.payments.size() != 1
+  #     || !initialized()
+  #     || !(
+  #       i.caller == spotAddress()
+  #       || i.caller == adminAddress()
+  #     )
+  #   ) then {
+  #     throw("Invalid repay params")
+  #   } else {
+  #     strict unstake = invoke(
+  #       managerAddress(),
+  #       "deposit",
+  #       [],
+  #       [AttachedPayment(vaultAsset(), _amount.assetFromDecimals())]
+  #     )
+  #     updateExcessBalance(_amount)
+  #   }
+  # }
 
   # New rewards added to contract
   @Callable(i)

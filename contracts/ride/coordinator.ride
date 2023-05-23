@@ -202,7 +202,7 @@ func setOracleAddress(
 ) = isAdmin(i).valueOrElse({
   strict oracleAddress = getAddressIfValid(_oracleAddress)
   [
-    StringEntry(k_orders_address, _oracleAddress)
+    StringEntry(k_oracle, _oracleAddress)
   ]
 })
 

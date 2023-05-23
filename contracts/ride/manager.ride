@@ -52,7 +52,7 @@ func isWhitelist(_address: String) = {
   _address == stakingAddress().toString()
   || _address == vaultAddress().toString()
   || _address == ordersAddress().toString()
-  || isSpotVault(_address)
+  # || isSpotVault(_address)
 }
 
 func updateFunds(_assetId: String, _value: Int) = {

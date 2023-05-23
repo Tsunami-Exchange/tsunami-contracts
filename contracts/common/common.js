@@ -1247,7 +1247,10 @@ class Environment {
         {
           dApp: address(this.seeds.orders),
           functionName: "initialize",
-          arguments: [address(this.seeds.coordinator)],
+          arguments: [
+            address(this.seeds.coordinator),
+            Math.round(0.01 * decimals),
+          ],
         },
         this.seeds.orders
       );
@@ -4042,6 +4045,7 @@ class Orders {
     let leverage = Math.round(_leverage * decimals);
     let usdnPayment = Math.round((_usdnPayment || 0) * decimals);
 
+    /*
     console.log(
       `createOrder = ${JSON.stringify([
         _amm,
@@ -4058,6 +4062,7 @@ class Orders {
         _takeLimitPrice,
       ])}`
     );
+    */
     let tx = await invoke(
       {
         dApp: address(this.e.seeds.orders),
@@ -4093,15 +4098,15 @@ class Orders {
     let ttx = await waitForTx(tx.id);
     let datas = ttx.stateChanges.invokes.flatMap((i) => i.stateChanges.data);
 
-    console.log(JSON.stringify(datas, null, 2));
+    //console.log(JSON.stringify(datas, null, 2));
 
     let id = datas
       .filter((x) => x.key === "k_lastOrderId")
       .map((x) => x.value)[0];
 
-    console.log(`id=${id}`);
+    //console.log(`id=${id}`);
 
-    console.log(JSON.stringify(ttx));
+    //console.log(JSON.stringify(ttx));
     return [id, ttx];
   }
 
