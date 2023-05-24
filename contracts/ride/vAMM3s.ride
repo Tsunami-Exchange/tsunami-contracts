@@ -36,10 +36,7 @@ let k_coordinatorAddress = "k_coordinatorAddress"         # Address of Coordinat
 let k_vault_address = "k_vault_address"           # Address of vault contract
 let k_admin_address = "k_admin_address"           # Address of admin account           
 let k_quote_asset = "k_quote_asset"               # Address of quote asset (USDN in our case)
-let k_staking_address = "k_staking_address"       # Address that should receive staking benefits
-let k_spot_address = "k_spot_address"             
-let k_referral_address = "k_referral_address"     # Referral contract address
-let k_nft_manager_address = "k_nft_manager_address" # NFT manager address
+let k_spot_address = "k_spot_address"             # Address of spot trading router
 
 func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
 
@@ -47,29 +44,12 @@ func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
 func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
 func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
 func quoteAsset() = fromBase58String(coordinator().getStringValue(k_quote_asset))
-func stakingAddress() = addressFromString(coordinator().getStringValue(k_staking_address)).valueOrErrorMessage("Staking not set")
 func spotAddress() = addressFromString(getString(coordinator(), k_spot_address).valueOrErrorMessage("Spot address not set"))
-func referralAddress() = addressFromString(coordinator().getStringValue(k_referral_address)).valueOrErrorMessage("Referral not set")
-func nftManagerAddress() = addressFromString(coordinator().getStringValue(k_nft_manager_address)).valueOrErrorMessage("NFT Manager not set")
-
-##### NFT Artifacts #####
-let k_token_param = "k_token_param"
-let k_token_type = "k_token_type"
-let FEE_REDUCTION_TOKEN_TYPE = "fee_reduction"
 
 ##### Core constants #####
 
-let DIR_LONG          = 1
-let DIR_SHORT         = 2
-let SECONDS           = 1000
 let DECIMAL_NUMBERS   = 6
 let DECIMAL_UNIT      = 1 * (10 * 10 * 10 * 10 * 10 * 10)
-let MINUTES_IN_YEAR   = 525600 * DECIMAL_UNIT
-let ONE_DAY           = 86400 * DECIMAL_UNIT
-let PNL_OPTION_SPOT   = 1
-let PNL_OPTION_ORACLE = 2
-let FUNDING_ASYMMETRIC = 1
-let FUNDING_SYMMETRIC  = 2
 
 ##### Helper functions #####
 
@@ -82,15 +62,10 @@ func bdivd(_x: BigInt, _y: BigInt) = fraction(_x, DECIMAL_UNIT.toBigInt(), _y, H
 func bmuld(_x: BigInt, _y: BigInt) = fraction(_x, _y, DECIMAL_UNIT.toBigInt(), HALFEVEN)
 
 func abs(_x: Int) = if (_x > 0) then _x else -_x
-func vmax(_x: Int, _y: Int) = if (_x >= _y) then _x else _y
 
 ##### Accessor functions #####
 func int(k: String) = this.getInteger(k).valueOrErrorMessage("no value for " + k)
 func intOr(k: String, def: Int) = this.getInteger(k).valueOrElse(def)
-func strA(_address: Address, _key: String) = {
-  let val = _address.getString(_key).valueOrErrorMessage("No value for key " + _key)
-  val
-}
 
 func intA(_address: Address, _key: String) = {
   let val = _address.getInteger(_key).valueOrErrorMessage("No value for key " + _key)

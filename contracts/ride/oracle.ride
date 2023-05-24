@@ -231,7 +231,6 @@
     let diff = if (lastPrice == 0) then 0 else abs((price - lastPrice).divd(lastPrice))
     let isValidDiff = diff < maxDeviation
 
-    
     if (isQuorumReached && isValidTimestamp && iNotStopped && isValidDiff) then {
       if (streamLastTimestamp > timestamp) then {
         ([], (lastPrice, lastSpread, streamLastTimestamp))

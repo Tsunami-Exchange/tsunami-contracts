@@ -419,7 +419,7 @@ func swap(
       ScriptTransfer(i.caller, resultTargetAssetAmount, targetAsset)
     ], (_amount, resultTargetAssetAmount, baseFee, actualFee, rebate, tax))
   }
-}
+} 
 
 @Callable(i)
 func notifyVaultBalanceChange(_asset: String, _change: Int) = {

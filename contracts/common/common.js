@@ -129,6 +129,10 @@ class Environment {
       `k_housekeeper_address`,
       coordinatorAddress
     ).then((x) => x && x.value);
+    const spotAddress = await accountDataByKey(
+      `k_spot_address`,
+      coordinatorAddress
+    ).then((x) => x && x.value);
 
     let allKeys = await accountData(coordinatorAddress);
     allKeys = Object.keys(allKeys).map((k) => allKeys[k]);
@@ -150,6 +154,7 @@ class Environment {
     this.orders = new Orders(this, ordersAddress);
     this.collateral = new Collateral(this, collateralAddress);
     this.housekeeper = new Housekeeper(this, housekeeperAddress);
+    this.spot = new Spot(this, spotAddress);
 
     console.log(`Loaded environment with ${this.amms.length} AMMs`);
   }
@@ -1556,6 +1561,154 @@ class Environment {
     }
   }
 
+  async deploySpot(swapFee, swapRebate) {
+    if (!this.seeds.spot) {
+      throw Error(`No seed for Spot contract`);
+    }
+    if (!swapFee || !swapRebate) {
+      throw Error(`No swapFee or swapRebate for Spot`);
+    }
+    let coordinatorAddress =
+      this.addresses.coordinator || address(this.seeds.coordinator);
+    let spotAddress = address(this.seeds.spot);
+    let fee = 3400000;
+
+    await this.ensureDeploymentFee(spotAddress, fee);
+
+    await deploy("spot.ride", fee, this.seeds.spot, "Spot");
+
+    let spot = await accountDataByKey(
+      `k_spot_address`,
+      coordinatorAddress
+    ).then((x) => x && x.value);
+    if (spot !== spotAddress) {
+      const setSpotTx = await invoke(
+        {
+          dApp: coordinatorAddress,
+          functionName: "setSpotAddress",
+          arguments: [spotAddress],
+        },
+        this.seeds.admin
+      );
+
+      console.log(`setSpot in ${setSpotTx.id}`);
+    }
+
+    let initialized = await accountDataByKey(`k_initialized`, spotAddress).then(
+      (x) => x && x.value
+    );
+    if (!initialized) {
+      const initSpotTx = await invoke(
+        {
+          dApp: spotAddress,
+          functionName: "initialize",
+          arguments: [
+            coordinatorAddress,
+            Math.round(swapFee * decimals),
+            Math.round(swapRebate * decimals),
+          ],
+        },
+        this.seeds.spot
+      );
+
+      await waitForTx(initSpotTx.id);
+      console.log("Spot initialized in " + initSpotTx.id);
+    }
+  }
+
+  async deploySWavesManager(sWavesAddress) {
+    if (!this.seeds.sWavesManager) {
+      throw Error(`No seed for sWaves Manager contract`);
+    }
+    if (!sWavesAddress) {
+      throw Error(`No sWavesAddress`);
+    }
+
+    let coordinatorAddress =
+      this.addresses.coordinator || address(this.seeds.coordinator);
+
+    let sWavesManagerAddress = address(this.seeds.sWavesManager);
+
+    let fee = 3400000;
+
+    await this.ensureDeploymentFee(sWavesManagerAddress, fee);
+
+    await deploy(
+      "sWavesAssetManager.ride",
+      fee,
+      this.seeds.sWavesManager,
+      "sWaves Asset Manager"
+    );
+
+    let manager = await accountDataByKey(
+      `k_manager_address`,
+      coordinatorAddress
+    ).then((x) => x && x.value);
+
+    let wavesManager = await accountDataByKey(
+      `k_asset_manager_address_WAVES`,
+      manager
+    ).then((x) => x && x.value);
+
+    if (wavesManager !== sWavesManagerAddress) {
+      const setWavesManagerTx = await invoke(
+        {
+          dApp: manager,
+          functionName: "addAssetManager",
+          arguments: ["WAVES", sWavesManagerAddress],
+        },
+        this.seeds.admin
+      );
+
+      console.log(`addAssetManager in ${setWavesManagerTx.id}`);
+    }
+
+    let initialized = await accountDataByKey(
+      `k_initialized`,
+      sWavesManagerAddress
+    ).then((x) => x && x.value);
+    if (!initialized) {
+      const initSWavesManagerTx = await invoke(
+        {
+          dApp: sWavesManagerAddress,
+          functionName: "initialize",
+          arguments: [coordinatorAddress, sWavesAddress],
+        },
+        this.seeds.sWavesManager
+      );
+
+      await waitForTx(initSWavesManagerTx.id);
+      console.log(
+        "sWaves Asset Manager initialized in " + initSWavesManagerTx.id
+      );
+    }
+  }
+
+  async setSpot(spotAddress) {
+    if (!spotAddress) {
+      throw Error(`No spotAddress`);
+    }
+    let coordinatorAddress =
+      this.addresses.coordinator || address(this.seeds.coordinator);
+
+    let spot = await accountDataByKey(
+      `k_spot_address`,
+      coordinatorAddress
+    ).then((x) => x && x.value);
+    if (spot !== spotAddress) {
+      const setSpotTx = await invoke(
+        {
+          dApp: coordinatorAddress,
+          functionName: "setSpotAddress",
+          arguments: [spotAddress],
+        },
+        this.seeds.admin
+      );
+
+      console.log(`setSpot in ${setSpotTx.id}`);
+    }
+  }
+
   async deployReferral(_fee) {
     if (!this.seeds.referral) {
       throw Error(`No seed for Referral contract`);
@@ -2324,7 +2477,7 @@ class Environment {
 
   spotAmmCount = 0;
 
-  async deploySpotAmm(_liquidity, _price, options = {}) {
+  async ffAmm(_liquidity, _price, options = {}) {
     if (!options.asset) {
       throw "Error: options.asset expected. Token ID or WAVES";
     }
@@ -5191,6 +5344,20 @@ class Spot {
 
   as(_sender) {
     return new Spot(this.e, address, _sender);
+  }
+
+  /**
+   *
+   * @returns {[Vault]}
+   */
+  async getVaults() {
+    let allKeys = await accountData(this.address);
+    allKeys = Object.keys(allKeys).map((k) => allKeys[k]);
+    const vaultAddress = allKeys
+      .filter((x) => x.key.startsWith(`k_vault_`))
+      .map((x) => x.key.replace(`k_vault_`, ``));
+
+    return vaultAddress.map((v) => new Vault(this.e, v));
   }
 
   async swap(
