@@ -43,7 +43,8 @@
     _vault: Boolean,
     _farming: Boolean,
     _staking: Boolean,
-    _payFunding: String
+    _payFunding: String,
+    _spotVaults: String
   ) = {
 
     strict doAckRewardsStaking = if (_staking) then {
@@ -93,7 +94,23 @@
 
       _acc
     }
-    FOLD<20>(amms, [], compute) # Max 20 AMM's
+
+    strict doCallAmms = FOLD<5>(amms, [], compute) # Max 5 AMM's
+
+    let vaults = _spotVaults.strToList()
+    func compute2(_acc: List[StringEntry], _vault: String) = {
+      strict doPayFunding = invoke(
+        addressFromStringValue(_vault),
+        "ackRewards",
+        [],
+        []
+      )
+      _acc
+    }
+
+    strict doCallVaults = FOLD<5>(vaults, [], compute2) # Max 5 AMM's
+
+    []
   }
 
 

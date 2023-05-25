@@ -76,9 +76,13 @@ const run = async () => {
 
   let run = false;
   let rerun = process.env["RERUN"];
+  let max = process.env["MAX"];
   for (let migration of migrations) {
     let isActualRerun = false;
     const seq = migration.split("_")[0];
+    if (seq > max) {
+      continue;
+    }
     let isRun = await isMigrated(seq, chainId);
     if (isRun && rerun == seq) {
       isActualRerun = true;
