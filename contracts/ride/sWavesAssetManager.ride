@@ -30,7 +30,6 @@ func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_add
 func sWavesAddress() = addressFromStringValue(this.getStringValue(k_sWavesAddress))
 func sWavesAsset() = fromBase58String(this.getStringValue(k_sWavesAsset))
 
-let WAVES_TO_S_WAVES_PRECISION = "10000".parseBigIntValue()
 let S_WAVES_PRECISION          = "1000000000000".parseBigIntValue()
 
 func isWhitelist(_address: String) = {
@@ -53,15 +52,8 @@ func wavesToSWaves(_waves: Int) = {
     case x: String => parseBigIntValue(x)
     case _ => throw("Invalid getRate result")
   }
-  
-  # _waves is in 8 decimals, rate is in 12 decimal, so adjust waves first
-  #
-  let desiredWaves = _waves.toBigInt() * WAVES_TO_S_WAVES_PRECISION
-  
-  # now div desired waves to the rate and round down from 12 decimals to 8 decimals
-  let sWavesAmount = (fraction(desiredWaves, S_WAVES_PRECISION, rate, CEILING) / WAVES_TO_S_WAVES_PRECISION).toInt() + 1
 
-  sWavesAmount
+  fraction(_waves.toBigInt(), S_WAVES_PRECISION, rate, CEILING).toInt()
 }
 
 func extractProfit() = {
