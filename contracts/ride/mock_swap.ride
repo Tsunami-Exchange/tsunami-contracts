@@ -10,14 +10,22 @@
 @Callable(i)
 func swap(_token: String, _minAmount: Int) = {
   let _amount = i.payments[0].amount
-  let fromAssetInfo = assetInfo(i.payments[0].assetId.value()).value()
-  let toAssetInfo = assetInfo(fromBase58String(_token)).value()
-  let decimalDiff = toAssetInfo.decimals - fromAssetInfo.decimals
+  let fromAssetInfoDecimals = if (i.payments[0].assetId.isDefined()) then {
+    assetInfo(i.payments[0].assetId.value()).value().decimals
+  } else {
+    8
+  }
+  let toAssetInfoDecimals = assetInfo(fromBase58String(_token)).value().decimals
+  let decimalDiff = toAssetInfoDecimals - fromAssetInfoDecimals
   
-  let multiplier = if (decimalDiff == 2) then 100 else if (decimalDiff == 0) then 1 else throw("Invalid decimal diff")
+  let resultAmount = 
+         if (decimalDiff ==  2) then _amount * 100 
+    else if (decimalDiff == -2) then _amount / 100
+    else if (decimalDiff ==  0) then _amount
+    else throw("Invalid decimal diff")
 
   [
-    ScriptTransfer(i.caller, _amount * multiplier, fromBase58String(_token))
+    ScriptTransfer(i.caller, resultAmount, fromBase58String(_token))
   ]
 }
 

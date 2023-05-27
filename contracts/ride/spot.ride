@@ -13,9 +13,13 @@ let k_paused = "k_paused"                                 # If all AMM operation
 # Exchange settings
 let k_fee = "k_fee"                                       # Exchange fee. Default is 0.3%. 1/3 goes to stakers, 2/3 goes to vault
 let k_rebate = "k_rebate"                                 # Max rebate of exchange fee. Default is 0.1%.
+let k_feeToStakersPercent = "k_feeToStakersPercent"       # Percent of fee to stakers (rest goes to vault)
 
 # Coordinator
 let k_coordinatorAddress = "k_coordinatorAddress"         # Address of Coordinator (base contract that keeps references to all infrastructure)
+let k_reward_asset = "k_reward_asset" 
+let k_swap_address = "k_swap_address"
+let k_staking_address = "k_staking_address"               # Address that should receive staking benefits
 
 # Vault
 let k_excessBalance = "k_excessBalance"
@@ -43,6 +47,9 @@ func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
 ##### Coordinator data ##### 
 func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
 func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
+func stakingAddress() = addressFromString(coordinator().getStringValue(k_staking_address)).valueOrErrorMessage("Staking not set")
+func rewardAsset() = fromBase58String(coordinator().getString(k_reward_asset).valueOrErrorMessage("Reward asset not set"))
+func swapAddress() = addressFromString(coordinator().getString(k_swap_address).valueOrErrorMessage("Swap address not set")).valueOrErrorMessage("Swap address invalid")
 func getAddressIfValid(address: String) = address.addressFromString().valueOrErrorMessage("Can't parse \"" + address + "\" as address").toString()
 
 ##### Core constants #####
@@ -64,6 +71,7 @@ func int(k: String) = this.getInteger(k).valueOrErrorMessage("no value for " + k
 
 func fee() = int(k_fee)
 func feeRebate() = int(k_rebate)
+func feeToStakersPercent() = int(k_feeToStakersPercent)
 
 func getMarketMaybe(_assetId: String) = {
   let addressStr = this.getString(k_asset_amm.toCompositeKey(_assetId))
@@ -244,11 +252,13 @@ func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
 ##### Update functions #####
 func updateSettings(
   _fee: Int,
-  _rebate: Int
+  _rebate: Int,
+  _feeToStakersPercent: Int
 ) = {
   [
     IntegerEntry(k_fee, _fee),
-    IntegerEntry(k_rebate, _rebate)
+    IntegerEntry(k_rebate, _rebate),
+    IntegerEntry(k_feeToStakersPercent, _feeToStakersPercent)
   ]
 }
 
@@ -291,11 +301,13 @@ func unpause() = {
 @Callable(i)
 func changeSettings(
   _fee: Int,
-  _rebate: Int
+  _rebate: Int,
+  _feeToStakersPercent: Int
 ) = {
   if (
     _fee <= 0
     || _rebate <= 0
+    || _feeToStakersPercent <= 0 || _feeToStakersPercent > DECIMAL_UNIT
     || !initialized()
     || i.caller != adminAddress()
   ) then {
@@ -303,7 +315,8 @@ func changeSettings(
   } else {
     updateSettings(
       _fee,
-      _rebate
+      _rebate,
+      _feeToStakersPercent
     )
   }
 }
@@ -348,11 +361,13 @@ func removeAmm(
 func initialize(
   _coordinator: String,
   _fee: Int,
-  _rebate: Int
+  _rebate: Int,
+  _feeToStakersPercent: Int
 ) = {
   if (
     _fee <= 0
     || _rebate <= 0
+    || _feeToStakersPercent <= 0 || _feeToStakersPercent > DECIMAL_UNIT
     || initialized()
     || i.caller != this
   ) then {
@@ -360,7 +375,8 @@ func initialize(
   } else {
     updateSettings( 
       _fee,
-      _rebate
+      _rebate,
+      _feeToStakersPercent
     )
     ++
     [
@@ -403,20 +419,36 @@ func swap(
 
   # 9. Distribute fee to LP, basically remove fee back, but it belongs to LP now
   let targetAsset = if (_targetAsset == "WAVES") then unit else fromBase58String(_targetAsset)
+  let stakerFeeInTargetToken = feeInTargetToken.muld(feeToStakersPercent())
+  let lpFeeInTargetToken = feeInTargetToken - stakerFeeInTargetToken
   strict doCollectFee = invoke(vaultToRemove, "addFree", [], [
-    AttachedPayment(targetAsset, feeInTargetToken)
+    AttachedPayment(targetAsset, lpFeeInTargetToken)
   ])
   
-  # 9. Distribute fee to TSN holders
-  # TBD
-  
-  # 10. Finish swap, but check slippage first
+  # 10. Distribute fee to TSN holders
+  strict rewards = if (targetAsset == rewardAsset() || stakerFeeInTargetToken == 0) then {
+    stakerFeeInTargetToken # Same token - just it's share
+  } else {
+    strict doSwap = invoke(
+      swapAddress(),
+      "swap",
+      [toBase58String(rewardAsset()), 0], # Want Reward Asset
+      [AttachedPayment(targetAsset, stakerFeeInTargetToken)] # In exchange for Target Asset
+    )
+
+    strict rewards = assetBalance(this, rewardAsset())
+
+    rewards # Not same token - exchanged amount
+  }
+
+  # 11. Finish swap, but check slippage first
   #
   if (resultTargetAssetAmount < _minTargetAmount) then {
     throw("Can not swap due to slippage: " + resultTargetAssetAmount.toString() + " < " + _minTargetAmount.toString())
   } else {
     ([
-      ScriptTransfer(i.caller, resultTargetAssetAmount, targetAsset)
+      ScriptTransfer(i.caller, resultTargetAssetAmount, targetAsset),
+      ScriptTransfer(stakingAddress(), rewards, rewardAsset())
     ], (_amount, resultTargetAssetAmount, baseFee, actualFee, rebate, tax))
   }
 } 

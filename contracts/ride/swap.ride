@@ -24,10 +24,18 @@
   # Get functions
   func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
 
+  func assetName(_asset: String) = {
+    if (_asset == "WAVES") then {
+      "WAVES"
+    } else {
+      assetInfo(_asset.fromBase58String()).value().name
+    }
+  }
+
   func getMarket(_from: String, _to: String) = {
     let key = getMarketKey(_from, _to)
-    let fromName = assetInfo(_from.fromBase58String()).value().name
-    let toName = assetInfo(_to.fromBase58String()).value().name
+    let fromName = assetName(_from)
+    let toName = assetName(_to)
     let errorDesc = _from + " [" + fromName + "] -> " + _to + " [" + toName + "]"
     let addressStr = this.getString(key).valueOrErrorMessage("No market for swap: " + errorDesc)
     addressStr.addressFromString().valueOrErrorMessage("Invalid market address for swap: " + errorDesc)

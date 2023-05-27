@@ -58,7 +58,11 @@ describe("Spot vAMM should swap Waves <-> USDN", async function () {
       [waves_trader]: 1000,
       [usdt_lp]: 1000,
     });
-
+    await e.swap.addMarket(
+      "WAVES",
+      e.assets.neutrino,
+      address(e.seeds.puzzleSwap)
+    );
     waves_spot = await e.deploySpotAmm(1, 55, {
       asset: "WAVES",
     });
@@ -152,7 +156,7 @@ describe("Spot vAMM should swap Waves <-> USDN", async function () {
       expect(rateWaves).to.be.equal(1);
 
       let rateUsdn = await usdn_spot.vault.rate();
-      expect(rateUsdn).to.be.equal(1.0108);
+      expect(rateUsdn).to.be.equal(1.0076);
     }
 
     // TODO: Check swap amounts
@@ -200,7 +204,7 @@ describe("Spot vAMM should swap Waves <-> USDN", async function () {
       expect(rateWaves).to.be.equal(1);
 
       let rateUsdn = await usdn_spot.vault.rate();
-      expect(rateUsdn).to.be.equal(1.0108);
+      expect(rateUsdn).to.be.equal(1.0076);
     }
   });
 

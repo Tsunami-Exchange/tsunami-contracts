@@ -36,6 +36,8 @@ class Environment {
   oracle = null;
   /** @type {Spot} */
   spot = null;
+  /** @type {Swap} */
+  swap = null;
 
   /** @type {boolean} */
   isChild = false;
@@ -1462,6 +1464,7 @@ class Environment {
             address(this.seeds.coordinator),
             Math.round(0.003 * decimals),
             Math.round(0.1 * decimals),
+            Math.round(0.3 * decimals),
           ],
         },
         this.seeds.spot
@@ -1507,6 +1510,7 @@ class Environment {
     this.vires = new Vires(this);
     this.oracle = new Oracle(this);
     this.spot = new Spot(this);
+    this.swap = new Swap(this);
 
     this.now = new Date().getTime();
     console.log(`Environment deployed`);
@@ -2477,7 +2481,7 @@ class Environment {
 
   spotAmmCount = 0;
 
-  async ffAmm(_liquidity, _price, options = {}) {
+  async deploySpotAmm(_liquidity, _price, options = {}) {
     if (!options.asset) {
       throw "Error: options.asset expected. Token ID or WAVES";
     }
@@ -5509,6 +5513,33 @@ class Spot {
         quoteChangeAmount,
       };
     }
+  }
+}
+
+class Swap {
+  constructor(e, address, sender) {
+    this.e = e;
+    this.address = address;
+    this.sender = sender;
+  }
+
+  as(_sender) {
+    return new Swap(this.e, address, _sender);
+  }
+
+  async addMarket(_sourceToken, _targetToken, _market) {
+    let tx = await invoke(
+      {
+        dApp: address(this.e.seeds.swap),
+        functionName: "addMarket",
+        arguments: [_sourceToken, _targetToken, _market],
+        payment: [],
+      },
+      this.e.seeds.admin
+    );
+
+    await waitForTx(tx.id);
+    return tx;
   }
 }
 

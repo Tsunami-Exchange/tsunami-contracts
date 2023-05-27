@@ -49,8 +49,8 @@
     strict doSwap = invoke(
       swapAddress(),
       "swap",
-      [toBase58String(rewardAsset()), 0], # Want Gov Asset
-      [AttachedPayment(quoteAsset(), rewardsInQuoteAsset)] # In exchange for Reward Asset
+      [toBase58String(rewardAsset()), 0], # Want Reward Asset
+      [AttachedPayment(quoteAsset(), rewardsInQuoteAsset)] # In exchange for Quote Asset
     )
 
     strict rewards = assetBalance(this, rewardAsset())

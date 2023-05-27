@@ -1,0 +1,213 @@
+# This is a vAMM + Exchange contract
+#
+{-# STDLIB_VERSION 6 #-}
+{-# SCRIPT_TYPE ACCOUNT #-}
+{-# CONTENT_TYPE DAPP #-}
+
+##### Key constants #####
+
+# Initialization status
+let k_initialized         = "k_initialized"
+
+# Coordinator
+let k_coordinatorAddress = "k_coordinatorAddress"         # Address of Coordinator (base contract that keeps references to all infrastructure)
+
+# Coordinator keys
+let k_admin_address = "k_admin_address"  
+let k_staking_address = "k_staking_address"       # Address that should receive staking benefits
+let k_farming_address = "k_farming_address"       # Address that is used to farm more TSN
+let k_governance_asset = "k_gov_asset"            # Governance (TSN) asset address
+
+# Staking keys
+let k_balance = "k_balance"
+let k_totalSupply = "k_totalSupply"
+
+# Own keys
+let k_proposal_count = "k_proposal_count"
+let k_quorum = "k_quorum"
+let k_proposal_proposer = "k_proposal_proposer"
+let k_proposal_title = "k_proposal_title"
+let k_proposal_options = "k_proposal_options"
+let k_proposal_timeout = "k_proposal_timeout"
+let k_proposal_quorum = "k_proposal_quorum"
+
+let k_proposal_option_vote = "k_proposal_option_vote"
+let k_proposal_is_voted = "k_proposal_is_voted"
+
+let k_min_propose_amount = "k_min_propose_amount"
+
+func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
+
+##### Coordinator data ##### 
+func coordinator() = addressFromString(this.getStringValue(k_coordinatorAddress)).valueOrErrorMessage("Coordinator not set")
+func adminAddress() = addressFromString(coordinator().getStringValue(k_admin_address))
+func stakingAddress() = addressFromString(coordinator().getStringValue(k_staking_address)).valueOrErrorMessage("Staking not set")
+func farmingAddress() = addressFromString(coordinator().getStringValue(k_farming_address)).valueOrErrorMessage("Farming not set")
+func govAsset() = fromBase58String(coordinator().getStringValue(k_governance_asset)).valueOrErrorMessage("Gov asset not set")
+
+func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
+
+func stakingBalance(_address: String) = stakingAddress().getInteger(k_balance.toCompositeKey(_address)).valueOrElse(0)
+func farmingBalance(_address: String) = farmingAddress().getInteger(k_balance.toCompositeKey(_address)).valueOrElse(0)
+func stakingTotalSupply() = stakingAddress().getInteger(k_totalSupply).valueOrElse(0)
+
+func balanceOf(_address: String) = stakingBalance(_address) + farmingBalance(_address)
+
+func minProposeAmount() = this.getIntegerValue(k_min_propose_amount)
+func quorumRate() = this.getIntegerValue(k_quorum)
+func proposalCount()    = this.getInteger(k_proposal_count).valueOrElse(0)
+func optionsCount(_id: Int) = this.getInteger(k_proposal_options.toCompositeKey(_id.toString())).valueOrErrorMessage("Invalid proposal id: " + _id.toString())
+func proposalTitle(_id: Int) = this.getString(k_proposal_title.toCompositeKey(_id.toString())).valueOrErrorMessage("Invalid proposal id: " + _id.toString())
+func proposalTimeout(_id: Int) = this.getInteger(k_proposal_timeout.toCompositeKey(_id.toString())).valueOrErrorMessage("Invalid proposal id: " + _id.toString())
+func proposalQuorum(_id: Int) = this.getInteger(k_proposal_quorum.toCompositeKey(_id.toString())).valueOrErrorMessage("Invalid proposal id: " + _id.toString())
+func isVoted(_voter: String, _id: Int) = this.getBoolean(k_proposal_is_voted.toCompositeKey(_id.toString()).toCompositeKey(_voter)).valueOrElse(false)
+func votedPower(_id: Int, _option: Int) = this.getInteger(k_proposal_option_vote.toCompositeKey(_id.toString()).toCompositeKey(_option.toString())).valueOrElse(0)
+
+let DECIMAL_UNIT = 1 * (10 * 10 * 10 * 10 * 10 * 10 * 10 * 10) # 10 ** 8
+let UNDECIDED = 0
+func muld(_x: Int, _y: Int) = fraction(_x, _y, DECIMAL_UNIT, HALFEVEN)
+
+func makeProposal(_proposer: String, _proposal: String, _optionCount: Int, _timeout: Int) = {
+  let id = proposalCount() + 1
+  let quorum = quorumRate().muld(stakingTotalSupply())
+  
+  [
+    StringEntry(k_proposal_proposer.toCompositeKey(id.toString()), _proposer),
+    StringEntry(k_proposal_title.toCompositeKey(id.toString()), _proposal),
+    IntegerEntry(k_proposal_options.toCompositeKey(id.toString()), _optionCount),
+    IntegerEntry(k_proposal_timeout.toCompositeKey(id.toString()), _timeout),
+    IntegerEntry(k_proposal_quorum.toCompositeKey(id.toString()), quorum),
+    IntegerEntry(k_proposal_count, id)
+  ]
+}
+
+func makeVote(_id: Int, _voter: String, _option: Int, _power: Int) = {
+  let newPower = votedPower(_id, _option) + _power
+  [
+    BooleanEntry(k_proposal_is_voted.toCompositeKey(_id.toString()).toCompositeKey(_voter), true),
+    IntegerEntry(k_proposal_option_vote.toCompositeKey(_id.toString()).toCompositeKey(_option.toString()), newPower)
+  ]
+}
+
+func getVoteResult(_id: Int) = {    
+  let options = optionsCount(_id)
+  let quorum = proposalQuorum(_id)
+  let timeout = proposalTimeout(_id)
+  
+  let isFinal = lastBlock.timestamp > timeout
+
+  func count(acc: (List[String], List[Int], Int), option: Int) = {
+    if (option <= options) then {
+      let voted = votedPower(_id, option)
+      (
+        acc._1 :+ (option.toString() + ": " + voted.toString()),
+        acc._2 :+ voted,
+        acc._3  + voted
+      )
+    } else {
+      acc
+    }
+  }
+
+  let (resultsList, votes, totalVotes) = FOLD<5>([1, 2, 3, 4, 5], ([], [], 0), count)
+  let quorumReached = totalVotes >= quorum
+
+  (resultsList, votes, totalVotes, quorumReached, quorum, isFinal)
+}
+
+ @Callable(i)
+  func initialize(
+    _coordinator: String,
+    _minProposeAmount: Int,
+    _quorumRate: Int
+  ) = {
+    if (
+      initialized() 
+      || i.caller != this
+      || _minProposeAmount < 0
+      || _quorumRate > DECIMAL_UNIT
+      || _quorumRate < 0
+    ) then {
+      throw("Unable to initialize")
+    } else {
+      [
+        StringEntry(k_coordinatorAddress, addressFromStringValue(_coordinator).toString()),
+        IntegerEntry(k_min_propose_amount, _minProposeAmount),
+        IntegerEntry(k_quorum, _quorumRate),
+        BooleanEntry(k_initialized, true)
+      ]
+    }
+  }
+
+@Callable(i)
+func propose(_proposal: String, _optionCount: Int, _timeout: Int) = {
+  let proposer = i.caller.toString()
+
+  if (
+    balanceOf(proposer) < minProposeAmount()
+    || _proposal == ""
+    || _optionCount < 2
+    || _optionCount > 5
+    || _timeout <= lastBlock.timestamp
+  ) then {
+    throw("Invalid propose params")
+  } else {
+    makeProposal(proposer, _proposal, _optionCount, _timeout)
+  }
+}
+
+@Callable(i)
+func vote(_id: Int, _option: Int) = {
+  let voter = i.caller.toString()
+  let power = balanceOf(voter)
+  let options = optionsCount(_id)
+  let timeout = proposalTimeout(_id)
+
+  if (
+    power < 0
+    || isVoted(voter, _id)
+    || _option < 1
+    || _option > options
+    || lastBlock.timestamp > timeout
+  ) then {
+    throw("Invalid vote params")
+  } else {
+    makeVote(_id, voter, _option, power)
+  }
+}
+
+@Callable(i)
+func getResult(_id: Int) = {
+  ([], getVoteResult(_id))
+}
+
+@Callable(i)
+func view_getResult(_id: Int) = {
+  let (resultsList, votes, totalVotes, quorumReached, quorum, isFinal) = getVoteResult(_id)
+
+  let title = proposalTitle(_id)
+  let quorumStr = "quorum (" + totalVotes.toString() + "/" + quorum.toString() + ") "
+  let quorumReachedStr = quorumStr + if (quorumReached) then "REACHED" else "NOT REACHED"
+  let resultsStr  = resultsList.makeString(", ")
+  let finalStr = if (isFinal) then "DECIDED" else "UNDECIDED"
+  let result = "#" + _id.toString() + " " + title + ": " + resultsStr + ", " + quorumReachedStr + " " + finalStr
+
+  throw(result)
+}
+
+@Verifier(tx)
+func verify() = {
+  let coordinatorStr = this.getString(k_coordinatorAddress)
+  if (coordinatorStr.isDefined()) then {
+    let admin = addressFromStringValue(coordinatorStr.value()).getString(k_admin_address)
+    if (admin.isDefined()) then {
+      admin.value().addressFromStringValue().getBoolean("status_" + this.toString() + "_" + tx.id.toBase58String() ).valueOrElse(false)
+    } else { 
+      # Admin is not defined in coordinator, set admin first
+      throw("unable to verify: admin not set in coordinator")
+    }
+  } else {
+    # Coordinator not set, use native verify
+    sigVerify(tx.bodyBytes, tx.proofs[0], tx.senderPublicKey)
+  }
+}
