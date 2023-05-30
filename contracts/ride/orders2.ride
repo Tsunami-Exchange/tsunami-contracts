@@ -467,11 +467,13 @@
     _stopLimitPrice: Int,
     _takeTriggerPrice: Int,
     _takeLimitPrice: Int,
-    _expiration: Int
+    _expiration: Int,
+    _priceData: String
   ) = {
     let _trader = i.caller.toString()
+    strict updatePrice = invoke(_amm.addressFromStringValue(), "updateOracle", [_priceData], [])
     strict cleanUp = invoke(this, "cleanUpStaleOrders", [_amm, _trader], [])
-
+    
     if (i.payments.size() > 1) then {
       throw("Invalid createOrder parameters: invalid payment count")
     } else {
@@ -907,7 +909,9 @@
       _orderMarketPrice
     ) = getOrder(_orderId)
 
+    strict updatePrice = invoke(_amm.addressFromStringValue(), "updateOracle", [_priceData], [])
     strict cleanUp = invoke(this, "cleanUpStaleOrders", [_amm, _trader], [])
+    
     let positionDirection = getPositionDirection(_side, _type)
     if (
       !initialized()

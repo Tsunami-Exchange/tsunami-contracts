@@ -38,6 +38,8 @@ class Environment {
   spot = null;
   /** @type {Swap} */
   swap = null;
+  /** @type {SWavesAssetManager} */
+  sWavesAssetManager = null;
 
   /** @type {boolean} */
   isChild = false;
@@ -90,7 +92,6 @@ class Environment {
       `k_quote_asset`,
       coordinatorAddress
     ).then((x) => x.value);
-
     const insuranceAddress = await accountDataByKey(
       `k_insurance_address`,
       coordinatorAddress
@@ -135,6 +136,15 @@ class Environment {
       `k_spot_address`,
       coordinatorAddress
     ).then((x) => x && x.value);
+    const swapAddress = await accountDataByKey(
+      `k_swap_address`,
+      coordinatorAddress
+    ).then((x) => x && x.value);
+
+    let sWavesAssetManagerAddress = await accountDataByKey(
+      `k_asset_manager_address_WAVES`,
+      managerAddress
+    ).then((x) => x && x.value);
 
     let allKeys = await accountData(coordinatorAddress);
     allKeys = Object.keys(allKeys).map((k) => allKeys[k]);
@@ -157,6 +167,11 @@ class Environment {
     this.collateral = new Collateral(this, collateralAddress);
     this.housekeeper = new Housekeeper(this, housekeeperAddress);
     this.spot = new Spot(this, spotAddress);
+    this.swap = new Swap(this, swapAddress);
+    this.sWavesAssetManager = new SWavesAssetManager(
+      this,
+      sWavesAssetManagerAddress
+    );
 
     console.log(`Loaded environment with ${this.amms.length} AMMs`);
   }
@@ -5350,6 +5365,11 @@ class Spot {
     return new Spot(this.e, address, _sender);
   }
 
+  async upgrade() {
+    console.log(`Upgrading Spot ${this.address}`);
+    return this.e.upgradeContract("spot.ride", this.address, 3700000);
+  }
+
   /**
    *
    * @returns {[Vault]}
@@ -5527,6 +5547,11 @@ class Swap {
     return new Swap(this.e, address, _sender);
   }
 
+  async upgrade() {
+    console.log(`Upgrading Swap ${this.address}`);
+    return this.e.upgradeContract("swap.ride", this.address, 3700000);
+  }
+
   async addMarket(_sourceToken, _targetToken, _market) {
     let tx = await invoke(
       {
@@ -5540,6 +5565,27 @@ class Swap {
 
     await waitForTx(tx.id);
     return tx;
+  }
+}
+
+class SWavesAssetManager {
+  constructor(e, address, sender) {
+    this.e = e;
+    this.address = address;
+    this.sender = sender;
+  }
+
+  as(_sender) {
+    return new Swap(this.e, address, _sender);
+  }
+
+  async upgrade() {
+    console.log(`Upgrading SWavesAssetManager ${this.address}`);
+    return this.e.upgradeContract(
+      "sWavesAssetManager.ride",
+      this.address,
+      3700000
+    );
   }
 }
 

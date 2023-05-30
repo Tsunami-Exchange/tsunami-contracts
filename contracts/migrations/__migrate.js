@@ -80,7 +80,7 @@ const run = async () => {
   for (let migration of migrations) {
     let isActualRerun = false;
     const seq = migration.split("_")[0];
-    if (seq > max) {
+    if (max && seq > max) {
       continue;
     }
     let isRun = await isMigrated(seq, chainId);
