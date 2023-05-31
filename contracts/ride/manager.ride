@@ -17,6 +17,9 @@ let k_amm = "k_amm"                               # Marks valid AMM addresses (f
 let k_admin_address = "k_admin_address"           # Address of admin account           
 let k_staking_address = "k_staking_address"       # Address that stakes quote asset
 let k_spot_address = "k_spot_address"             # Address for Spot trading
+let k_farming_address = "k_farming_address"       # Address that is used to farm more TSN
+let k_reward_asset = "k_reward_asset"             # Address of reward asset (asset that will be used to pay stakers)
+
 
 # Spot
 let k_vault = "k_vault"
@@ -25,6 +28,11 @@ let k_vault = "k_vault"
 let k_initialized = "k_initialized"               # If Insurance was properly initialized
 let k_paused = "k_paused"                         # If all Manager operations are paused
 
+# Settings
+let k_profitDirection = "k_profitDirection"
+
+let PROFIT_LP   = 1
+let PROFIT_FARM = 2
 
 ##### View functions #####
 func toCompositeKey(_key: String, _address: String) = _key + "_" + _address
@@ -36,11 +44,14 @@ func ordersAddress() = addressFromString(coordinator().getString(k_orders_addres
 func adminAddress() = addressFromString(coordinator().getString(k_admin_address).valueOrErrorMessage("Admin address not set"))
 func stakingAddress() = addressFromString(coordinator().getString(k_staking_address).valueOrErrorMessage("Staking address not set")).valueOrErrorMessage("Staking address invalid")
 func spotAddress() = addressFromString(coordinator().getString(k_spot_address).valueOrErrorMessage("Spot address not set")).valueOrErrorMessage("Spot address invalid")
+func farmingAddress() = addressFromString(coordinator().getStringValue(k_farming_address)).valueOrErrorMessage("Farming not set")
+func rewardAsset() = fromBase58String(coordinator().getString(k_reward_asset).valueOrErrorMessage("Reward asset not set"))
 
 func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
 func paused() = this.getBoolean(k_paused).valueOrElse(false)
 
 func assetManagerAddress(_assetId: String) = addressFromString(this.getString(toCompositeKey(k_asset_manager_address, _assetId)).valueOrErrorMessage("No asset manager for token " + _assetId)).valueOrErrorMessage("Invalid asset manager address for token " + _assetId)
+func profitDirection() = this.getInteger(k_profitDirection).valueOrElse(PROFIT_LP)
 
 func isSpotVault(_address: String) = {
   let spot = spotAddress()
@@ -202,8 +213,15 @@ func claimProfit(_assetId: String) = {
         case _ => throw("Invalid claimProfit result type")
       }
 
+    let profitAsset = if (_assetId == "WAVES") then unit else fromBase58String(_assetId)
+    let profitReceiver = if (profitAsset == rewardAsset() && profitDirection() == PROFIT_FARM) then {
+      farmingAddress()
+    } else {
+      i.caller
+    }
+
     ([
-      ScriptTransfer(i.caller, profit, if (_assetId == "WAVES") then unit else fromBase58String(_assetId))
+      ScriptTransfer(profitReceiver, profit, profitAsset)
     ], profit)
   }
 }

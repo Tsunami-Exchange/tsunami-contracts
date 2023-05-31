@@ -114,6 +114,7 @@ const run = async () => {
         if (error === "{}") {
           error = "" + e;
         }
+        console.error(e);
         console.error(`Migration failed`, error);
         success = false;
         break;

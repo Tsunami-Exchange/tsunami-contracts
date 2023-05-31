@@ -140,6 +140,10 @@ class Environment {
       `k_swap_address`,
       coordinatorAddress
     ).then((x) => x && x.value);
+    const oracleAddress = await accountDataByKey(
+      `k_oracle`,
+      coordinatorAddress
+    ).then((x) => x && x.value);
 
     let sWavesAssetManagerAddress = await accountDataByKey(
       `k_asset_manager_address_WAVES`,
@@ -168,6 +172,7 @@ class Environment {
     this.housekeeper = new Housekeeper(this, housekeeperAddress);
     this.spot = new Spot(this, spotAddress);
     this.swap = new Swap(this, swapAddress);
+    this.oracle = new Oracle(this, oracleAddress);
     this.sWavesAssetManager = new SWavesAssetManager(
       this,
       sWavesAssetManagerAddress
@@ -1725,6 +1730,30 @@ class Environment {
       );
 
       console.log(`setSpot in ${setSpotTx.id}`);
+    }
+  }
+
+  async setOracleAddress(oracleAddress) {
+    if (!oracleAddress) {
+      throw Error(`No oracleAddress`);
+    }
+    let coordinatorAddress =
+      this.addresses.coordinator || address(this.seeds.coordinator);
+
+    let oracle = await accountDataByKey(`k_oracle`, coordinatorAddress).then(
+      (x) => x && x.value
+    );
+    if (oracle !== oracleAddress) {
+      const setOracleTx = await invoke(
+        {
+          dApp: coordinatorAddress,
+          functionName: "setOracleAddress",
+          arguments: [oracleAddress],
+        },
+        this.seeds.admin
+      );
+
+      console.log(`setOracleTx in ${setOracleTx.id}`);
     }
   }
 
@@ -5233,6 +5262,11 @@ class Oracle {
 
   as(_sender) {
     return new Oracle(this.e, address, _sender);
+  }
+
+  async upgrade() {
+    console.log(`Upgrading Oracle ${this.address}`);
+    return this.e.upgradeContract("oracle.ride", this.address, 3700000);
   }
 
   async createStream(_name, _maxDeviation, _ttl) {
