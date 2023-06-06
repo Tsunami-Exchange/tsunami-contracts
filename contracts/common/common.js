@@ -1630,6 +1630,7 @@ class Environment {
             coordinatorAddress,
             Math.round(swapFee * decimals),
             Math.round(swapRebate * decimals),
+            Math.round(0.2 * decimals),
           ],
         },
         this.seeds.spot

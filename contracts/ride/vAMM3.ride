@@ -143,11 +143,14 @@ func intA(_address: Address, _key: String) = {
 }
 
 func cbalance() = int(k_balance)
+func cbalance0() = intOr(k_balance, 0)
 func fee() = int(k_fee)
 func rolloverFeeRate() = int(k_rolloverFee)
 func initMarginRatio() = int(k_initMarginRatio)
 func qtAstR() = int(k_quoteAssetReserve)
+func qtAstR0() = intOr(k_quoteAssetReserve, 0)
 func bsAstR() = int(k_baseAssetReserve)
+func bsAstR0() = intOr(k_baseAssetReserve, 0)
 func qtAstW() = intOr(k_quoteAssetWeight, DECIMAL_UNIT)
 func bsAstW() = intOr(k_baseAssetWeight, DECIMAL_UNIT)
 func totalPositionSize() = int(k_totalPositionSize)
@@ -1268,10 +1271,14 @@ func updateAmmReserves(
   if (_qtAstR < 0 || _bsAstR < 0) then {
     throw("Invalid amount to update reserves")
   } else {
+    if (_qtAstR != qtAstR0() || _bsAstR != bsAstR0()) then {
     [
       IntegerEntry(k_quoteAssetReserve, _qtAstR),
       IntegerEntry(k_baseAssetReserve, _bsAstR)
     ]
+    } else {
+      []
+    }
   }
 }
 
@@ -1279,10 +1286,14 @@ func updateAmmWeights(
   _qtAstW: Int,
   _bsAstW: Int
 ) = {
-  [
-    IntegerEntry(k_quoteAssetWeight, _qtAstW),
-    IntegerEntry(k_baseAssetWeight, _bsAstW)
-  ]
+  if (_qtAstW != qtAstW() || _bsAstW != bsAstW()) then {
+    [
+      IntegerEntry(k_quoteAssetWeight, _qtAstW),
+      IntegerEntry(k_baseAssetWeight, _bsAstW)
+    ]
+  } else {
+    []
+  }
 }
 
 func updateAmm(
@@ -1342,13 +1353,17 @@ func withdraw(
   }
 }
 
-func updateBalance(i: Int) = {
-  if (i < 0) then {
+func updateBalance(_balance: Int) = {
+  if (_balance < 0) then {
     throw("Balance")
   } else {
-    [
-      IntegerEntry(k_balance, i)
-    ]
+    if (cbalance0() == 0 || cbalance0() != _balance) then {
+      [
+        IntegerEntry(k_balance, _balance)
+      ]
+    } else {
+      []
+    }
   }
 }
 
