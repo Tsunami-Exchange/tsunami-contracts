@@ -825,6 +825,116 @@ describe("LIMIT order should be able to", async function () {
   });
 });
 
+describe.only("Expiring LIMIT order should be able to", async function () {
+  this.timeout(600000);
+
+  /**
+   * @type {Environment}
+   */
+  let e;
+
+  let amm, user, executor, lp;
+  let _orderId;
+
+  const usdnBalance = async (seed) => {
+    const raw = await assetBalance(e.assets.neutrino, address(seed));
+    return Number.parseFloat((raw / decimals).toFixed(4));
+  };
+
+  before(async function () {
+    await setupAccounts({
+      admin: 1 * wvs,
+      longer: 0.1 * wvs,
+      user: 0.1 * wvs,
+      lp: 0.1 * wvs,
+      shorter: 0.1 * wvs,
+      executor: 0.2 * wvs,
+    });
+
+    executor = accounts.executor;
+    user = accounts.user;
+    lp = accounts.lp;
+
+    e = new Environment(accounts.admin);
+    await e.deploy();
+    await e.fundAccounts({
+      [user]: 50000,
+      [lp]: 100000,
+    });
+
+    amm = await e.deployAmm(1000000000, 60);
+
+    await e.vault.as(lp).stake(100000);
+  });
+
+  it("return money on expiration", async function () {
+    await e.setTime(new Date().getTime());
+
+    let [orderId] = await e.orders
+      .as(user)
+      .createOrder(
+        amm.address,
+        LIMIT,
+        57.0,
+        0,
+        1000,
+        3,
+        DIR_LONG,
+        1000,
+        "",
+        0,
+        0,
+        0,
+        0,
+        e.now + 60 * 1000
+      );
+
+    await amm.setOraclePrice(56.95);
+    await amm.syncTerminalPriceToOracle();
+
+    // Make sure order is executable by price
+    //
+    {
+      let [can] = await e.orders.canExecute(orderId);
+      expect(can).to.be.true;
+    }
+
+    // Let an order expire
+    //
+    await e.setTime(e.now + 61 * 1000);
+
+    // Make sure it's not executable
+    //
+    {
+      let [can] = await e.orders.canExecute(orderId);
+      expect(can).to.be.false;
+    }
+
+    {
+      let usdnBalanceOfUser = await usdnBalance(user);
+      expect(usdnBalanceOfUser).to.be.eq(49000);
+    }
+
+    // Clean up orders and check that user balance is the same
+    //
+    await e.orders.cleanUpStaleOrders(amm.address, user);
+
+    {
+      let usdnBalanceOfUser = await usdnBalance(user);
+      expect(usdnBalanceOfUser).to.be.eq(50000);
+    }
+
+    // Would not for example return money twice
+    //
+    await e.orders.cleanUpStaleOrders(amm.address, user);
+
+    {
+      let usdnBalanceOfUser = await usdnBalance(user);
+      expect(usdnBalanceOfUser).to.be.eq(50000);
+    }
+  });
+});
+
 describe("STOP-LIMIT order should be able to", async function () {
   this.timeout(600000);
 

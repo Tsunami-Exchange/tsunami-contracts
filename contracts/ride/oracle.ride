@@ -251,7 +251,7 @@
       let reasons = [
         if (!isValidTimestamp) then "invalid timestamp" else "",
         if (!iNotStopped) then "stopped" else "",
-        if (!isValidDiff) then "invalid diff (too large)" else "",
+        if (!isValidDiff) then("invalid diff (too large) " + lastPrice.toString() + " vs " + price.toString() + " dev: " + diff.toString() + " maxDev: " + maxDeviation.toString() ) else "",
         if (!isQuorumReached) then "quorum not reached" else ""
       ]
 

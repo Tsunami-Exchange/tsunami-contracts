@@ -400,10 +400,14 @@ func updateAmmReserves(
   _qtAstR: Int,
   _bsAstR: Int
 ) = {
-  [
-    IntegerEntry(k_quoteAssetReserve, _qtAstR),
-    IntegerEntry(k_baseAssetReserve, _bsAstR)
-  ]
+  if (_qtAstR <= 0 || _bsAstR <= 0) then {
+    throw("Can not updateAmmReserves: _qtAstR <= 0 || _bsAstR <= 0")
+  } else {
+    [
+      IntegerEntry(k_quoteAssetReserve, _qtAstR),
+      IntegerEntry(k_baseAssetReserve, _bsAstR)
+    ]
+  }
 }
 
 func updateAmmWeights(
@@ -471,9 +475,9 @@ func unpause() = {
 func changeLiquidity(_quoteAssetAmount: Int) = {
   if (
     !(
-        i.caller == spotAddress()
-        || i.caller == adminAddress()
-      )
+      i.caller == spotAddress()
+      || i.caller == adminAddress()
+    )
   ) then {
     throw("Invalid changeLiquidity params")
   } else {

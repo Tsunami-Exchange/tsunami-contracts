@@ -4219,7 +4219,8 @@ class Orders {
     _stopTriggerPrice = 0,
     _stopLimitPrice = 0,
     _takeTriggerPrice = 0,
-    _takeLimitPrice = 0
+    _takeLimitPrice = 0,
+    _expiration = this.e.now + 1000 * 60 * 24
   ) {
     let positionDirection = 0;
     if (_type == 1 || _type == 2) {
@@ -4282,7 +4283,8 @@ class Orders {
           _stopLimitPrice,
           _takeTriggerPrice,
           _takeLimitPrice,
-          this.e.now + 1000 * 60 * 24,
+          _expiration,
+          this.e.oracle.lastPrice || "",
         ],
         payment:
           usdnPayment == 0
@@ -4384,6 +4386,20 @@ class Orders {
     return txx;
   }
 
+  async cleanUpStaleOrders(_amm, _trader) {
+    let tx = await invoke(
+      {
+        dApp: address(this.e.seeds.orders),
+        functionName: "cleanUpStaleOrders",
+        arguments: [_amm, address(_trader)],
+      },
+      this.e.seeds.admin
+    );
+
+    let txx = await waitForTx(tx.id);
+    return txx;
+  }
+
   async increasePositionWithStopLoss(
     _amm,
     _amount,
@@ -4410,7 +4426,7 @@ class Orders {
           Math.round(_stopLimitPrice * decimals),
           Math.round(_takeTriggerPrice * decimals),
           Math.round(_takeLimitPrice * decimals),
-          "",
+          this.e.oracle.lastPrice || "",
         ],
         payment: [
           {

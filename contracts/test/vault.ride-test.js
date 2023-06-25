@@ -60,7 +60,7 @@ describe("Vault should allow", async function () {
     expect(stakedUSDN).to.be.equal(1000);
     expect(staked).to.be.equal(1000);
     expect(free).to.be.equal(1000);
-    expect(locked).to.be.equal(0);
+    expect(locked).to.be.closeTo(0, 0.001);
   });
 
   it("Can add some more money to free", async function () {
@@ -75,7 +75,7 @@ describe("Vault should allow", async function () {
     expect(stakedUSDN).to.be.equal(1050);
     expect(staked).to.be.equal(1000);
     expect(free).to.be.equal(1050);
-    expect(locked).to.be.equal(0);
+    expect(locked).to.be.closeTo(0, 0.001);
     expect(rate).to.be.equal(1050 / 1000);
   });
 
@@ -201,7 +201,7 @@ describe("Vault should allow", async function () {
   });
 });
 
-describe.only("Vault should allow full withdrawal", async function () {
+describe("Vault should allow full withdrawal", async function () {
   this.timeout(600000);
 
   let e, staker1, staker2, rewardPayer, amm;

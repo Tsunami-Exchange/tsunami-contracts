@@ -271,11 +271,11 @@ func getOracleData(key: String) = {
 
 # Checks if AMM was properly initialized
 #
-func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
+  func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
 
-# Checks if AMM was paused  
-#
-func paused() = this.getBoolean(k_paused).valueOrElse(false)
+  # Checks if AMM was paused  
+  #
+  func paused() = this.getBoolean(k_paused).valueOrElse(false)
 
 # Checks if AMM is in close - only mode
 #
@@ -1309,7 +1309,7 @@ func updateAmm(
   let _qtAstW = qtAstW()
   let _bsAstW = bsAstW()
   if (_totalLongPositionSize - _totalShortPositionSize != _totalPositionSizeAfter) then {
-    throw("Invalid AMM state data: " + _totalLongPositionSize.toString() + " +  " + _totalShortPositionSize.toString() + " != " + _totalPositionSizeAfter.toString())
+    throw("Invalid AMM state data: " + _totalLongPositionSize.toString() + " -  " + _totalShortPositionSize.toString() + " != " + _totalPositionSizeAfter.toString())
   } else {
     updateAmmReserves(_qtAstR, _bsAstR)
     ++
@@ -1525,7 +1525,9 @@ func changeSettings(
   _maxOracleDelay: Int,
   _rolloverFee: Int,
   _fundingMode: Int,
-  _oracleMode: Int
+  _oracleMode: Int,
+  _baseOracleData: String,
+  _quoteOracleData: String
 ) = {
   if (
     _fundingPeriod <= 0
@@ -1539,7 +1541,7 @@ func changeSettings(
     || _maxPriceSpread <= 0
     || _maxOpenNotional <= 0
     || _feeToStakersPercent <= 0 || _feeToStakersPercent > DECIMAL_UNIT
-    || _maxOracleDelay <= 0
+    || _maxOracleDelay < 0
     || _rolloverFee <= 0
     || (_fundingMode != FUNDING_SYMMETRIC && _fundingMode != FUNDING_ASYMMETRIC)
     || (_oracleMode != ORACLE_PLAIN && _oracleMode != ORACLE_JIT)
@@ -1565,6 +1567,11 @@ func changeSettings(
       _fundingMode,
       _oracleMode
     )
+    ++
+    [
+      StringEntry(k_baseOracle, _baseOracleData),
+      StringEntry(k_quoteOracle, _quoteOracleData)
+    ]
   }
 }
 
@@ -2367,8 +2374,6 @@ func payFunding(_priceUpdate: String) = {
       divd(longPremiumFraction, underlyingPrice),
       divd(shortPremiumFraction, underlyingPrice)
     )
-
-    
   }
 }
 

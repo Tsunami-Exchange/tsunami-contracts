@@ -16,6 +16,8 @@
 
   # Vault settings
   let k_maxSpotUtilization = "k_maxSpotUtilization"
+  let k_withdrawPerPeriod = "k_withdrawPerPeriod"
+  let k_withdrawUnlimited = "k_withdrawUnlimited"
 
   # Global staking
   let k_rate = "k_rate" # Rate of exchange from Asset to v-Shares
@@ -99,6 +101,7 @@
   func int(k: String) = this.getInteger(k).valueOrErrorMessage("no value for " + k)
   func int0(k: String) = this.getInteger(k).valueOrElse(0)
   func int1(k: String) = this.getInteger(k).valueOrElse(DECIMAL_UNIT)
+  func intOr(k: String, val: Int) = this.getInteger(k).valueOrElse(val)
 
   func totalSupply() = int0(k_totalSupply)
   
@@ -119,6 +122,8 @@
   func rewards(_staker: String) = int0(k_userReward.toCompositeKey(_staker))
   func userRewardPerTokenPaid(_staker: String) = int0(k_userRewardPerToken.toCompositeKey(_staker))
   func maxSpotUtilization() = int0(k_maxSpotUtilization)
+  func withdrawPerPeriod() = intOr(k_withdrawPerPeriod, WITHDRAW_PER_PERIOD)
+  func withdrawUnlimited() = this.getBoolean(k_withdrawUnlimited).valueOrElse(false)
 
   func initialized() = this.getBoolean(k_initialized).valueOrElse(false)
 
@@ -133,7 +138,12 @@
       if (currentDate - lastWithdrawDate > WITHDRAW_PERIOD) then {
         (currentDate, withdrawLimit(_staker), 0)
       } else {
-        (lastWithdrawDate, withdrawLimit(_staker) - withdrawnInPeriod(_staker), withdrawnInPeriod(_staker))
+        let _withdrawnInPeriod = withdrawnInPeriod(_staker)
+        if (withdrawUnlimited()) then {
+          (lastWithdrawDate, withdrawLimit(_staker), _withdrawnInPeriod)
+        } else {
+          (lastWithdrawDate, withdrawLimit(_staker) - _withdrawnInPeriod, _withdrawnInPeriod)
+        }
       }
     
     (newLastWithdrawnDate, withdrawLimitLeft, alreadyWithdrawnInPeriod)
@@ -306,17 +316,22 @@
 
   @Callable(i)
   func changeSettings(
-    _maxSpotUtilization: Int
+    _maxSpotUtilization: Int,
+    _withdrawPerPeriod: Int,
+    _withdrawUnlimited: Boolean
   ) = {
     if (
       !initialized()
       || i.caller != adminAddress()
       || (_maxSpotUtilization < 0 || _maxSpotUtilization > DECIMAL_UNIT)
+      || (_withdrawPerPeriod < 0 || _withdrawPerPeriod > DECIMAL_UNIT)
     ) then {
       throw("Invalid changeSettings params")
     } else {
       [
-        IntegerEntry(k_maxSpotUtilization, _maxSpotUtilization)
+        IntegerEntry(k_maxSpotUtilization, _maxSpotUtilization),
+        IntegerEntry(k_withdrawPerPeriod, _withdrawPerPeriod),
+        BooleanEntry(k_withdrawUnlimited, _withdrawUnlimited)
       ]
     }
   }
@@ -376,7 +391,7 @@
       )
 
       let newTotalBalance = vAmount + balanceOf(_staker)
-      let newWithdrawLimit = newTotalBalance.muld(WITHDRAW_PER_PERIOD)
+      let newWithdrawLimit = newTotalBalance.muld(withdrawPerPeriod())
 
       strict stake = invoke(
         managerAddress(),

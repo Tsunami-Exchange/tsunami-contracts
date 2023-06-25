@@ -346,7 +346,7 @@
     let orders = traderAmmOrdersIds(_amm, _trader)
     let positionIds = getPositionIds(_amm, _trader)
     
-    func cleanUpOne(_acc: (List[String], List[BooleanEntry]), _orderId: String) = {
+    func cleanUpOne(_acc: (List[String], List[BooleanEntry], Int), _orderId: String) = {
       let orderIdInt = _orderId.parseInt().valueOrErrorMessage("Invalid order id")
       let (
         _x1, 
@@ -355,34 +355,55 @@
         _x4, 
         _type, 
         _x5,
-        _x6,
+        _paymentUsdn,
+        _x6, 
         _x7, 
-        _x8, 
         _positionId,
-        _x9,
+        _x8,
         _expiration
       ) = getOrder(orderIdInt)
 
       let cancelTakeStopOfNoPosition = (_type == STOP || _type == TAKE) && positionIds[0] != _positionId && positionIds[1] != _positionId
-      let cancelLimitIfExpired = (_type == LIMIT) && lastBlock.timestamp >= _expiration
+      let cancelLimitIfExpired = (_type == LIMIT) && TIME >= _expiration
 
       if (cancelTakeStopOfNoPosition || cancelLimitIfExpired) then {
         let change = markCancelOrder(orderIdInt)
         let newOrderList = addRemoveOrderIdList(_acc._1, orderIdInt, _amm, _trader, false)
+        let paymentToReturn = if (_type == LIMIT) then {
+          _paymentUsdn
+        } else {
+          0
+        }
 
-        (newOrderList, _acc._2 ++ change)
+        (newOrderList, _acc._2 ++ change, _acc._3 + paymentToReturn)
       } else {
         _acc
       }
     }
     
-    let (newOrders, cancelActions) = FOLD<10>(orders, (orders, []), cleanUpOne)
+    let (newOrders, cancelActions, paymentToReturn) = FOLD<10>(orders, (orders, [], 0), cleanUpOne)
+
+    strict withdraw = if (paymentToReturn > 0) then {
+      strict unstake = invoke(
+        managerAddress(),
+        "withdraw",
+        [quoteAsset().toBase58String(), paymentToReturn],
+        []
+      )
+      []
+    } else {
+      []
+    }
 
     cancelActions
     ++
     updateTraderOrderCount(_amm, _trader, newOrders.size())
     ++
     updateOrderIdStr(makeString(newOrders, ","), _amm, _trader)
+    ++
+    [
+      ScriptTransfer(addressFromStringValue(_trader), paymentToReturn, quoteAsset())
+    ]
   }
 
   @Callable(i)
@@ -905,7 +926,7 @@
       _refLink, 
       _positionId,
       _limitPrice,
-      _timestamp,
+      _expiration,
       _orderMarketPrice
     ) = getOrder(_orderId)
 
@@ -989,7 +1010,13 @@
           marketPrice >= _triggerPrice
         }
 
-        let isExecutable = isExecutableByStop && isExecutableForTriggerPrice
+        let isExecutableByTimestamp = if (_expiration == 0 || TIME <= _expiration) then {
+          true
+        } else {
+          false
+        }
+
+        let isExecutable = isExecutableByStop && isExecutableForTriggerPrice && isExecutableByTimestamp
         if (isExecutable) then {
           let marginAmount = _amountUsdn.divd(muld(getFee(_amm, _trader), _leverage) + DECIMAL_UNIT)
           let openNotional = muld(marginAmount, _leverage)
