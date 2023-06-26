@@ -12,6 +12,7 @@ const DIR_SHORT = 2;
 const STOP_LOSS = 1;
 const TAKE_PROFIT = 2;
 const LIMIT = 3;
+const MARKET = 4;
 
 const minute = 1000 * 60;
 const hour = minute * 60;
@@ -825,7 +826,7 @@ describe("LIMIT order should be able to", async function () {
   });
 });
 
-describe.only("Expiring LIMIT order should be able to", async function () {
+describe("Expiring LIMIT order should be able to", async function () {
   this.timeout(600000);
 
   /**
@@ -1322,6 +1323,233 @@ describe("Should be to auto create and execute stop loss and take profit after l
     {
       let cnt = await e.orders.getOrderCount(address(user), amm.address);
       expect(cnt).to.be.equal(2);
+    }
+  });
+});
+
+describe("MARKET order should be able to", async function () {
+  this.timeout(600000);
+
+  let e, amm, user, executor, lp;
+  let _orderId;
+
+  before(async function () {
+    await setupAccounts({
+      admin: 1 * wvs,
+      longer: 0.1 * wvs,
+      user: 0.1 * wvs,
+      lp: 0.1 * wvs,
+      shorter: 0.1 * wvs,
+      executor: 0.2 * wvs,
+    });
+
+    executor = accounts.executor;
+    user = accounts.user;
+    lp = accounts.lp;
+
+    e = new Environment(accounts.admin);
+    await e.deploy();
+    await e.fundAccounts({
+      [user]: 50000,
+      [lp]: 100000,
+    });
+
+    amm = await e.deployAmm(1000000000, 60);
+
+    await e.vault.as(lp).stake(100000);
+    await e.setTime(new Date().getTime());
+  });
+
+  it("open a new LONG position", async function () {
+    let [orderId] = await e.orders
+      .as(user)
+      .createOrder(amm.address, MARKET, 0, 0, 1000, 3, DIR_LONG, 1000);
+
+    {
+      let [can] = await e.orders.canExecute(orderId);
+      expect(can).to.be.true;
+    }
+
+    await e.orders.as(executor).executeOrder(orderId);
+
+    await amm.as(user).closePosition();
+  });
+
+  it("can cancel a market order and get back the money", async function () {
+    let [orderId] = await e.orders
+      .as(user)
+      .createOrder(amm.address, MARKET, 0, 0, 1000, 3, DIR_LONG, 1000);
+
+    await amm.setOraclePrice(57.15);
+    await amm.syncTerminalPriceToOracle();
+
+    {
+      let [can] = await e.orders.canExecute(orderId);
+      expect(can).to.be.true;
+    }
+
+    let tx = await e.orders.as(user).cancelOrder(orderId);
+    await expect(e.orders.as(executor).executeOrder(orderId)).to.be.eventually
+      .rejected; // Can not execute after cancel
+
+    expect(tx.stateChanges.transfers[0].amount / 10 ** 6).to.be.closeTo(
+      1000,
+      0.001
+    );
+  });
+
+  it("open a new SHORT position", async function () {
+    let [orderId] = await e.orders
+      .as(user)
+      .createOrder(amm.address, MARKET, 0, 0, 1000, 3, DIR_SHORT, 1000);
+
+    {
+      let [can] = await e.orders.canExecute(orderId);
+      expect(can).to.be.true;
+    }
+
+    await e.orders.as(executor).executeOrder(orderId);
+
+    await amm.as(user).closePosition();
+  });
+
+  it("open a new LONG and SHORT position", async function () {
+    {
+      let [orderId] = await e.orders
+        .as(user)
+        .createOrder(amm.address, MARKET, 0, 0, 1000, 3, DIR_LONG, 1000);
+
+      {
+        let [can] = await e.orders.canExecute(orderId);
+        expect(can).to.be.true;
+      }
+
+      await e.orders.as(executor).executeOrder(orderId);
+    }
+
+    // ---
+
+    {
+      let [orderId] = await e.orders
+        .as(user)
+        .createOrder(amm.address, MARKET, 0, 0, 1000, 3, DIR_SHORT, 1000);
+
+      {
+        let [can] = await e.orders.canExecute(orderId);
+        expect(can).to.be.true;
+      }
+
+      await e.orders.as(executor).executeOrder(orderId);
+    }
+
+    await amm.as(user).closePosition(0, 0, false, DIR_LONG);
+    await amm.as(user).closePosition(0, 0, false, DIR_SHORT);
+  });
+});
+
+describe.only("Expiring MARKET order should be able to", async function () {
+  this.timeout(600000);
+
+  /**
+   * @type {Environment}
+   */
+  let e;
+
+  let amm, user, executor, lp;
+  let _orderId;
+
+  const usdnBalance = async (seed) => {
+    const raw = await assetBalance(e.assets.neutrino, address(seed));
+    return Number.parseFloat((raw / decimals).toFixed(4));
+  };
+
+  before(async function () {
+    await setupAccounts({
+      admin: 1 * wvs,
+      longer: 0.1 * wvs,
+      user: 0.1 * wvs,
+      lp: 0.1 * wvs,
+      shorter: 0.1 * wvs,
+      executor: 0.2 * wvs,
+    });
+
+    executor = accounts.executor;
+    user = accounts.user;
+    lp = accounts.lp;
+
+    e = new Environment(accounts.admin);
+    await e.deploy();
+    await e.fundAccounts({
+      [user]: 50000,
+      [lp]: 100000,
+    });
+
+    amm = await e.deployAmm(1000000000, 60);
+
+    await e.vault.as(lp).stake(100000);
+  });
+
+  it("return money on expiration", async function () {
+    await e.setTime(new Date().getTime());
+
+    let [orderId] = await e.orders
+      .as(user)
+      .createOrder(
+        amm.address,
+        MARKET,
+        0,
+        0,
+        1000,
+        3,
+        DIR_LONG,
+        1000,
+        "",
+        0,
+        0,
+        0,
+        0,
+        e.now + 60 * 1000
+      );
+
+    // Make sure order is executable by price
+    //
+    {
+      let [can] = await e.orders.canExecute(orderId);
+      expect(can).to.be.true;
+    }
+
+    // Let an order expire
+    //
+    await e.setTime(e.now + 61 * 1000);
+
+    // Make sure it's not executable
+    //
+    {
+      let [can] = await e.orders.canExecute(orderId);
+      expect(can).to.be.false;
+    }
+
+    {
+      let usdnBalanceOfUser = await usdnBalance(user);
+      expect(usdnBalanceOfUser).to.be.eq(49000);
+    }
+
+    // Clean up orders and check that user balance is the same
+    //
+    await e.orders.cleanUpStaleOrders(amm.address, user);
+
+    {
+      let usdnBalanceOfUser = await usdnBalance(user);
+      expect(usdnBalanceOfUser).to.be.eq(50000);
+    }
+
+    // Would not for example return money twice
+    //
+    await e.orders.cleanUpStaleOrders(amm.address, user);
+
+    {
+      let usdnBalanceOfUser = await usdnBalance(user);
+      expect(usdnBalanceOfUser).to.be.eq(50000);
     }
   });
 });

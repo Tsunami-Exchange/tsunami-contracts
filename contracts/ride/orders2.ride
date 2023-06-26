@@ -33,6 +33,7 @@
   let STOP   = 1 # Executes when price is at trigger point or worse (closesPosition)
   let TAKE   = 2 # Executes when price is at trigger point or better (closesPosition)
   let LIMIT  = 3 # Executes when price is at triggerPrice +- 0.02% and baseAssetAmount >= minBaseAssetAmount (can increase / decrease positions)
+  let MARKET = 4 # Executes at any price. Usually short lived.
 
   # Sides
   let LONG   = 1
@@ -364,12 +365,12 @@
       ) = getOrder(orderIdInt)
 
       let cancelTakeStopOfNoPosition = (_type == STOP || _type == TAKE) && positionIds[0] != _positionId && positionIds[1] != _positionId
-      let cancelLimitIfExpired = (_type == LIMIT) && TIME >= _expiration
+      let cancelLimitIfExpired = (_type == LIMIT || _type == MARKET) && TIME >= _expiration
 
       if (cancelTakeStopOfNoPosition || cancelLimitIfExpired) then {
         let change = markCancelOrder(orderIdInt)
         let newOrderList = addRemoveOrderIdList(_acc._1, orderIdInt, _amm, _trader, false)
-        let paymentToReturn = if (_type == LIMIT) then {
+        let paymentToReturn = if (_type == LIMIT || _type == MARKET) then {
           _paymentUsdn
         } else {
           0
@@ -532,7 +533,7 @@
           case _ => throw("Invalid ID of created order")
         }
 
-      if (_type == LIMIT) then {
+      if (_type == LIMIT || _type == MARKET) then {
         let makeStop = if (_stopTriggerPrice > 0) then {
           strict doMakeStop = invoke(
             this,
@@ -764,12 +765,12 @@
     if (
       !initialized()
       || !isWhitelist(_amm)
-      || _triggerPrice <= 0
+      || _triggerPrice < 0
       || _limitPrice < 0
       || _amountIn <= 0
       || _leverage < 0
       || !(_side == LONG || _side == SHORT)
-      || !(_type == STOP || _type == TAKE || _type == LIMIT)
+      || !(_type == STOP || _type == TAKE || _type == LIMIT || _type == MARKET)
       || !(i.caller == this)
       || _expiration < 0
     ) then {
@@ -1033,6 +1034,27 @@
         } else {
           throw("Can not execute LIMIT order: triggerPrice mismatch")
         }
+      } else if (_type == MARKET) then {
+        let marketPrice = getMarketPrice(_amm)
+
+        let isExecutableByTimestamp = if (_expiration == 0 || TIME <= _expiration) then {
+          true
+        } else {
+          false
+        }
+
+        let isExecutable = isExecutableByTimestamp
+        if (isExecutable) then {
+          ("increasePosition", [
+            _side, 
+            _leverage, 
+            0, 
+            _refLink,
+            _priceData
+          ], [AttachedPayment(quoteAsset(), _amountUsdn)])
+        } else {
+          throw("Can not execute MARKET order: expiration mismatch")
+        }
       } else {
         throw("Invalid order type: " + _type.toString())
       }
@@ -1053,7 +1075,7 @@
       strict doClosePosition = invoke(addressFromStringValue(_amm), method, args, payments)
       strict doResetContext = invoke(this, "resetContext", [], [])
 
-      strict executeOrderRequest = if (_type == LIMIT) then {
+      strict executeOrderRequest = if (_type == LIMIT || _type == MARKET) then {
         strict newPositionSize = getPositionSize(_amm, _trader, positionDirection)
         strict newPositionId = getPositionId(_amm, _trader, positionDirection)
 
