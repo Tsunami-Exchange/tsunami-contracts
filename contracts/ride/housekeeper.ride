@@ -82,7 +82,7 @@
 
     let amms = _payFunding.strToList()
     func compute(_acc: List[StringEntry], _ammData: String) = {
-      let parts = _ammData.split("@")
+      let parts = _ammData.split_4C("@")
       let amm = parts[0]
       let priceUpdate = if (parts.size() > 1) then parts[1] else ""
       strict doPayFunding = invoke(
