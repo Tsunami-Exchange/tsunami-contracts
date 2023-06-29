@@ -21,7 +21,11 @@
   let k_lastOrderId         = "k_lastOrderId"
   let k_traderOrderCnt      = "k_traderOrderCnt"
   let k_traderOrderIds      = "k_traderOrderIds"
+
+  # Orders settings
   let k_spreadLimit         = "k_spreadLimit"
+  let k_onlyWhitelist       = "k_onlyWhitelist"
+  let k_whitelistExecutor   = "k_whitelistExecutor"
 
   # Sender
   let k_sender              = "k_sender"
@@ -225,6 +229,14 @@
     muld(_price, getSpreadLimit())
   }
 
+  func isOnlyWhitelistExecutors() = {
+    this.getBoolean(k_onlyWhitelist).valueOrElse(false)
+  }
+
+  func isWhitelistExecutor(_executor: String) = {
+    this.getBoolean(k_whitelistExecutor.toCompositeKey(_executor)).valueOrElse(false)
+  }
+
   # Update functions
   func saveOrder(
     _orderId: Int,
@@ -342,6 +354,14 @@
     [currentLongPositionId, currentShortPositionId]
   }
 
+  func checkValidExecutor(_caller: Address) = {
+    if (isOnlyWhitelistExecutors()) then {
+      isWhitelistExecutor(_caller.toString())
+    } else {
+      true
+    }
+  }
+
   @Callable(i)
   func cleanUpStaleOrders(_amm: String, _trader: String) = {
     let orders = traderAmmOrdersIds(_amm, _trader)
@@ -446,7 +466,10 @@
   }
 
   @Callable(i)
-  func changeSettings(_spreadLimit: Int) = {
+  func changeSettings(
+    _spreadLimit: Int,
+    _onlyWhitelist: Boolean
+  ) = {
     if (
       i.caller != adminAddress()
       || (_spreadLimit < 0 || _spreadLimit > DECIMAL_UNIT / 10)
@@ -454,8 +477,47 @@
       throw("Invalid changeSettings params")
     } else {
       [
-        IntegerEntry(k_spreadLimit, _spreadLimit)
+        IntegerEntry(k_spreadLimit, _spreadLimit),
+        BooleanEntry(k_onlyWhitelist, _onlyWhitelist)
       ]
+    }
+  }
+
+  @Callable(i)
+  func addWhitelist(
+    _list: String
+  ) = {
+    if (
+      i.caller != adminAddress()
+    ) then {
+      throw("Invalid addWhitelist params")
+    } else {
+      func toAddressList(_acc: List[BooleanEntry], _addr: String) = {
+        strict address = addressFromStringValue(_addr)
+        
+        _acc :+ BooleanEntry(k_whitelistExecutor.toCompositeKey(address.toString()), true)
+      }
+
+      FOLD<20>(_list.split_4C(","), [], toAddressList)
+    }
+  }
+
+  @Callable(i)
+  func removeWhitelist(
+    _list: String
+  ) = {
+    if (
+      i.caller != adminAddress()
+    ) then {
+      throw("Invalid removeWhitelist params")
+    } else {
+      func toAddressList(_acc: List[BooleanEntry], _addr: String) = {
+        strict address = addressFromStringValue(_addr)
+        
+        _acc :+ BooleanEntry(k_whitelistExecutor.toCompositeKey(address.toString()), false)
+      }
+
+      FOLD<20>(_list.split_4C(","), [], toAddressList)
     }
   }
 
@@ -933,11 +995,13 @@
 
     strict updatePrice = invoke(_amm.addressFromStringValue(), "updateOracle", [_priceData], [])
     strict cleanUp = invoke(this, "cleanUpStaleOrders", [_amm, _trader], [])
-    
+    strict _caller = if (i.caller == this) then i.originCaller else i.caller # For canExecute handling
+
     let positionDirection = getPositionDirection(_side, _type)
     if (
       !initialized()
       || !isValid(_orderId)
+      || !checkValidExecutor(_caller)
     ) then {
       throw("Invalid executeOrder parameters")
     } else {

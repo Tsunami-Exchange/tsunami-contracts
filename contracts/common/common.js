@@ -2507,6 +2507,10 @@ class Environment {
                 type: "integer",
                 value: options.jitOracleStream ? 2 : 1,
               }, // _Oracle mode default 1 (plain)
+              {
+                type: "integer",
+                value: Math.round((options.minInitMarginRatio || 1) * decimals),
+              },
             ],
           },
         },
@@ -4206,6 +4210,48 @@ class Orders {
     return this.e.upgradeContract("orders2.ride", this.address, 3700000);
   }
 
+  async changeSettings(_spreadLimit = 1, _isWhitelist = false) {
+    let tx = await invoke(
+      {
+        dApp: address(this.e.seeds.orders),
+        functionName: "changeSettings",
+        arguments: [Math.round(_spreadLimit * decimals), _isWhitelist],
+      },
+      this.e.seeds.admin
+    );
+
+    await waitForTx(tx.id);
+    return tx;
+  }
+
+  async addWhitelist(_addresses) {
+    let tx = await invoke(
+      {
+        dApp: address(this.e.seeds.orders),
+        functionName: "addWhitelist",
+        arguments: [_addresses.join(",")],
+      },
+      this.e.seeds.admin
+    );
+
+    await waitForTx(tx.id);
+    return tx;
+  }
+
+  async removeWhitelist(_addresses) {
+    let tx = await invoke(
+      {
+        dApp: address(this.e.seeds.orders),
+        functionName: "removeWhitelist",
+        arguments: [_addresses.join(",")],
+      },
+      this.e.seeds.admin
+    );
+
+    await waitForTx(tx.id);
+    return tx;
+  }
+
   async createOrder(
     _amm,
     _type,
@@ -4338,6 +4384,9 @@ class Orders {
   }
 
   async canExecute(_order) {
+    if (!_order) {
+      throw Error(`canExecute called with no order`);
+    }
     const invokeTx = invokeScript(
       {
         dApp: address(this.e.seeds.orders),
@@ -4355,7 +4404,7 @@ class Orders {
           ],
         },
       },
-      this.e.seeds.admin
+      this.sender || this.e.seeds.admin
     );
 
     try {

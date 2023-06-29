@@ -35,6 +35,7 @@ let k_fee = "k_fee"                                       # Exchange fee. Defaul
 let k_rolloverFee = "k_rollover_fee"                      # Rollover fee per minute. Default 35% per year.
 let k_fundingPeriod = "k_fundingPeriod"                   # Funding period. By default funding is paid once per hour
 let k_initMarginRatio = "k_initMarginRatio"               # Initial margin ratio. Controls how much leverage can be applied when position is created
+let k_minInitMarginRatio = "k_minInitMarginRatio"         # Minimal initial margin ratio. Controls minimum amount leverage can be applied when position is created
 let k_maintenanceMarginRatio = "k_mmr"                    # Maintenance margin ratio (MMR). When MR < MMR position can be liquidated
 let k_liquidationFeeRatio = "k_liquidationFeeRatio"       # % of position size liquidator will get for himself. 1/2 of this goes to liquidator, 1/2 - to insurance fund
 let k_partialLiquidationRatio = "k_partLiquidationRatio"  # % of position notional that will be liquidated in case 0 < MR < MMR
@@ -147,6 +148,7 @@ func cbalance0() = intOr(k_balance, 0)
 func fee() = int(k_fee)
 func rolloverFeeRate() = int(k_rolloverFee)
 func initMarginRatio() = int(k_initMarginRatio)
+func minInitMarginRatio() = intOr(k_minInitMarginRatio, DECIMAL_UNIT)
 func qtAstR() = int(k_quoteAssetReserve)
 func qtAstR0() = intOr(k_quoteAssetReserve, 0)
 func bsAstR() = int(k_baseAssetReserve)
@@ -1175,10 +1177,12 @@ func updateSettings(
   _maxOracleDelay: Int,
   _rolloverFee: Int,
   _fundingMode: Int,
-  _oracleMode: Int
+  _oracleMode: Int,
+  _minInitMarginRatio: Int
 ) = {
   [
     IntegerEntry(k_initMarginRatio, _initMarginRatio),
+    IntegerEntry(k_minInitMarginRatio, _minInitMarginRatio),
     IntegerEntry(k_maintenanceMarginRatio, _mmr),
     IntegerEntry(k_liquidationFeeRatio, _liquidationFeeRatio),
     IntegerEntry(k_fundingPeriod, _fundingPeriod),
@@ -1527,11 +1531,13 @@ func changeSettings(
   _fundingMode: Int,
   _oracleMode: Int,
   _baseOracleData: String,
-  _quoteOracleData: String
+  _quoteOracleData: String,
+  _minInitMarginRatio: Int
 ) = {
   if (
     _fundingPeriod <= 0
-    || _initMarginRatio <= 0
+    || _initMarginRatio <= 0 || _initMarginRatio > DECIMAL_UNIT 
+    || _minInitMarginRatio <= 0 || _minInitMarginRatio > DECIMAL_UNIT || _minInitMarginRatio < _initMarginRatio
     || _mmr <= 0
     || _liquidationFeeRatio <= 0
     || _fee <= 0
@@ -1565,7 +1571,8 @@ func changeSettings(
       _maxOracleDelay,
       _rolloverFee,
       _fundingMode,
-      _oracleMode
+      _oracleMode,
+      _minInitMarginRatio
     )
     ++
     [
@@ -1596,13 +1603,15 @@ func initialize(
   _maxOracleDelay: Int,
   _rolloverFee: Int,
   _fundingMode: Int,
-  _oracleMode: Int
+  _oracleMode: Int,
+  _minInitMarginRatio: Int
 ) = {
   if (
     _qtAstR <= 0
     || _bsAstR <= 0
     || _fundingPeriod <= 0
-    || _initMarginRatio <= 0
+    || _initMarginRatio <= 0 || _initMarginRatio > DECIMAL_UNIT 
+    || _minInitMarginRatio <= 0 || _minInitMarginRatio > DECIMAL_UNIT || _minInitMarginRatio < _initMarginRatio
     || _mmr <= 0
     || _liquidationFeeRatio <= 0
     || _fee <= 0
@@ -1638,7 +1647,8 @@ func initialize(
       _maxOracleDelay,
       _rolloverFee,
       _fundingMode,
-      _oracleMode
+      _oracleMode,
+      _minInitMarginRatio
     )
     ++
     updateFunding(
@@ -1693,6 +1703,7 @@ func increasePosition(
     || !initialized()
     || !isQuoteAsset
     || !requireMoreMarginRatio(divd(DECIMAL_UNIT, _leverage), initMarginRatio(), true)
+    || !requireMoreMarginRatio(divd(DECIMAL_UNIT, _leverage), minInitMarginRatio(), false)
     || paused()
     || closeOnly()
     || isMarketClosed()
@@ -1918,7 +1929,17 @@ func addMargin(_direction: Int, _priceUpdate: String) = {
       [AttachedPayment(quoteAsset(), _amount)]
     )
 
-    let rolloverFee = calcRolloverFee(oldPositionMargin, oldPositionTimestamp)
+    let (remainMargin, badDebt, rolloverFee) = calcRemainMarginWithFundingPaymentAndRolloverFee(
+        oldPositionSize,
+        oldPositionMargin,
+        oldPositionLstUpdCPF,
+        oldPositionTimestamp,
+        _amount
+    )
+
+    let marginRatio = calcMarginRatio(remainMargin, badDebt, oldPositionOpenNotional)
+    strict checkMinMargin = requireMoreMarginRatio(marginRatio, minInitMarginRatio(), false)
+    
     strict doTransferFeeToStakers = if (rolloverFee > 0) then {
       let (feeToStakers, feeToVault) = distributeFee(rolloverFee)
 

@@ -6,6 +6,7 @@
     "ride-test:vAMM2:basic": "cd contracts && surfboard test vAMM2-basic.ride-test.js",
     "ride-test:vAMM2:basic:oracle": "cd contracts && surfboard test vAMM2-basic-oracle.ride-test.js",
     "ride-test:vAMM2:basic:multi": "cd contracts && surfboard test vAMM2-basic-multi-quote.ride-test.js",
+    "ride-test:vAMM2:basic:min-leverage": "cd contracts && surfboard test vAMM2-basic-min-leverage.ride-test.js",
     "ride-test:vAMM2:partial": "cd contracts && surfboard test vAMM2-partial.ride-test.js",
     "ride-test:vAMM2:largek": "cd contracts && surfboard test vAMM2-largek.ride-test.js",
     "ride-test:vAMM2:liquidation": "cd contracts && surfboard test vAMM2-liquidation.ride-test.js",

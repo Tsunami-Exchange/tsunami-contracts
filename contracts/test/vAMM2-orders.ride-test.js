@@ -1447,7 +1447,7 @@ describe("MARKET order should be able to", async function () {
   });
 });
 
-describe.only("Expiring MARKET order should be able to", async function () {
+describe("Expiring MARKET order should be able to", async function () {
   this.timeout(600000);
 
   /**
@@ -1551,5 +1551,118 @@ describe.only("Expiring MARKET order should be able to", async function () {
       let usdnBalanceOfUser = await usdnBalance(user);
       expect(usdnBalanceOfUser).to.be.eq(50000);
     }
+  });
+});
+
+describe.only("Whitelist order executor should be able to", async function () {
+  this.timeout(600000);
+
+  /**
+   * @type {Environment}
+   */
+  let e;
+
+  let amm, user, executor1, executor2, lp;
+  let _orderId;
+
+  const usdnBalance = async (seed) => {
+    const raw = await assetBalance(e.assets.neutrino, address(seed));
+    return Number.parseFloat((raw / decimals).toFixed(4));
+  };
+
+  before(async function () {
+    await setupAccounts({
+      admin: 1 * wvs,
+      longer: 0.1 * wvs,
+      user: 0.1 * wvs,
+      lp: 0.1 * wvs,
+      shorter: 0.1 * wvs,
+      executor1: 0.2 * wvs,
+      executor2: 0.2 * wvs,
+    });
+
+    executor1 = accounts.executor1;
+    executor2 = accounts.executor2;
+
+    user = accounts.user;
+    lp = accounts.lp;
+
+    e = new Environment(accounts.admin);
+    await e.deploy();
+    await e.fundAccounts({
+      [user]: 50000,
+      [lp]: 100000,
+    });
+
+    amm = await e.deployAmm(1000000000, 60);
+
+    await e.vault.as(lp).stake(100000);
+  });
+
+  it("can create order", async function () {
+    let [orderId] = await e.orders
+      .as(user)
+      .createOrder(
+        amm.address,
+        MARKET,
+        0,
+        0,
+        1000,
+        3,
+        DIR_LONG,
+        1000,
+        "",
+        0,
+        0,
+        0,
+        0,
+        e.now + 3600 * 1000
+      );
+
+    _orderId = orderId;
+
+    let [can] = await e.orders.canExecute(_orderId);
+    expect(can).to.be.true;
+  });
+
+  it("switch to whitelist mode", async function () {
+    await e.orders.changeSettings(0.015, true);
+  });
+
+  it("add whitelist address", async function () {
+    await e.orders.addWhitelist([address(executor1), address(executor2)]);
+  });
+
+  it("execute order from whitelist", async function () {
+    let [can1, r1] = await e.orders.as(executor1).canExecute(_orderId);
+    let [can2, r2] = await e.orders.as(executor2).canExecute(_orderId);
+
+    console.log(r1);
+    console.log(r2);
+
+    expect(can1).to.be.true;
+    expect(can2).to.be.true;
+  });
+
+  it("fail order from non-whitelist", async function () {
+    await e.orders.removeWhitelist([address(executor2)]);
+
+    let [can1] = await e.orders.as(executor1).canExecute(_orderId);
+    let [can2] = await e.orders.as(executor2).canExecute(_orderId);
+
+    expect(can1).to.be.true;
+    expect(can2).to.be.false;
+  });
+
+  it("execute order in allow all mode", async function () {
+    await e.orders.changeSettings(0.015, false);
+
+    let [can1] = await e.orders.as(executor1).canExecute(_orderId);
+    let [can2] = await e.orders.as(executor2).canExecute(_orderId);
+    let [can3] = await e.orders.as(user).canExecute(_orderId);
+
+    expect(can1).to.be.true;
+    expect(can2).to.be.true;
+    expect(can3).to.be.true;
   });
 });
