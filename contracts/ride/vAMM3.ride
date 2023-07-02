@@ -47,6 +47,7 @@ let k_feeToStakersPercent = "k_feeToStakersPercent"       # percent of fee to st
 let k_maxOracleDelay = "k_maxOracleDelay"                 # max delay in oracle data
 let k_fundingMode = "k_fundingMode"                       # funding mode. maybe symmetric or asymmetric
 let k_oracleMode = "k_oracleMode"                         # oracle mode. maybe plain or jit
+let k_positionMode = "k_positionMode"                     # open mode. maybe DIRECT or ORDER
 
 # Funding state
 let k_latestLongCumulativePremiumFraction = "k_latestLongPremiumFraction" # Latest Cumulative Premium Fraction. (Part of Premium paid this funding period). Premium = MarkPrice - IndexPrice
@@ -116,6 +117,8 @@ let FUNDING_ASYMMETRIC = 1
 let FUNDING_SYMMETRIC  = 2
 let ORACLE_PLAIN       = 1
 let ORACLE_JIT         = 2
+let POSITION_DIRECT    = 1
+let POSITION_ORDER     = 2
 
 ##### Helper functions #####
 
@@ -179,6 +182,7 @@ func feeToStakersPercent() = int(k_feeToStakersPercent)
 func maxOracleDelay() = int(k_maxOracleDelay)
 func fundingMode() = intOr(k_fundingMode, FUNDING_ASYMMETRIC)
 func oracleMode() = intOr(k_oracleMode, ORACLE_PLAIN)
+func positionMode() = intOr(k_positionMode, POSITION_DIRECT)
 
 func lastTimestamp() = lastBlock.timestamp
 
@@ -605,6 +609,16 @@ func requireNotOverMaxOpenNotional(_longOpenNotional: Int, _shortOpenNotional: I
     }
   }
 }
+
+# Checks that accounts is orders account in case positions can only be opened by order
+#
+func requireSenderCanWorkWithPositions(_caller: Address) = {
+  if (positionMode() == POSITION_ORDER) then {
+    _caller == ordersAddress()
+  } else {
+    true
+  }
+} 
 
 # Returns current spot price
 #
@@ -1178,7 +1192,8 @@ func updateSettings(
   _rolloverFee: Int,
   _fundingMode: Int,
   _oracleMode: Int,
-  _minInitMarginRatio: Int
+  _minInitMarginRatio: Int,
+  _positionMode: Int
 ) = {
   [
     IntegerEntry(k_initMarginRatio, _initMarginRatio),
@@ -1196,7 +1211,8 @@ func updateSettings(
     IntegerEntry(k_maxOracleDelay, _maxOracleDelay),
     IntegerEntry(k_rolloverFee, _rolloverFee),
     IntegerEntry(k_fundingMode, _fundingMode),
-    IntegerEntry(k_oracleMode, _oracleMode)
+    IntegerEntry(k_oracleMode, _oracleMode),
+    IntegerEntry(k_positionMode, _positionMode)
   ]
 }
 
@@ -1532,7 +1548,8 @@ func changeSettings(
   _oracleMode: Int,
   _baseOracleData: String,
   _quoteOracleData: String,
-  _minInitMarginRatio: Int
+  _minInitMarginRatio: Int,
+  _positionMode: Int
 ) = {
   if (
     _fundingPeriod <= 0
@@ -1551,6 +1568,7 @@ func changeSettings(
     || _rolloverFee <= 0
     || (_fundingMode != FUNDING_SYMMETRIC && _fundingMode != FUNDING_ASYMMETRIC)
     || (_oracleMode != ORACLE_PLAIN && _oracleMode != ORACLE_JIT)
+    || (_positionMode != POSITION_DIRECT && _positionMode != POSITION_ORDER)
     || !initialized()
     || i.caller != adminAddress()
   ) then {
@@ -1572,7 +1590,8 @@ func changeSettings(
       _rolloverFee,
       _fundingMode,
       _oracleMode,
-      _minInitMarginRatio
+      _minInitMarginRatio,
+      _positionMode
     )
     ++
     [
@@ -1604,7 +1623,8 @@ func initialize(
   _rolloverFee: Int,
   _fundingMode: Int,
   _oracleMode: Int,
-  _minInitMarginRatio: Int
+  _minInitMarginRatio: Int,
+  _positionMode: Int
 ) = {
   if (
     _qtAstR <= 0
@@ -1625,6 +1645,7 @@ func initialize(
     || _rolloverFee <= 0
     || (_fundingMode != FUNDING_SYMMETRIC && _fundingMode != FUNDING_ASYMMETRIC)
     || (_oracleMode != ORACLE_PLAIN && _oracleMode != ORACLE_JIT)
+    || (_positionMode != POSITION_DIRECT && _positionMode != POSITION_ORDER)
     || initialized()
     || i.caller != this
   ) then {
@@ -1648,7 +1669,8 @@ func initialize(
       _rolloverFee,
       _fundingMode,
       _oracleMode,
-      _minInitMarginRatio
+      _minInitMarginRatio,
+      _positionMode
     )
     ++
     updateFunding(
@@ -1704,6 +1726,7 @@ func increasePosition(
     || !isQuoteAsset
     || !requireMoreMarginRatio(divd(DECIMAL_UNIT, _leverage), initMarginRatio(), true)
     || !requireMoreMarginRatio(divd(DECIMAL_UNIT, _leverage), minInitMarginRatio(), false)
+    || !requireSenderCanWorkWithPositions(i.caller)
     || paused()
     || closeOnly()
     || isMarketClosed()

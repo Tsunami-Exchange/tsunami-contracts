@@ -19,7 +19,7 @@ const hour = minute * 60;
 const day = hour * 24;
 
 const { expect } = require("chai");
-const { Environment } = require("../common/common");
+const { Environment, AMM } = require("../common/common");
 const { decimals } = require("../common/utils");
 
 describe("Should execute TAKE profit orders on LONG position", async function () {
@@ -1447,6 +1447,70 @@ describe("MARKET order should be able to", async function () {
   });
 });
 
+describe.only("AMM in ORDER-only mode should be able to", async function () {
+  this.timeout(600000);
+
+  /**
+   * @type {Environment}
+   */
+  let e;
+
+  /**
+   * @type {AMM}
+   */
+  let amm;
+  let user, executor, lp;
+
+  before(async function () {
+    await setupAccounts({
+      admin: 1 * wvs,
+      longer: 0.1 * wvs,
+      user: 0.1 * wvs,
+      lp: 0.1 * wvs,
+      shorter: 0.1 * wvs,
+      executor: 0.2 * wvs,
+    });
+
+    executor = accounts.executor;
+    user = accounts.user;
+    lp = accounts.lp;
+
+    e = new Environment(accounts.admin);
+    await e.deploy();
+    await e.fundAccounts({
+      [user]: 50000,
+      [lp]: 100000,
+    });
+
+    amm = await e.deployAmm(1000000000, 60, {
+      positionMode: 2,
+    });
+
+    await e.vault.as(lp).stake(100000);
+    await e.setTime(new Date().getTime());
+  });
+
+  it("can NOT directly open a new LONG position", async function () {
+    await expect(amm.as(user).increasePosition(1000, DIR_LONG, 3)).to.eventually
+      .be.rejected;
+  });
+
+  it("can open a new LONG position", async function () {
+    let [orderId] = await e.orders
+      .as(user)
+      .createOrder(amm.address, MARKET, 0, 0, 1000, 3, DIR_LONG, 1000);
+
+    {
+      let [can] = await e.orders.canExecute(orderId);
+      expect(can).to.be.true;
+    }
+
+    await e.orders.as(executor).executeOrder(orderId);
+
+    await amm.as(user).closePosition();
+  });
+});
+
 describe("Expiring MARKET order should be able to", async function () {
   this.timeout(600000);
 
@@ -1554,7 +1618,7 @@ describe("Expiring MARKET order should be able to", async function () {
   });
 });
 
-describe.only("Whitelist order executor should be able to", async function () {
+describe("Whitelist order executor should be able to", async function () {
   this.timeout(600000);
 
   /**
@@ -1564,11 +1628,6 @@ describe.only("Whitelist order executor should be able to", async function () {
 
   let amm, user, executor1, executor2, lp;
   let _orderId;
-
-  const usdnBalance = async (seed) => {
-    const raw = await assetBalance(e.assets.neutrino, address(seed));
-    return Number.parseFloat((raw / decimals).toFixed(4));
-  };
 
   before(async function () {
     await setupAccounts({

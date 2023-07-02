@@ -2510,7 +2510,11 @@ class Environment {
               {
                 type: "integer",
                 value: Math.round((options.minInitMarginRatio || 1) * decimals),
-              },
+              }, // minInitMarginRatio, default 1
+              {
+                type: "integer",
+                value: options.positionMode || 1,
+              }, // position mode, default 1 = direct position opening
             ],
           },
         },
