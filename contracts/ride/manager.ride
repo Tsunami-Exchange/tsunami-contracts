@@ -137,6 +137,41 @@ func addAssetManager(
 }
 
 @Callable(i)
+func changeAssetManager(
+  _assetId: String,
+  _vaultAddress: String
+) = {
+  if (
+    !initialized()
+    || i.caller != adminAddress()
+    || (
+      !getString(toCompositeKey(k_asset_manager_address, _assetId)).isDefined()
+      && balanceOf(_assetId) > 0
+    ) # do not allow overrides for now
+  ) then {
+    throw("Invalid changeAssetManager params")
+  } else {
+    strict actualBalance = balanceOf(_assetId)
+    strict unstake = invoke(
+      assetManagerAddress(_assetId),
+      "withdraw",
+      [_assetId, actualBalance],
+      []
+    )
+    strict stake = invoke(
+      addressFromStringValue(_vaultAddress),
+      "deposit",
+      [],
+      [AttachedPayment(fromBase58String(_assetId), actualBalance)]
+    )
+
+    [
+      StringEntry(toCompositeKey(k_asset_manager_address, _assetId), addressFromStringValue(_vaultAddress).toString())
+    ]
+  }
+}
+
+@Callable(i)
 func withdraw(_assetId: String, _amount: Int) = {
   if (
     !isWhitelist(i.caller.toString()) 

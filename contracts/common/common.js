@@ -2335,6 +2335,36 @@ class Environment {
     }
   }
 
+  async deploySimpleAssetManager() {
+    await setupAccounts({
+      simpleAssetManager: 0.15 * wvs,
+    });
+
+    let managerSeed = accounts.simpleAssetManager;
+
+    await deploy(
+      "simpleAssetManager.ride",
+      3500000,
+      managerSeed,
+      "Asset Manager (Spot)",
+      this.isLocal,
+      address(this.seeds.timer)
+    );
+
+    const initAssetManagerTx = await invoke(
+      {
+        dApp: address(managerSeed),
+        functionName: "initialize",
+        arguments: [address(this.seeds.coordinator)],
+      },
+      managerSeed
+    );
+
+    await waitForTx(initAssetManagerTx.id);
+
+    return address(managerSeed);
+  }
+
   async deployAmm(_liquidity, _price, options = {}) {
     await setupAccounts({
       amm: 0.15 * wvs,
@@ -5260,6 +5290,21 @@ class Manager {
       {
         dApp: this.address,
         functionName: "addAssetManager",
+        arguments: [_quoteAssetId, _assetManager],
+        payment: [],
+      },
+      this.e.seeds.admin
+    );
+
+    await waitForTx(tx.id);
+    return tx;
+  }
+
+  async changeAssetManager(_quoteAssetId, _assetManager) {
+    let tx = await invoke(
+      {
+        dApp: this.address,
+        functionName: "changeAssetManager",
         arguments: [_quoteAssetId, _assetManager],
         payment: [],
       },
