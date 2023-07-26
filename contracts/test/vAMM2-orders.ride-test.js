@@ -936,7 +936,7 @@ describe("Expiring LIMIT order should be able to", async function () {
   });
 });
 
-describe("STOP-LIMIT order should be able to", async function () {
+describe("STOP-LIMIT (under limit price) order should be able to", async function () {
   this.timeout(600000);
 
   /**
@@ -1050,6 +1050,173 @@ describe("STOP-LIMIT order should be able to", async function () {
       .rejected;
 
     await amm.setOraclePrice(53.05);
+    await amm.syncTerminalPriceToOracle();
+
+    {
+      let [can] = await e.orders.canExecute(orderId);
+      expect(can).to.be.true;
+    }
+
+    await e.orders.as(executor).executeOrder(orderId);
+
+    await amm.as(user).closePosition();
+  });
+});
+
+describe.only("STOP-LIMIT (over limit price) order should be able to", async function () {
+  this.timeout(600000);
+
+  /**
+   * @type {Environment}
+   */
+  let e;
+  let amm, user, executor, lp;
+  let _orderId;
+
+  before(async function () {
+    await setupAccounts({
+      admin: 1 * wvs,
+      longer: 0.1 * wvs,
+      user: 0.1 * wvs,
+      lp: 0.1 * wvs,
+      shorter: 0.1 * wvs,
+      executor: 0.2 * wvs,
+    });
+
+    executor = accounts.executor;
+    user = accounts.user;
+    lp = accounts.lp;
+
+    e = new Environment(accounts.admin);
+    await e.deploy();
+    await e.fundAccounts({
+      [user]: 50000,
+      [lp]: 100000,
+    });
+
+    amm = await e.deployAmm(1000000000, 55);
+
+    await e.vault.as(lp).stake(100000);
+  });
+
+  it.only("open a new LONG position at higher price", async function () {
+    await amm.setOraclePrice(55.0);
+    await amm.syncTerminalPriceToOracle();
+
+    let [orderId] = await e.orders
+      .as(user)
+      .createOrder(amm.address, LIMIT, 57.0, 58.0, 1000, 3, DIR_LONG, 1000);
+
+    {
+      let [can] = await e.orders.canExecute(orderId);
+      expect(can).to.be.false;
+    }
+
+    await expect(e.orders.as(executor).executeOrder(orderId)).to.be.eventually
+      .rejected;
+
+    await amm.setOraclePrice(58.1);
+    await amm.syncTerminalPriceToOracle();
+
+    {
+      let [can] = await e.orders.canExecute(orderId);
+      expect(can).to.be.true;
+    }
+
+    await e.orders.as(executor).executeOrder(orderId);
+
+    {
+      let [can] = await e.orders.canExecute(orderId);
+      expect(can).to.be.false;
+    }
+
+    await amm.setOraclePrice(56.5);
+    await amm.syncTerminalPriceToOracle();
+
+    {
+      let [can] = await e.orders.canExecute(orderId);
+      expect(can).to.be.true;
+    }
+
+    await e.orders.as(executor).executeOrder(orderId);
+
+    await amm.as(user).closePosition();
+  });
+
+  it.only("can cancel an order and get back the money", async function () {
+    await amm.setOraclePrice(55.0);
+    await amm.syncTerminalPriceToOracle();
+
+    let [orderId] = await e.orders
+      .as(user)
+      .createOrder(amm.address, LIMIT, 57.0, 58.0, 1000, 3, DIR_LONG, 1000);
+
+    await amm.setOraclePrice(57.15);
+    await amm.syncTerminalPriceToOracle();
+
+    {
+      let [can] = await e.orders.canExecute(orderId);
+      expect(can).to.be.false;
+    }
+
+    await amm.setOraclePrice(56.95);
+    await amm.syncTerminalPriceToOracle();
+
+    {
+      let [can, msg] = await e.orders.canExecute(orderId);
+      console.log(msg);
+      expect(can).to.be.false;
+    }
+
+    let tx = await e.orders.as(user).cancelOrder(orderId);
+
+    {
+      let [can, msg] = await e.orders.canExecute(orderId);
+      console.log(msg);
+      expect(can).to.be.false;
+    }
+
+    await expect(e.orders.as(executor).executeOrder(orderId)).to.be.eventually
+      .rejected; // Can not execute after cancel
+
+    expect(tx.stateChanges.transfers[0].amount / 10 ** 6).to.be.closeTo(
+      1000,
+      0.001
+    );
+  });
+
+  it.only("open a new SHORT position at lower price", async function () {
+    await amm.setOraclePrice(55.0);
+    await amm.syncTerminalPriceToOracle();
+
+    let [orderId] = await e.orders
+      .as(user)
+      .createOrder(amm.address, LIMIT, 53.0, 52.0, 1000, 3, DIR_SHORT, 1000);
+
+    {
+      let [can] = await e.orders.canExecute(orderId);
+      expect(can).to.be.false;
+    }
+
+    await expect(e.orders.as(executor).executeOrder(orderId)).to.be.eventually
+      .rejected;
+
+    await amm.setOraclePrice(51.9);
+    await amm.syncTerminalPriceToOracle();
+
+    {
+      let [can] = await e.orders.canExecute(orderId);
+      expect(can).to.be.true;
+    }
+
+    await e.orders.as(executor).executeOrder(orderId);
+
+    {
+      let [can] = await e.orders.canExecute(orderId);
+      expect(can).to.be.false;
+    }
+
+    await amm.setOraclePrice(53.1);
     await amm.syncTerminalPriceToOracle();
 
     {
@@ -1447,7 +1614,7 @@ describe("MARKET order should be able to", async function () {
   });
 });
 
-describe.only("AMM in ORDER-only mode should be able to", async function () {
+describe("AMM in ORDER-only mode should be able to", async function () {
   this.timeout(600000);
 
   /**

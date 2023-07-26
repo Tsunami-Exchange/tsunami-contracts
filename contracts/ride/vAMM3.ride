@@ -48,6 +48,7 @@ let k_maxOracleDelay = "k_maxOracleDelay"                 # max delay in oracle 
 let k_fundingMode = "k_fundingMode"                       # funding mode. maybe symmetric or asymmetric
 let k_oracleMode = "k_oracleMode"                         # oracle mode. maybe plain or jit
 let k_positionMode = "k_positionMode"                     # open mode. maybe DIRECT or ORDER
+let k_minLiquidationNotional = "k_minLiquidationNotional"   # min amount of funds in position so it can be partially liquidated
 
 # Funding state
 let k_latestLongCumulativePremiumFraction = "k_latestLongPremiumFraction" # Latest Cumulative Premium Fraction. (Part of Premium paid this funding period). Premium = MarkPrice - IndexPrice
@@ -151,7 +152,7 @@ func cbalance0() = intOr(k_balance, 0)
 func fee() = int(k_fee)
 func rolloverFeeRate() = int(k_rolloverFee)
 func initMarginRatio() = int(k_initMarginRatio)
-func minInitMarginRatio() = intOr(k_minInitMarginRatio, DECIMAL_UNIT)
+func minInitMarginRatio() = intOr(k_minInitMarginRatio, 10 * DECIMAL_UNIT)
 func qtAstR() = int(k_quoteAssetReserve)
 func qtAstR0() = intOr(k_quoteAssetReserve, 0)
 func bsAstR() = int(k_baseAssetReserve)
@@ -183,6 +184,7 @@ func maxOracleDelay() = int(k_maxOracleDelay)
 func fundingMode() = intOr(k_fundingMode, FUNDING_ASYMMETRIC)
 func oracleMode() = intOr(k_oracleMode, ORACLE_PLAIN)
 func positionMode() = intOr(k_positionMode, POSITION_DIRECT)
+func minPartialLiquidationNotional() = intOr(k_minLiquidationNotional, 10 * DECIMAL_UNIT)
 
 func lastTimestamp() = lastBlock.timestamp
 
@@ -1554,7 +1556,7 @@ func changeSettings(
   if (
     _fundingPeriod <= 0
     || _initMarginRatio <= 0 || _initMarginRatio > DECIMAL_UNIT 
-    || _minInitMarginRatio <= 0 || _minInitMarginRatio > DECIMAL_UNIT || _minInitMarginRatio < _initMarginRatio
+    || _minInitMarginRatio <= 0 || _minInitMarginRatio < _initMarginRatio
     || _mmr <= 0
     || _liquidationFeeRatio <= 0
     || _fee <= 0
@@ -1631,7 +1633,7 @@ func initialize(
     || _bsAstR <= 0
     || _fundingPeriod <= 0
     || _initMarginRatio <= 0 || _initMarginRatio > DECIMAL_UNIT 
-    || _minInitMarginRatio <= 0 || _minInitMarginRatio > DECIMAL_UNIT || _minInitMarginRatio < _initMarginRatio
+    || _minInitMarginRatio <= 0 || _minInitMarginRatio < _initMarginRatio
     || _mmr <= 0
     || _liquidationFeeRatio <= 0
     || _fee <= 0
@@ -1952,7 +1954,7 @@ func addMargin(_direction: Int, _priceUpdate: String) = {
       [AttachedPayment(quoteAsset(), _amount)]
     )
 
-    let (remainMargin, badDebt, rolloverFee) = calcRemainMarginWithFundingPaymentAndRolloverFee(
+    let (remainMargin, badDebt, fundingPayment, rolloverFee) = calcRemainMarginWithFundingPaymentAndRolloverFee(
         oldPositionSize,
         oldPositionMargin,
         oldPositionLstUpdCPF,
@@ -2266,17 +2268,20 @@ func liquidate(_trader: String, _direction: Int, _priceUpdate: String) = {
   ) then {
     throw("Unable to liquidate")
   } else {    
+    let oldPositionSize = getPosition(_trader, _direction)._1
+    let positionSizeAbs = abs(oldPositionSize)
+
     let isPartialLiquidation = spotMarginRatio > liquidationFeeRatio()
       && partialLiquidationRatio() > 0
       && partialLiquidationRatio() < DECIMAL_UNIT
+      && positionSizeAbs.muld(getSpotPrice()) > minPartialLiquidationNotional()
     
-    let oldPositionSize = getPosition(_trader, _direction)._1
-    let positionSizeAbs = abs(oldPositionSize)
     let (liquidationRatio, liquidationSize) = if (isPartialLiquidation) then {
-      let liquidationSize = getPartialLiquidationAmount(_trader, oldPositionSize)
-      let liquidationRatio = divd(abs(liquidationSize), positionSizeAbs)
+      let liquidationSize = abs(getPartialLiquidationAmount(_trader, oldPositionSize))
+      let liquidationRatio = divd(liquidationSize, positionSizeAbs)
+      let liquidationNotional = liquidationSize.muld(getSpotPrice())
 
-      (liquidationRatio, abs(liquidationSize))
+      (liquidationRatio, liquidationSize)
     } else {
       (0, positionSizeAbs)
     }
@@ -2577,6 +2582,8 @@ func view_calcRemainMarginWithFundingPayment(
       positionTimestamp,
       unrealizedPnl
   )
+  let underlyingPrice = getOraclePrice()
+  let spotPrice = getSpotPrice()
   throw(
     s(remainMargin) 
     + s(fundingPayment)
@@ -2585,6 +2592,8 @@ func view_calcRemainMarginWithFundingPayment(
     + s(badDebt)
     + s(positionNotional)
     + s(rolloverFee)
+    + s(underlyingPrice)
+    + s(spotPrice)
   )
 }
 

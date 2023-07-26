@@ -233,7 +233,8 @@ func removeAmm(
   _ammAddress: String
 ) = isAdmin(i).valueOrElse({
   [
-    DeleteEntry(k_amm.toCompositeKey(_ammAddress))
+    DeleteEntry(k_amm.toCompositeKey(_ammAddress)),
+    DeleteEntry(k_amm_data.toCompositeKey(_ammAddress))
   ]
 })
 

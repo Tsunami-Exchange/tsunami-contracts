@@ -13,7 +13,7 @@
   let k_admin_address = "k_admin_address"  
 
   
-  func strToList(_str: String) = if (_str == "") then [] else _str.split(",") 
+  func strToList(_str: String) = if (_str == "") then [] else _str.split_4C(",") 
 
   ##### Coordinator constants #####
   func coordinator() = addressFromString(this.getString(k_coordinatorAddress).valueOrErrorMessage("Coordinator not set HC")).valueOrErrorMessage("Coordinator address invalid")
@@ -95,7 +95,7 @@
       _acc
     }
 
-    strict doCallAmms = FOLD<5>(amms, [], compute) # Max 5 AMM's
+    strict doCallAmms = FOLD<10>(amms, [], compute) # Max 10 AMM's
 
     let vaults = _spotVaults.strToList()
     func compute2(_acc: List[StringEntry], _vault: String) = {
