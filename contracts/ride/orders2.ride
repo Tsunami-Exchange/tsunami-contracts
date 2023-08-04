@@ -1098,7 +1098,7 @@
 
         let isExecutableByStop = if (_limitPrice == 0) then { 
           true
-        } else if (_orderMarketPrice < _limitPrice) then {
+        } else if (_side == LONG) then {
           marketPrice >= _limitPrice
         } else {
           marketPrice <= _limitPrice

@@ -171,8 +171,8 @@ func estimateSwap(
 
   # 2. Sell it for USD
   strict s1 = invoke(sellMarket, "swapToQuote", [sourceAmountInAmmDecimals, 0], [])
-  let usdAmount = match (s1) {
-    case t: Int => t
+  let (usdAmount, usdPriceImpact) = match (s1) {
+    case t: (Int, Int) => t
     case _ => throw("Invalid swapToQuote result")
   }
 
@@ -181,8 +181,17 @@ func estimateSwap(
 
   # 4. Buy it for USD
   strict s2 = invoke(buyMarket, "swapToBase", [usdAmount, 0], [])
-  let targetAmount = match (s2) {
-    case t: Int => if (targetDecimals == 8) then t * 100 else if (targetDecimals == 6) then t else throw("Invalid decimals (target)")
+  let (targetAmount, targetPriceImpact) = match (s2) {
+    case t: (Int, Int) => {
+      let _targetAmount = if (targetDecimals == 8) 
+                            then t._1 * 100 
+                            else if (targetDecimals == 6) then t._1 
+                            else throw("Invalid decimals (target)")
+
+      let _targetPriceImpact = t._2
+
+      (_targetAmount, _targetPriceImpact)
+    }
     case _ => throw("Invalid swapToBase result")
   }
 
@@ -215,6 +224,9 @@ func estimateSwap(
   let feeInTargetToken = muld(targetAmount, actualFee)
   let resultTargetAssetAmount = targetAmount - feeInTargetToken
 
+  # 8. Compute price impact of trade
+  let priceImpact = usdPriceImpact + targetPriceImpact
+
   (
     targetAmount, 
     feeInTargetToken, 
@@ -228,7 +240,8 @@ func estimateSwap(
     addImbalanceUSD, 
     addVaultBalanceUSD,
     removeImbalanceUSD,
-    removeVaultBalanceUSD
+    removeVaultBalanceUSD,
+    priceImpact
   )
 }
 
@@ -506,7 +519,8 @@ func view_estimateSwap(
     addImbalanceUSD, 
     addVaultBalanceUSD,
     removeImbalanceUSD,
-    removeVaultBalanceUSD
+    removeVaultBalanceUSD,
+    priceImpact
   ) = estimateSwap(_sourceAmount, _sourceAsset, _targetAsset)
   
   let data = [
@@ -520,7 +534,8 @@ func view_estimateSwap(
     addImbalanceUSD.toString(),
     addVaultBalanceUSD.toString(),
     removeImbalanceUSD.toString(),
-    removeVaultBalanceUSD.toString()
+    removeVaultBalanceUSD.toString(),
+    priceImpact.toString()
   ].makeString(",")
 
   throw(data)

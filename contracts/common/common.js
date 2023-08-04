@@ -5533,6 +5533,20 @@ class Spot {
     return vaultAddress.map((v) => new Vault(this.e, v));
   }
 
+  /**
+   *
+   * @returns {[SpotAMM]}
+   */
+  async getMarkets() {
+    let allKeys = await accountData(this.address);
+    allKeys = Object.keys(allKeys).map((k) => allKeys[k]);
+    const ammAddress = allKeys
+      .filter((x) => x.key.startsWith(`k_amm_3`))
+      .map((x) => x.key.replace(`k_amm_`, ``));
+
+    return ammAddress.map((v) => new SpotAMM(this.e, v));
+  }
+
   async swap(
     _sourceToken,
     _sourceAmount,
@@ -5735,6 +5749,23 @@ class SWavesAssetManager {
       this.address,
       3700000
     );
+  }
+}
+
+class SpotAMM {
+  constructor(e, address, sender) {
+    this.e = e;
+    this.sender = sender;
+    this.address = address;
+  }
+
+  as(_sender) {
+    return new AMM(this.e, this.address, _sender);
+  }
+
+  async upgrade() {
+    console.log(`Upgrading Spot AMM ${this.address}`);
+    return this.e.upgradeContract("vAMM3s.ride", this.address, 4500000);
   }
 }
 

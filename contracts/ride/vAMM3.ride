@@ -2405,13 +2405,23 @@ func payFunding(_priceUpdate: String) = {
     let (shortPremiumFraction, longPremiumFraction, premiumToVault) = getFunding()
 
     strict doPayFundingToVault = if (premiumToVault > 0) then {
-      strict doPayFundingToVault = invoke(
+      let (feeToStakers, feeToVault) = distributeFee(premiumToVault)
+
+      strict unstake = invoke(
         vaultAddress(),
-        "exchangeFreeAndLocked",
-        [-premiumToVault], # Negative, because it is directed towards vault, not towards traders
+        "withdrawLocked",
+        [feeToStakers],
         []
       )
-      []
+
+      strict addFundingPaymentToVault = invoke(
+        vaultAddress(),
+        "exchangeFreeAndLocked",
+        [-feeToVault], # Negative, because it is directed towards vault, not towards traders
+        []
+      )
+
+      transferFee(feeToStakers)
     } else {
       []
     }
@@ -2422,7 +2432,7 @@ func payFunding(_priceUpdate: String) = {
       latestShortCumulativePremiumFraction() + shortPremiumFraction,
       divd(longPremiumFraction, underlyingPrice),
       divd(shortPremiumFraction, underlyingPrice)
-    )
+    ) ++ doPayFundingToVault
   }
 }
 

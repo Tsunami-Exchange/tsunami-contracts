@@ -198,7 +198,8 @@ func swapInput(_isAdd: Boolean, _quoteAssetAmount: Int) = {
       amountBaseAssetBought,
       quoteAssetReserveAfter1,
       baseAssetReserveAfter1,
-      totalPositionSizeAfter1
+      totalPositionSizeAfter1,
+      priceImpact
     )
   }
 }
@@ -599,7 +600,8 @@ func swapToBase(
       amountBaseAssetBought,
       quoteAssetReserveAfter, 
       baseAssetReserveAfter,
-      totalPositionSizeAfter
+      totalPositionSizeAfter,
+      priceImpact
     ) = swapInput(true, _amount)
        
     
@@ -609,7 +611,7 @@ func swapToBase(
       totalPositionSizeAfter
     )
 
-    (update, amountBaseAssetBought)
+    (update, (amountBaseAssetBought, priceImpact))
   }
 }
 
@@ -632,7 +634,9 @@ func swapToQuote(
     let (
       amountQuoteAssetBought,
       quoteAssetReserveAfter, 
-      baseAssetReserveAfter
+      baseAssetReserveAfter,
+      x1,
+      priceImpact
     ) = swapOutput(
       true,
       _amount,
@@ -647,7 +651,7 @@ func swapToQuote(
       totalPositionSizeAfter
     )
 
-    (update, amountQuoteAssetBought)
+    (update, (amountQuoteAssetBought, priceImpact))
   }
 }
 
@@ -692,6 +696,17 @@ func view_getTerminalAmmPrice() = {
   let (terminalQuoteAssetReserve, terminalBaseAssetReserve) = getTerminalAmmState()
   let price = divd(terminalQuoteAssetReserve.muld(qtAstW()), terminalBaseAssetReserve.muld(bsAstW()))
   throw(price.toString())
+}
+
+# View function. Return current price, AMM is synced to in it's throws message.
+@Callable(i)
+func view_getPrices() = {
+  strict sync = invoke(this, "syncTerminalPriceToOracle", [], [])
+
+  let (terminalQuoteAssetReserve, terminalBaseAssetReserve) = getTerminalAmmState()
+  let terminalPrice = divd(terminalQuoteAssetReserve.muld(qtAstW()), terminalBaseAssetReserve.muld(bsAstW()))
+  let spotPrice = getSpotPrice()
+  throw(terminalPrice.toString() + "," + spotPrice.toString())
 }
 
 # View callable functions exposed for another d-Apps
