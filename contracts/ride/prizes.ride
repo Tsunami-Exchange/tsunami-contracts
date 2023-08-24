@@ -52,6 +52,19 @@
     }
   }
 
+  @Callable(i)
+  func setRewarderPublicKey(
+    _newRewarderPublicKey: String
+  ) = {
+    if (!initialized() || i.caller != adminAddress()) then {
+      throw("Unable to initialize")
+    } else {
+      [
+        StringEntry(k_rewarder_public_key, _newRewarderPublicKey)
+      ]
+    }
+  }
+
   # This callable function allows a user to claim a prize given a nonce, recipient, 
   # asset ID, amount, and signature. It verifies the signature using the rewarder public key, 
   # checks that the caller is the recipient, and that the signature has not already been spent. 

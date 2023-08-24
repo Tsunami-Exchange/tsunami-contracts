@@ -144,6 +144,10 @@ class Environment {
       `k_oracle`,
       coordinatorAddress
     ).then((x) => x && x.value);
+    const prizesAddress = await accountDataByKey(
+      `k_prizes_address`,
+      coordinatorAddress
+    ).then((x) => x && x.value);
 
     let sWavesAssetManagerAddress = await accountDataByKey(
       `k_asset_manager_address_WAVES`,
@@ -173,6 +177,7 @@ class Environment {
     this.spot = new Spot(this, spotAddress);
     this.swap = new Swap(this, swapAddress);
     this.oracle = new Oracle(this, oracleAddress);
+    this.prizes = new Prizes(this, prizesAddress);
     this.sWavesAssetManager = new SWavesAssetManager(
       this,
       sWavesAssetManagerAddress
@@ -2365,6 +2370,31 @@ class Environment {
     return address(managerSeed);
   }
 
+  /**
+   *
+   * @param {*} _liquidity
+   * @param {*} _price
+   * @param {{
+   *  jitOracleStream: string,
+   *  fundingPeriodSeconds: number,
+   *  initMarginRatio: number,
+   *  maintenanceMarginRatio: number,
+   *  liquidationFeeRatio: number,
+   *  fee: number,
+   *  spreadLimit: number,
+   *  maxPriceImpact: number,
+   *  partialLiquidationRatio: number,
+   *  maxPriceSpread: number,
+   *  maxOpenNotional: number,
+   *  feeToStakersPercent: number,
+   *  maxOracleDelay: number,
+   *  rolloverFee: number,
+   *  fundingMode: number,
+   *  minInitMarginRatio: number,
+   *  positionMode: number
+   * }} options
+   * @returns
+   */
   async deployAmm(_liquidity, _price, options = {}) {
     await setupAccounts({
       amm: 0.15 * wvs,
