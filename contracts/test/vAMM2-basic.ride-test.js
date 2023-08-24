@@ -10,12 +10,22 @@ const DIR_LONG = 1;
 const DIR_SHORT = 2;
 
 const { expect } = require("chai");
-const { Environment } = require("../common/common");
+const { Environment, AMM } = require("../common/common");
 
 describe("vAMM should work with positive funding", async function () {
   this.timeout(600000);
 
-  let e, amm, longer, shorter, liquidator;
+  /**
+   * @type {Environment}
+   */
+  let e;
+
+  /**
+   * @type {AMM}
+   */
+  let amm;
+
+  let longer, shorter, liquidator;
 
   before(async function () {
     await setupAccounts({
@@ -40,7 +50,25 @@ describe("vAMM should work with positive funding", async function () {
   });
 
   it("Can open position", async function () {
+    {
+      let ammData = await amm.getAmmData();
+
+      expect(ammData.quoteAssetReserve).to.be.closeTo(100000, 0.01);
+      expect(ammData.baseAssetReserve).to.be.closeTo(1818.1818, 0.01);
+      expect(ammData.quoteAssetWeight).to.be.closeTo(1, 0.001);
+      expect(ammData.totalPositionSize).to.be.closeTo(0, 0.01);
+    }
+
     await amm.as(longer).increasePosition(10, DIR_LONG, 3, 0.15);
+
+    {
+      let ammData = await amm.getAmmData();
+
+      expect(ammData.quoteAssetReserve).to.be.closeTo(100029.8924, 0.01);
+      expect(ammData.baseAssetReserve).to.be.closeTo(1817.6385, 0.01);
+      expect(ammData.quoteAssetWeight).to.be.closeTo(1, 0.001);
+      expect(ammData.totalPositionSize).to.be.closeTo(0.5433, 0.01);
+    }
 
     const { size, margin, openNotional } = await amm.getPositionInfo(longer);
 
@@ -58,6 +86,15 @@ describe("vAMM should work with positive funding", async function () {
   it("Can increase position", async function () {
     await amm.as(longer).increasePosition(5, DIR_LONG, 3, 0.15);
 
+    {
+      let ammData = await amm.getAmmData();
+
+      expect(ammData.quoteAssetReserve).to.be.closeTo(100044.8386, 0.01);
+      expect(ammData.baseAssetReserve).to.be.closeTo(1817.3669, 0.01);
+      expect(ammData.quoteAssetWeight).to.be.closeTo(1, 0.001);
+      expect(ammData.totalPositionSize).to.be.closeTo(0.8149, 0.01);
+    }
+
     const { size, margin, openNotional } = await amm.getPositionInfo(longer);
 
     expect(size).to.be.eq(814882);
@@ -74,6 +111,15 @@ describe("vAMM should work with positive funding", async function () {
   it("Can add margin", async function () {
     await amm.as(longer).addMargin(3);
 
+    {
+      let ammData = await amm.getAmmData();
+
+      expect(ammData.quoteAssetReserve).to.be.closeTo(100044.8386, 0.01);
+      expect(ammData.baseAssetReserve).to.be.closeTo(1817.3669, 0.01);
+      expect(ammData.quoteAssetWeight).to.be.closeTo(1, 0.001);
+      expect(ammData.totalPositionSize).to.be.closeTo(0.8149, 0.01);
+    }
+
     const { size, margin, openNotional } = await amm.getPositionInfo(longer);
 
     expect(size).to.be.eq(814882);
@@ -83,6 +129,15 @@ describe("vAMM should work with positive funding", async function () {
 
   it("Can remove margin", async function () {
     await amm.as(longer).removeMargin(2);
+
+    {
+      let ammData = await amm.getAmmData();
+
+      expect(ammData.quoteAssetReserve).to.be.closeTo(100044.8386, 0.01);
+      expect(ammData.baseAssetReserve).to.be.closeTo(1817.3669, 0.01);
+      expect(ammData.quoteAssetWeight).to.be.closeTo(1, 0.001);
+      expect(ammData.totalPositionSize).to.be.closeTo(0.8149, 0.01);
+    }
 
     const { size, margin, openNotional } = await amm.getPositionInfo(longer);
 
@@ -98,6 +153,15 @@ describe("vAMM should work with positive funding", async function () {
   it("Can open short position", async function () {
     await amm.as(shorter).increasePosition(5, DIR_SHORT, 3, 0.15);
 
+    {
+      let ammData = await amm.getAmmData();
+
+      expect(ammData.quoteAssetReserve).to.be.closeTo(100029.8924, 0.01);
+      expect(ammData.baseAssetReserve).to.be.closeTo(1817.6385, 0.01);
+      expect(ammData.quoteAssetWeight).to.be.closeTo(1, 0.001);
+      expect(ammData.totalPositionSize).to.be.closeTo(0.5433, 0.01);
+    }
+
     const { size, margin, openNotional } = await amm.getPositionInfo(shorter);
     console.log(JSON.stringify({ size, margin, openNotional }));
 
@@ -108,6 +172,15 @@ describe("vAMM should work with positive funding", async function () {
 
   it("Can increase short position", async function () {
     await amm.as(shorter).increasePosition(1, DIR_SHORT, 3, 0.04);
+
+    {
+      let ammData = await amm.getAmmData();
+
+      expect(ammData.quoteAssetReserve).to.be.closeTo(100026.9031, 0.01);
+      expect(ammData.baseAssetReserve).to.be.closeTo(1817.6928, 0.01);
+      expect(ammData.quoteAssetWeight).to.be.closeTo(1, 0.001);
+      expect(ammData.totalPositionSize).to.be.closeTo(0.489, 0.01);
+    }
 
     const { size, margin, openNotional } = await amm.getPositionInfo(shorter);
     console.log(JSON.stringify({ size, margin, openNotional }));
@@ -125,17 +198,38 @@ describe("vAMM should work with positive funding", async function () {
   it("Can close long position", async function () {
     let tx = await amm.as(longer).closePosition();
 
+    {
+      let ammData = await amm.getAmmData();
+
+      expect(ammData.quoteAssetReserve).to.be.closeTo(99982.0806, 0.01);
+      expect(ammData.baseAssetReserve).to.be.closeTo(1818.5077, 0.01);
+      expect(ammData.quoteAssetWeight).to.be.closeTo(1, 0.001);
+      expect(ammData.totalPositionSize).to.be.closeTo(-0.3259, 0.01);
+    }
+
     expect(tx.stateChanges.transfers[0].amount).to.be.eq(15876342);
   });
 
   it("Can close short position", async function () {
     let tx = await amm.as(shorter).closePosition();
 
+    {
+      let ammData = await amm.getAmmData();
+
+      console.log(`ammData=${JSON.stringify(ammData)}`);
+
+      expect(ammData.quoteAssetReserve).to.be.closeTo(100000, 0.01);
+      expect(ammData.baseAssetReserve).to.be.closeTo(1818.1818, 0.01);
+      expect(ammData.quoteAssetWeight).to.be.closeTo(1, 0.001);
+      expect(ammData.totalPositionSize).to.be.closeTo(0, 0.01);
+    }
+
     expect(tx.stateChanges.transfers[0].amount).to.be.eq(5973063);
   });
 
   it("Can partially close long position", async function () {
     await amm.as(longer).increasePosition(150, DIR_LONG, 3, 0); // 150 * 3 / 55 ~ = 8.18 base asset
+
     const p1 = await amm.getPositionInfo(longer);
     console.log(`P1=${JSON.stringify(p1)}`);
 
