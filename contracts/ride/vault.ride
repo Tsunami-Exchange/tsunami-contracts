@@ -35,6 +35,12 @@
   let k_last_withdraw_date = "k_last_withdraw_date" # Last date when user have stated withdraw
   let k_withdraw_in_period = "k_withdraw_in_period" # Amount of tokens user have withdrawn in period
 
+  # Buffer
+  let k_bufferBalance = "k_bufferBalance" # Amount of funds in buffer currently
+  let k_bufferRate = "k_bufferRate" # How much of the funds should we reserve for buffer
+  let k_bufferOverRate = "k_bufferOverRate" # How much of the positive delta goes to buffer when it's < targetBuffer
+  let k_bufferUnderRate = "k_bufferUnderRate" # How much of the positive delta goes to buffer when it's > targetBuffer
+
   # Initialization status
   let k_initialized = "k_initialized"
 
@@ -91,6 +97,7 @@
   func muld(_x: Int, _y: Int) = fraction(_x, _y, DECIMAL_UNIT, HALFEVEN)
   func abs(_x: Int) = if (_x > 0) then _x else -_x
   func minv(_x: Int, _y: Int) = if (_x > _y) then _y else _x
+  func maxv(_x: Int, _y: Int) = if (_x > _y) then _x else _y
 
 
   ##### Fundamental constants
@@ -114,6 +121,10 @@
   func freeBalance() = int0(k_freeBalance)
   func lockedBalance() = int0(k_lockedBalance)
   func excessBalance() = int0(k_excessBalance)
+  func bufferBalance() = int0(k_bufferBalance)
+  func bufferRate() = int0(k_bufferRate)
+  func bufferUnderRate() = int0(k_bufferUnderRate)
+  func bufferOverRate() = int0(k_bufferOverRate)
   func rewardPerTokenStored() = int0(k_rewardPerTokenStored)
   func lastUpdateTime() = int0(k_lastUpdateTime)
   func rewardRate() = int0(k_rewardRate)
@@ -157,6 +168,46 @@
     }
 
     newRate
+  }
+
+  func computeNewRateWithBuffer(_amountOfQuoteAsset: Int) = {
+    let targetBuffer = lockedBalance().muld(bufferRate())
+    let buffer = bufferBalance()
+    
+    let bufferChange = if (_amountOfQuoteAsset > 0) then {
+      let _untilTargetBuffer = maxv(targetBuffer - buffer, 0)
+      # Until we reach target buffer, give bufferUnderRate(%) of 'extra' rate to buffer
+      # After target buffer, give bufferOverRate(%) of 'extra' rate to buffer
+      #
+
+
+      let _maxAddToBuffer = _amountOfQuoteAsset.muld(bufferUnderRate())
+      if (_maxAddToBuffer > _untilTargetBuffer) then {
+        _untilTargetBuffer + (_amountOfQuoteAsset - _untilTargetBuffer).muld(bufferOverRate())
+      } else {
+        _maxAddToBuffer
+      }
+    } else {
+      maxv(_amountOfQuoteAsset, -buffer) # take from buffer up to a buffer size
+    }
+
+    let freeChange = _amountOfQuoteAsset - bufferChange
+  
+    # This is a sanity check
+    #
+    strict doCheck = if (_amountOfQuoteAsset != freeChange + bufferChange) then {
+      throw("Error in computeNewRateWithBuffer: " 
+        + _amountOfQuoteAsset.toString() + " != " 
+        + freeChange.toString() + " + " 
+        + bufferChange.toString())
+    } else {
+      0
+    }
+
+    # Returns newly computed rate (account for free change) 
+    # and split between free and buffer changes
+    #
+    (computeNewRate(freeChange), freeChange, bufferChange)
   }
 
   func lastTimeRewardApplicable() = {
@@ -230,6 +281,17 @@
       ]
     } else {
       throw("Vault: can not update free balance. Balance: " + balance.toString() + " change: " + _change.toString())
+    }
+  }
+
+  func updateBufferBalance(_change: Int) = {
+    let balance = bufferBalance()
+    if (balance + _change >= 0) then {
+      [
+        IntegerEntry(k_bufferBalance, balance + _change)
+      ]
+    } else {
+      throw("Vault: can not update buffer balance. Balance: " + balance.toString() + " change: " + _change.toString())
     }
   }
 
@@ -332,6 +394,29 @@
         IntegerEntry(k_maxSpotUtilization, _maxSpotUtilization),
         IntegerEntry(k_withdrawPerPeriod, _withdrawPerPeriod),
         BooleanEntry(k_withdrawUnlimited, _withdrawUnlimited)
+      ]
+    }
+  }
+
+  @Callable(i)
+  func changeBufferSettings(
+    _bufferRate: Int,
+    _bufferUnderRate: Int,
+    _bufferOverRate: Int
+  ) = {
+    if (
+      !initialized()
+      || i.caller != adminAddress()
+      || (_bufferUnderRate < 0 || _bufferUnderRate > DECIMAL_UNIT)
+      || (_bufferOverRate < 0 || _bufferOverRate > DECIMAL_UNIT)
+      || (_bufferRate < 0 || _bufferRate > DECIMAL_UNIT)
+    ) then {
+      throw("Invalid changeBufferSettings params")
+    } else {
+      [
+        IntegerEntry(k_bufferRate, _bufferRate),
+        IntegerEntry(k_bufferUnderRate, _bufferUnderRate),
+        IntegerEntry(k_bufferOverRate, _bufferOverRate)
       ]
     }
   }
@@ -540,7 +625,34 @@
     ) then {
       throw("Invalid addFree params")
     } else {
-      let newRate = computeNewRate(_amount)
+      let (newRate, addToFree, addToBuffer) = computeNewRateWithBuffer(_amount)
+
+      strict stake = invoke(
+        managerAddress(),
+        "deposit",
+        [],
+        [AttachedPayment(vaultAsset(), addToFree.assetFromDecimals())]
+      )
+
+      updateFreeBalance(addToFree)
+      ++
+      updateBufferBalance(addToBuffer)
+      ++
+      updateRate(newRate)
+    }
+  }
+
+  @Callable(i)
+  func addBuffer() = {
+    let _amount = i.payments[0].amount.assetToDecimals()
+    if (
+      i.payments[0].assetId != vaultAsset()
+      || i.payments.size() != 1
+      || !initialized()
+      || i.caller != adminAddress()
+    ) then {
+      throw("Invalid addBuffer params")
+    } else {
 
       strict stake = invoke(
         managerAddress(),
@@ -548,10 +660,26 @@
         [],
         [AttachedPayment(vaultAsset(), _amount.assetFromDecimals())]
       )
+      updateBufferBalance(_amount)
+    }
+  }
 
-      updateFreeBalance(_amount)
-      ++
-      updateRate(newRate)
+  @Callable(i)
+  func withdrawBuffer(_amount: Int) = {
+    if (
+      _amount <= 0
+      || !initialized()
+      || i.caller != adminAddress()
+    ) then {
+      throw("Invalid withdrawBuffer params")
+    } else {
+      strict stake = invoke(
+        managerAddress(),
+        "withdraw",
+        [vaultAssetStr(), _amount],
+        []
+      )
+      updateBufferBalance(-_amount.assetToDecimals())
     }
   }
 
@@ -591,11 +719,13 @@
     } else {
       let amountOfQuoteAsset = _amount.assetToDecimals()
 
-      let newRate = computeNewRate(-amountOfQuoteAsset)
+      let (newRate, addToFree, addToBuffer) = computeNewRateWithBuffer(-amountOfQuoteAsset)
       
       updateLockedBalance(amountOfQuoteAsset)
       ++
-      updateFreeBalance(-amountOfQuoteAsset)
+      updateFreeBalance(addToFree)
+      ++
+      updateBufferBalance(addToBuffer)
       ++
       updateRate(newRate)
     }
@@ -605,7 +735,7 @@
   func withdrawLocked(_amount: Int) = {
     if (
       !initialized()
-      || _amount <= 0
+      || _amount < 0
       || !(
         isWhitelist(i.caller.toString())
       )
@@ -734,7 +864,7 @@
     }
 
     strict result = if (profit > 0) then {
-      let newRate = computeNewRate(profit)
+      let newRate = computeNewRate(profit) # Do not buffer staking rewards - they go directly to vault
 
       strict stake = invoke(
         managerAddress(),

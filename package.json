@@ -38,6 +38,7 @@
     "ride-test:oracle:multisig": "cd contracts && surfboard test oracle-multisig.ride-test.js",
     "ride-test:vault:staking": "cd contracts && surfboard test vault-staking.ride-test.js",
     "ride-test:vault:profit": "cd contracts && surfboard test vault-profit.ride-test.js",
+    "ride-test:vault:buffer": "cd contracts && surfboard test vault-buffer.ride-test.js",
     "ride-test:vault:change-asset-manager": "cd contracts && surfboard test vault-change-manager.ride-test.js",
     "ride-test:vAMM2": "npm-run-all ride-test:vAMM2:*",
     "ride-test:miner": "npm-run-all ride-test:miner:*",

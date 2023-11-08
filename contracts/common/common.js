@@ -4878,6 +4878,25 @@ class Vault {
     return tx;
   }
 
+  async changeBufferSettings(_bufferRate, _bufferUnderRate, _bufferOverRate) {
+    let tx = await invoke(
+      {
+        dApp: address(this.seed),
+        functionName: "changeBufferSettings",
+        arguments: [
+          Math.round(_bufferRate * wvs),
+          Math.round(_bufferUnderRate * wvs),
+          Math.round(_bufferOverRate * wvs),
+        ],
+        payment: [],
+      },
+      this.e.seeds.admin
+    );
+
+    await waitForTx(tx.id);
+    return tx;
+  }
+
   async ackRewards() {
     let tx = await invoke(
       {
@@ -4990,6 +5009,92 @@ class Vault {
     return tx;
   }
 
+  async addBuffer(_amount) {
+    const assetDecimals = await accountDataByKey(
+      `k_vaultAssetDecimals`,
+      address(this.seed)
+    ).then((x) => x.value);
+
+    const asset = await accountDataByKey(
+      `k_vaultAsset`,
+      address(this.seed)
+    ).then((x) => x.value);
+
+    await this.e.supplyUsdn(_amount, address(this.e.seeds.admin));
+
+    let tx = await invoke(
+      {
+        dApp: address(this.seed),
+        functionName: "addBuffer",
+        arguments: [],
+        payment: [
+          {
+            amount: Math.round(_amount * 10 ** assetDecimals),
+            assetId: asset == "WAVES" ? null : asset,
+          },
+        ],
+      },
+      this.e.seeds.admin
+    );
+
+    await waitForTx(tx.id);
+    return tx;
+  }
+
+  async withdrawBuffer(_amount) {
+    const assetDecimals = await accountDataByKey(
+      `k_vaultAssetDecimals`,
+      address(this.seed)
+    ).then((x) => x.value);
+
+    await this.e.supplyUsdn(_amount, address(this.e.seeds.admin));
+
+    let tx = await invoke(
+      {
+        dApp: address(this.seed),
+        functionName: "withdrawBuffer",
+        arguments: [Math.round(_amount * 10 ** assetDecimals)],
+        payment: [],
+      },
+      this.sender || this.e.seeds.admin
+    );
+
+    await waitForTx(tx.id);
+    return tx;
+  }
+
+  async addLocked(_amount) {
+    const assetDecimals = await accountDataByKey(
+      `k_vaultAssetDecimals`,
+      address(this.seed)
+    ).then((x) => x.value);
+
+    const asset = await accountDataByKey(
+      `k_vaultAsset`,
+      address(this.seed)
+    ).then((x) => x.value);
+
+    await this.e.supplyUsdn(_amount, address(this.e.seeds.admin));
+
+    let tx = await invoke(
+      {
+        dApp: address(this.seed),
+        functionName: "addLocked",
+        arguments: [],
+        payment: [
+          {
+            amount: Math.round(_amount * 10 ** assetDecimals),
+            assetId: asset == "WAVES" ? null : asset,
+          },
+        ],
+      },
+      this.e.seeds.admin
+    );
+
+    await waitForTx(tx.id);
+    return tx;
+  }
+
   async exchangeFreeAndLocked(_amount) {
     const assetDecimals = await accountDataByKey(
       `k_vaultAssetDecimals`,
@@ -5057,6 +5162,15 @@ class Vault {
   async excessBalance() {
     const balanceRaw = await accountDataByKey(
       `k_excessBalance`,
+      address(this.seed)
+    ).then((x) => (x ? x.value : 0));
+
+    return Number.parseFloat(Number.parseFloat(balanceRaw / wvs).toFixed(4));
+  }
+
+  async bufferBalance() {
+    const balanceRaw = await accountDataByKey(
+      `k_bufferBalance`,
       address(this.seed)
     ).then((x) => (x ? x.value : 0));
 
