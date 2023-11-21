@@ -9,6 +9,7 @@
 # Oracle keys
 let k_baseOracle = "k_baseOracle"     # Base asset oracle data
 let k_quoteOracle = "k_quoteOracle"   # Quote asset oracle data
+let k_settlementOracle = "k_settlementOracle" # Settlement asset oracle data
 
 # AMM Balance
 let k_balance = "k_balance" # How much of a trader's funds is controlled by this AMM
@@ -531,6 +532,18 @@ func getOraclePriceValue(oracle: Address, priceKey: String, blockKey: String) = 
   }
 }
 
+# Returns settlement oracle price (Index Price)
+#
+func getSettlementOraclePrice() = {
+  let settlementOracleM = getOracleData(k_settlementOracle)
+  if (settlementOracleM.isDefined()) then {
+    let settlementOracle = settlementOracleM.value()
+    getOraclePriceValue(settlementOracle._1, settlementOracle._2, settlementOracle._3)
+  } else {
+    DECIMAL_UNIT
+  }
+}
+
 # Returns oracle price (Index Price)
 #
 func getOraclePrice() = {
@@ -698,11 +711,12 @@ func getPositionNotionalAndUnrealizedPnlByValues(
         _baseAssetWeight
       )
 
-      let unrealizedPnl = if (isShort) then {
+      let unrealizedPnlQuote = if (isShort) then {
         _positionOpenNotional - positionNotional
       } else {
         positionNotional - _positionOpenNotional
       }
+      let unrealizedPnl = unrealizedPnlQuote.divd(getSettlementOraclePrice())
       (
         positionNotional,
         unrealizedPnl
@@ -758,7 +772,7 @@ func getMarginRatioByOption(_trader: String, _direction: Int, _option: Int) = {
         positionTimestamp,
         unrealizedPnl
     )
-    calcMarginRatio(remainMargin, badDebt, positionNotional)
+    calcMarginRatio(remainMargin, badDebt, positionNotional.divd(getSettlementOraclePrice()))
 }
 
 # Computes position spot margin ratio
@@ -874,9 +888,11 @@ func internalClosePosition(
 
     # Realize fee (both close fee and rollover fee) proportionally to the size of position being closed
     #
-    let realizedCloseFee = muld(oldPositionNotional, realizedRatio).muld(_fee)
+    let settlementOraclePrice = getSettlementOraclePrice()
+    let realizedCloseFee = muld(oldPositionNotional.divd(settlementOraclePrice), realizedRatio).muld(_fee)
 
     let unrealizedPnlAfter = unrealizedPnl - realizedPnl
+    let unrealizedPnlAfterInQuote = unrealizedPnlAfter.muld(settlementOraclePrice)
     
     # Compute new position notional value, keeping unrealized PnL unrealized
     # ex. long position
@@ -886,9 +902,9 @@ func internalClosePosition(
     # remainOpenNotional = 900 - 300 - (-70) = 670, so it will be 600 after deducing PnL
     #
     let remainOpenNotional = if (oldPositionSize > 0) then {
-      oldPositionNotional - exchangedQuoteAssetAmount - unrealizedPnlAfter
+      oldPositionNotional - exchangedQuoteAssetAmount - unrealizedPnlAfterInQuote
     } else {
-      unrealizedPnlAfter + oldPositionNotional - exchangedQuoteAssetAmount
+      unrealizedPnlAfterInQuote + oldPositionNotional - exchangedQuoteAssetAmount
     }
 
     # exchangedPositionSize is always in different sign then oldPositionSize so always reduces position
@@ -914,9 +930,9 @@ func internalClosePosition(
     #
     let marginRatio = getMarginRatioByOption(_trader, _direction, PNL_OPTION_SPOT)
     let newPositionMarginWithSameRatio = if (oldPositionSize > 0) then {
-      muld(newPositionOpenNotional + unrealizedPnlAfter, marginRatio) - unrealizedPnlAfter
+      divd(muld(newPositionOpenNotional + unrealizedPnlAfterInQuote, marginRatio) - unrealizedPnlAfterInQuote, settlementOraclePrice)
     } else {
-      muld(newPositionOpenNotional - unrealizedPnlAfter, marginRatio) - unrealizedPnlAfter
+      divd(muld(newPositionOpenNotional - unrealizedPnlAfterInQuote, marginRatio) - unrealizedPnlAfterInQuote, settlementOraclePrice)
     }
     
     # This is how much margin we can return back to the trader, while position is closed while keeping MR the same
@@ -967,7 +983,8 @@ func internalClosePosition(
         openInterestLong() - if (isLongPosition) then openNotionalDelta else 0,
         openInterestShort() - if (!isLongPosition) then openNotionalDelta else 0,
         realizedCloseFee + rolloverFee, # Note that rolloverFee is fully realized
-        exchangedQuoteAssetAmount
+        exchangedQuoteAssetAmount,
+        marginToTraderRaw
       )
     }
   } else {
@@ -1059,7 +1076,8 @@ func getSyncTerminalPrice(_terminalPrice: Int, _qtAstR: Int, _bsAstR: Int) = {
 func getFunding() = {
   let underlyingPrice = getOraclePrice()
   let spotPrice = getSpotPrice()
-  let premium = spotPrice - underlyingPrice
+  let settlementOraclePrice = getSettlementOraclePrice()
+  let premium = (spotPrice - underlyingPrice).divd(settlementOraclePrice)
   
   if (
     isMarketClosed()
@@ -1331,7 +1349,7 @@ func updateAmm(
   let _qtAstW = qtAstW()
   let _bsAstW = bsAstW()
   if (_totalLongPositionSize - _totalShortPositionSize != _totalPositionSizeAfter) then {
-    throw("Invalid AMM state data: " + _totalLongPositionSize.toString() + " -  " + _totalShortPositionSize.toString() + " != " + _totalPositionSizeAfter.toString())
+    throw("Invalid AMM state data: " + _totalLongPositionSize.toString() + " - " + _totalShortPositionSize.toString() + " != " + _totalPositionSizeAfter.toString())
   } else {
     updateAmmReserves(_qtAstR, _bsAstR)
     ++
@@ -1604,6 +1622,19 @@ func changeSettings(
 }
 
 @Callable(i)
+func setSettlementAsset(_settlementOracle: String) = {
+  if (!initialized()
+      || i.caller != adminAddress()
+  ) then {
+    throw("Invalid setSettlementAsset params")
+  } else {
+    [
+      StringEntry(k_settlementOracle, _settlementOracle)
+    ]
+  }
+}
+
+@Callable(i)
 func initialize(
   _qtAstR: Int,
   _bsAstR: Int,
@@ -1785,7 +1816,7 @@ func increasePosition(
       totalShortOpenInterestAfter,
       rolloverFee
     ) = if (isNewPosition || expandExisting) then {
-      let openNotional = muld(_amount, _leverage)
+      let openNotional = muld(_amount, _leverage).muld(getSettlementOraclePrice())
       let ( 
         amountBaseAssetBought,
         quoteAssetReserveAfter, 
@@ -1835,13 +1866,7 @@ func increasePosition(
         }
        }
     } else {
-      let openNotional = muld(_amount, _leverage)
-      let (oldPositionNotional, unrealizedPnl) = getPositionNotionalAndUnrealizedPnl(i.caller.toString(), _direction, PNL_OPTION_SPOT)
-      if (oldPositionNotional > openNotional) then {
-        throw("Use decreasePosition to decrease position size")
-      } else {
-        throw("Close position first")
-      }
+      throw("Should not be there")
     }
 
     let (feeToStakers, feeToVault) = distributeFee(feeAmount + rolloverFee)
@@ -1962,7 +1987,7 @@ func addMargin(_direction: Int, _priceUpdate: String) = {
         _amount
     )
 
-    let marginRatio = calcMarginRatio(remainMargin, badDebt, oldPositionOpenNotional)
+    let marginRatio = calcMarginRatio(remainMargin, badDebt, oldPositionOpenNotional.divd(getSettlementOraclePrice()))
     strict checkMinMargin = requireMoreMarginRatio(marginRatio, minInitMarginRatio(), false)
     
     strict doTransferFeeToStakers = if (rolloverFee > 0) then {
@@ -2047,7 +2072,7 @@ func removeMargin(
     if (badDebt != 0) then {
       throw("Invalid removed margin amount")
     } else {
-      let marginRatio = calcMarginRatio(remainMargin, badDebt, oldPositionOpenNotional)
+      let marginRatio = calcMarginRatio(remainMargin, badDebt, oldPositionOpenNotional.divd(getSettlementOraclePrice()))
       if (!requireMoreMarginRatio(marginRatio, initMarginRatio(), true)) then {
         throw("Too much margin removed: " + marginRatio.toString() + " < " + initMarginRatio().toString())
       } else {
@@ -2302,7 +2327,9 @@ func liquidate(_trader: String, _direction: Int, _priceUpdate: String) = {
       totalShortAfter,
       totalLongOpenInterestAfter,
       totalShortOpenInterestAfter,
-      liquidationPenalty
+      liquidationPenalty,
+      exchangedQuoteAssetAmount,
+      marginToTraderRaw
     ) = internalClosePosition(
       _trader,
       _direction,
@@ -2314,6 +2341,7 @@ func liquidate(_trader: String, _direction: Int, _priceUpdate: String) = {
       true
     )
 
+    let penaltyFromVault = if (marginToTraderRaw > 0) then 0 else -marginToTraderRaw
     let feeToLiquidator = liquidationPenalty / 2
     let feeToVault = liquidationPenalty - feeToLiquidator
 
@@ -2324,11 +2352,11 @@ func liquidate(_trader: String, _direction: Int, _priceUpdate: String) = {
       ammBalance
     }
 
-    strict lockBadDebt = if (positionBadDebt > 0) then {
+    strict lockBadDebt = if (positionBadDebt > 0 || penaltyFromVault > 0) then {
       strict lockBadDebt = invoke(
         vaultAddress(),
         "exchangeFreeAndLocked",
-        [positionBadDebt + liquidationPenalty],
+        [positionBadDebt + penaltyFromVault],
         []
       )
       []

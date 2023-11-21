@@ -2448,7 +2448,8 @@ class Environment {
     }
 
     let p3 = deploy(
-      "vAMM3.ride",
+      //options.kind === "coin" ? "vAMM3c2.ride" : "vAMM3.ride",
+      "vAMM3c2.ride",
       7500000,
       ammSeed,
       "vAMM",
@@ -2583,6 +2584,27 @@ class Environment {
 
       await broadcast(initTx);
       await waitForTx(initTx.id);
+
+      if (options.kind === "coin") {
+        const initTx2 = invokeScript(
+          {
+            dApp: address(ammSeed),
+            call: {
+              function: "setSettlementAsset",
+              args: [
+                {
+                  type: "string",
+                  value: baseOracle,
+                }, // Base oracle data address
+              ],
+            },
+          },
+          this.seeds.admin
+        );
+
+        await broadcast(initTx2);
+        await waitForTx(initTx2.id);
+      }
 
       console.log("vAMM initialized in " + initTx.id);
     }
@@ -3267,7 +3289,7 @@ class AMM {
   ) {
     let payment = [
       {
-        amount: _amount * decimals,
+        amount: Math.round(_amount * decimals),
         assetId: this.assetId || this.e.assets.neutrino,
       },
     ];
